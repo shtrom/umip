@@ -1,4 +1,4 @@
-/* $Id: xfrm.h 1.75 06/05/15 17:36:48+03:00 vnuorval@tcs.hut.fi $ */
+/* $Id: xfrm.h 1.70 05/12/13 13:17:21+02:00 vnuorval@tcs.hut.fi $ */
 #ifndef __XFRM_H__
 #define __XFRM_H__
 
@@ -7,23 +7,22 @@
 
 #define MIP6_PRIO_HOME_ERROR		1
 #define MIP6_PRIO_HOME_SIG		2
-#define MIP6_PRIO_HOME_SIG_ANY		3
-#define MIP6_PRIO_HOME_BLOCK		4
-#define MIP6_PRIO_HOME_DATA_IPSEC	5
-#define MIP6_PRIO_HOME_DATA		6
-#define MIP6_PRIO_RO_SIG_IPSEC		7	/* XXX: BU between MN-MN with IPsec */
-#define MIP6_PRIO_RO_SIG		8	/* XXX: BU between MN-CN */
-#define MIP6_PRIO_RO_SIG_ANY		9
-#define MIP6_PRIO_RO_SIG_RR		10	/* XXX: MH(or HoTI/HoT) between MN-CN */
-#define MIP6_PRIO_RO_BLOCK		11
-#define MIP6_PRIO_NO_RO_SIG_ANY		12
-#define MIP6_PRIO_NO_RO_DATA		13
-#define MIP6_PRIO_RO_BULE_BCE_DATA	14
-#define MIP6_PRIO_RO_BULE_DATA		15
-#define MIP6_PRIO_RO_BCE_DATA		16
-#define MIP6_PRIO_RO_TRIG		17
-#define MIP6_PRIO_RO_TRIG_ANY		18
-#define MIP6_PRIO_RO_DATA_ANY		19
+#define MIP6_PRIO_HOME_BLOCK		3
+#define MIP6_PRIO_HOME_DATA_IPSEC	4
+#define MIP6_PRIO_HOME_DATA		5
+#define MIP6_PRIO_RO_SIG_IPSEC		6	/* XXX: BU between MN-MN with IPsec */
+#define MIP6_PRIO_RO_SIG		7	/* XXX: BU between MN-CN */
+#define MIP6_PRIO_RO_SIG_ANY		8
+#define MIP6_PRIO_RO_SIG_RR		9	/* XXX: MH(or HoTI/HoT) between MN-CN */
+#define MIP6_PRIO_RO_BLOCK		10
+#define MIP6_PRIO_RO_NO_SIG_ANY		11
+#define MIP6_PRIO_NO_RO_DATA		12
+#define MIP6_PRIO_RO_BULE_BCE_DATA	13
+#define MIP6_PRIO_RO_BULE_DATA		14
+#define MIP6_PRIO_RO_BCE_DATA		15
+#define MIP6_PRIO_RO_TRIG		16
+#define MIP6_PRIO_RO_TRIG_ANY		17
+#define MIP6_PRIO_RO_DATA_ANY		18
 
 typedef enum {
 	MIP6_TYPE_MOVEMENT_UNKNOWN = 0,
@@ -60,12 +59,8 @@ void xfrm_del_bule(struct bulentry *bule);
 
 long xfrm_last_used(const struct in6_addr *daddr,
 		    const struct in6_addr *saddr, 
-		    int proto,
+		    const int proto,
 		    const struct timespec *now);
-
-long mn_bule_xfrm_last_used(const struct in6_addr *peer, 
-			    const struct in6_addr *hoa, 
-			    const struct timespec *now);
 
 int mn_ro_pol_add(struct home_addr_info *hai, int ifindex, int changed);
 void mn_ro_pol_del(struct home_addr_info *hai, int ifindex, int changed);
@@ -78,8 +73,8 @@ void mn_ipsec_recv_bu_tnl_pol_del(struct bulentry *bule, int ifindex,
 int cn_wildrecv_bu_pol_add(void);
 void cn_wildrecv_bu_pol_del(void);
 
-int xfrm_block_link(struct home_addr_info *hai);
-void xfrm_unblock_link(struct home_addr_info *hai);
+int xfrm_block_policy(struct home_addr_info *hai);
+void xfrm_unblock_policy(struct home_addr_info *hai);
 
 int xfrm_block_hoa(struct home_addr_info *hai);
 void xfrm_unblock_hoa(struct home_addr_info *hai);

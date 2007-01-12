@@ -6,34 +6,11 @@
    additional parameters (e.g. --prefix=/usr, defaults to /usr/local)
    to configure.  See './configure --help' for complete listing.
 
-      * Debug messages
-
-      By default, debug message printing is included in the compiled
-      program.  To disable debugging messages use --disable-debug with
-      configure, otherwise debug messages will be compiled in.
-
-      * Virtual debug terminal
-
-      To enable virtual terminal for trouble shooting, use --enable-vt
-      with configure.  It allows access to some of mip6d state at
-      runtime.  Telnet to port 7777 on the localhost.  You should get
-      a prompt "mip6d> ".  If needed, the port can be changed with
-      daemon option --vt-service=PORT.  Use 'help' to display
-      available commands.  Virtual terminal should be disabled, unless
-      you are running a test environment.
-
-      * Built-in crypto functions
-
-      By default, OpenSSL is used to provide crypto functions.  If the
-      library is not found, MIPL will be compiled to use its own built
-      in cryptographic functions.  The default behavior may also be
-      overidden using the --with-builtin-crypto option with configure.
-
    Kernel headers are assumed to be found in /usr/include/linux.  If
    these are not the headers from your current kernel, please specify
    alternative include path, e.g.:
 
-      CPPFLAGS='-isystem /usr/src/linux/include' ./configure
+	CPPFLAGS='-isystem /usr/src/linux/include' ./configure
 
 3. Run 'make'.  If everything went ok, you should now have mip6d
    compiled.
@@ -56,3 +33,12 @@
    See if your favorite distribution is supported.  If not, you can
    always write your own.  We will be happy to accept contributed
    startup scripts to be included in subsequent releases.
+
+6. Debugging
+
+   To enable virtual terminal for debugging, use --enable-vt with
+   configure.  You can dump the contents of binding cache and binding
+   update list with it.  Telnet to port 7777 on the localhost.  You
+   should get a prompt "mip6d> ".  If needed, the port can be changed
+   with daemon option --vt-service=PORT.  Use 'help' to display
+   available commands.

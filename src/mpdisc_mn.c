@@ -1,14 +1,13 @@
 /*
- * $Id: mpdisc_mn.c 1.20 06/05/07 21:52:43+03:00 anttit@tcs.hut.fi $
+ * $Id: mpdisc_mn.c 1.12 06/01/22 14:08:59+09:00 aramoto@springbank.sharp.net $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
  * Authors:
- *  Ville Nuorvala <vnuorval@tcs.hut.fi>,
  *  Jaakko Laine <jola@tcs.hut.fi>
+ *  Ville Nuorvala <vnuorval@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2005 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -32,10 +31,21 @@
 #include <time.h>
 #include <netinet/in.h>
 #include <netinet/icmp6.h>
+#ifndef HAVE_MIP6_ICMP6_H
+#include <netinet-icmp6.h>
+#endif
+#ifdef HAVE_NETINET_IP6MH_H
 #include <netinet/ip6mh.h>
+#else
+#include <netinet-ip6mh.h>
+#endif
 #include <errno.h>
 #include <syslog.h>
+#ifdef HAVE_LIBPTHREAD
 #include <pthread.h>
+#else
+#error "POSIX Thread Library required!"
+#endif
 
 #include "debug.h"
 #include "mipv6.h"
@@ -72,7 +82,8 @@ static inline struct mps_entry *mps_get(const struct in6_addr *hoa,
 int mpd_poll_mps(const struct in6_addr *hoa,
 		 const struct in6_addr *ha,
 		 struct timespec *delay,
-		 struct timespec *lastsent)
+		 struct timespec *lastsent,
+		 struct timespec *expires)
 {
 	struct mps_entry *e;
 	int err = -ENOENT;
@@ -81,6 +92,7 @@ int mpd_poll_mps(const struct in6_addr *hoa,
 	if (e != NULL) {
 		*delay = e->delay;
 		*lastsent = e->lastsent;
+		*expires = e->tqe.expires;
 		err = 0;
 	}
 	pthread_mutex_unlock(&mps_lock);
@@ -89,7 +101,7 @@ int mpd_poll_mps(const struct in6_addr *hoa,
 #endif
 /* MN functions */
 
-static int mpd_send_mps(struct mps_entry *e)
+int mpd_send_mps(struct mps_entry *e)
 {
 	struct iovec iov;
 	struct mip_prefix_solicit *ih;
@@ -115,7 +127,6 @@ void mpd_cancel_mps(const struct in6_addr *hoa,
 	pthread_mutex_lock(&mps_lock);
 	e = mps_get(hoa, ha);
 	if (e != NULL) {
-		dbg("canceling MPS\n");
 		hash_delete(&mps_hash, &e->hoa, &e->ha);
 		if (tsisset(e->delay))
 			del_task(&e->tqe);
@@ -140,7 +151,7 @@ static void mpd_resend_mps(struct tq_elem *tqe)
 	pthread_mutex_unlock(&mps_lock);
 }
 
-static void mpd_send_first_mps(struct tq_elem *tqe)
+void mpd_send_first_mps(struct tq_elem *tqe)
 {
 	pthread_mutex_lock(&mps_lock);
 	if (!task_interrupted()) {
@@ -161,7 +172,6 @@ int mpd_schedule_first_mps(const struct in6_addr *hoa,
 {
 	struct mps_entry *e;
 	int err = -ENOMEM;
-	uint32_t delay;
 
 	if (!conf.SendMobPfxSols)
 		return 0;
@@ -182,8 +192,9 @@ int mpd_schedule_first_mps(const struct in6_addr *hoa,
 		INIT_LIST_HEAD(&e->tqe.list);
 	}
 	err = 0;
-	delay = umin(valid_time->tv_sec, PREFIX_LIFETIME_MAX_FINITE);
-	tssetsec(e->delay, delay * MPS_REFRESH_DELAY);
+	tssetsec(e->delay, ((unsigned long int)(valid_time->tv_sec) / 10 * 9));
+
+	e->delay.tv_sec &= PREFIX_LIFETIME_MAX_FINITE;
 	add_task_rel(&e->delay, &e->tqe, mpd_send_first_mps);
 	dbg("schedule MPS in %u s\n", e->delay.tv_sec);
 out:
@@ -191,9 +202,12 @@ out:
 	return err;
 }
 
-static void mpd_recv_mpa(const struct icmp6_hdr *ih, ssize_t len,
+static void mpd_recv_mpa(const struct icmp6_hdr *ih,
+			 const ssize_t len,
 			 const struct in6_addr *src,
-			 const struct in6_addr *dst, int iif, int hoplimit)
+			 const struct in6_addr *dst, 
+			 const int iif,
+			 const int hoplimit)
 {
 	uint8_t *opt = (uint8_t *)(ih + 1);
 	struct mps_entry *e;
@@ -202,11 +216,7 @@ static void mpd_recv_mpa(const struct icmp6_hdr *ih, ssize_t len,
 	
 	pthread_mutex_lock(&mps_lock);
 	e = mps_get(dst, src);
-	if (e == NULL) {
-		pthread_mutex_unlock(&mps_lock);
-		return;
-	}
-	if (e->id != ih->icmp6_id) {
+	if (e == NULL || e->id != ih->icmp6_id) {
 		pthread_mutex_unlock(&mps_lock);
 		mpd_trigger_mps(dst, src);
 		return;
@@ -273,8 +283,8 @@ int mpd_mn_init(void)
 
 void mpd_mn_cleanup(void)
 {
-	icmp6_handler_dereg(MIP_PREFIX_ADVERT, &mpd_mpa_handler);
 	pthread_mutex_lock(&mps_lock);
 	hash_cleanup(&mps_hash);
 	pthread_mutex_unlock(&mps_lock);
+	icmp6_handler_dereg(MIP_PREFIX_ADVERT, &mpd_mpa_handler);
 }

@@ -1,13 +1,11 @@
 /*
- * $Id: scan.l 1.44 06/05/12 11:48:36+03:00 vnuorval@tcs.hut.fi $
+ * $Id: scan.l 1.29 05/12/07 15:19:30+02:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
- * Authors: Antti Tuominen <anttit@tcs.hut.fi>
- *          Ville Nuorvala <vnuorval@tcs.hut.fi>
+ * Author: Antti Tuominen <anttit@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2004 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -25,13 +23,12 @@
  * 02111-1307 USA
  */
 
-%top{
+%{
+
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
-}
-
-%{
+#include <string.h>
 #include <arpa/inet.h>
 #include "gram.h"
 
@@ -44,21 +41,15 @@ void yyerror(char *s);
 
 %}
 
-%option nounput
-%option noyyget_lineno noyyset_lineno
-%option noyyget_in noyyset_in
-%option noyyget_out noyyset_out
-%option noyyget_debug noyyset_debug
-%option noyyget_leng
-%option noyyget_text
-
 ws		[ \t]+
 comment		#.*
 nl		\n
 qstring		\"[^\"\n]*[\"\n]
 digit		[0-9]
-number		({digit})+
-decimal		({number}"."{number})
+unumber		({digit})+
+number		[+-]?({unumber})
+udecimal	({unumber}"."{unumber})
+decimal		[+-]?({udecimal})
 hexdec		([a-f]|[A-F]|[0-9])
 addr1		{hexdec}{1,4}":"({hexdec}{1,4}":")*(":"{hexdec}{1,4})+
 addr2		{hexdec}{1,4}(":"{hexdec}{1,4}){0,6}"::"
@@ -92,10 +83,9 @@ HomeAgentAddress		{ return HOMEAGENTADDRESS; }
 InitialBindackTimeoutFirstReg	{ return INITIALBINDACKTIMEOUTFIRSTREG; }
 InitialBindackTimeoutReReg	{ return INITIALBINDACKTIMEOUTREREG; }
 LinkName			{ return LINKNAME; }
-HaMaxBindingLife		{ return HAMAXBINDINGLIFE; }
-MnMaxHaBindingLife		{ return MNMAXHABINDINGLIFE; }
-MnMaxCnBindingLife		{ return MNMAXCNBINDINGLIFE; }
+MaxBindingLife			{ return MAXBINDINGLIFE; }
 MaxMobPfxAdvInterval		{ return MAXMOBPFXADVINTERVAL; }
+MinDelayBetweenRAs		{ return MINDELAYBETWEENRAS; }
 MinMobPfxAdvInterval		{ return MINMOBPFXADVINTERVAL; }
 MnHomeLink			{ return MNHOMELINK; }
 NonVolatileBindingCache		{ return NONVOLATILEBINDINGCACHE; }
@@ -107,9 +97,12 @@ UsePolicyModule			{ return USEPOLICYMODULE; }
 IPsecPolicySet			{ return IPSECPOLICYSET; }
 IPsecPolicy			{ return IPSECPOLICY; }
 IPsecType			{ return IPSECTYPE; }
-UseAltCoa			{ return USEALTCOA; }
-UseESP				{ return USEESP; }
+NoAH				{ return NOAH; }
 UseAH				{ return USEAH; }
+UseAltCoa			{ return USEALTCOA; }
+NoESP				{ return NOESP; }
+UseESP				{ return USEESP; }
+NoIPComp			{ return NOIPCOMP; }
 UseIPComp			{ return USEIPCOMP; }
 UseMnHaIPsec			{ return USEMNHAIPSEC; }
 KeyMngMobCapability		{ return KEYMNGMOBCAPABILITY; }
@@ -129,12 +122,12 @@ UseCnBuAck			{ return USECNBUACK; }
 Interface			{ return INTERFACE; }
 IfName				{ return IFNAME; }
 IfType				{ return IFTYPE; }
+IsRouter			{ return ISROUTER; }
 MnIfPreference			{ return MNIFPREFERENCE; }
 MnUseAllInterfaces     		{ return MNUSEALLINTERFACES; }
-MnRouterProbes			{ return MNROUTERPROBES; }
+MnRouterProbesRA		{ return MNROUTERPROBESRA; }
+MnRouterProbesLinkUp		{ return MNROUTERPROBESLINKUP; }
 MnRouterProbeTimeout		{ return MNROUTERPROBETIMEOUT; }
-MnDiscardHaParamProb		{ return MNDISCARDHAPARAMPROB; }
-OptimisticHandoff		{ return OPTIMISTICHANDOFF; }
 internal			{ return INTERNAL; }
 
 {addr}		{

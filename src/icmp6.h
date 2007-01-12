@@ -1,4 +1,4 @@
-/* $Id: icmp6.h 1.17 06/05/07 21:52:43+03:00 anttit@tcs.hut.fi $ */
+/* $Id: icmp6.h 1.14 05/12/06 18:27:36+02:00 vnuorval@tcs.hut.fi $ */
 
 #ifndef __ICMP6_H__
 #define __ICMP6_H__ 1
@@ -8,11 +8,11 @@
 struct icmp6_handler {
 	struct icmp6_handler *next;
 	void (* recv)(const struct icmp6_hdr *ih, 
-		      ssize_t len, 
+		      const ssize_t len, 
 		      const struct in6_addr *src,
 		      const struct in6_addr *dst,
 		      int iif,
-		      int hoplimit);
+		      const int hoplimit);
 };
 
 #define ICMP6_MAIN_SOCK -1
@@ -29,9 +29,9 @@ void icmp6_cleanup(void);
 int icmp6_send(int oif, uint8_t hoplimit, const struct in6_addr *src,
 	       const struct in6_addr *dst, struct iovec *datav, size_t iovlen);
 
-ssize_t icmp6_recv(int sock, unsigned char *msg, size_t msglen,
-		   struct sockaddr_in6 *addr, struct in6_pktinfo *pkt_info,
-		   int *hoplimit);
+int icmp6_recv(int sock, unsigned char *msg, socklen_t msglen,
+	       struct sockaddr_in6 *addr, struct in6_pktinfo *pkt_info,
+	       int *hoplimit);
 
 void *icmp6_create(struct iovec *iov, uint8_t type, uint8_t code);
 

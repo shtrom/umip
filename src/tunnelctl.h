@@ -1,10 +1,9 @@
-/* $Id: tunnelctl.h 1.5 06/01/11 10:16:53+02:00 vnuorval@tcs.hut.fi $ */
+/* $Id: tunnelctl.h 1.4 04/07/20 02:04:01+03:00 vnuorval@tcs.hut.fi $ */
 #ifndef __TUNNELCTL_H__
 #define __TUNNELCTL_H__ 1
 
 int tunnel_add(struct in6_addr *local,
 	       struct in6_addr *remote,
-	       int link,
 	       int (*ext_tunnel_ops)(int request, 
 				     int old_if, 
 				     int new_if,
@@ -14,7 +13,6 @@ int tunnel_add(struct in6_addr *local,
 int tunnel_mod(int ifindex,
 	       struct in6_addr *local,
 	       struct in6_addr *remote,
-	       int link,
 	       int (*ext_tunnel_ops)(int request, 
 				     int old_if, 
 				     int new_if,

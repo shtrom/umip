@@ -1,68 +1,34 @@
-/* $Id: ipsec.h 1.27 06/04/22 02:11:18+03:00 vnuorval@tcs.hut.fi $ */
+/* $Id: ipsec.h 1.25 06/01/10 00:07:47+09:00 nakam@linux-ipv6.org $ */
 
 #ifndef __IPSEC_H__
 #define __IPSEC_H__
 #include <linux/xfrm.h>
 #include "list.h"
-	
-#define IPSEC_F_MH_BUBA		0x001
-#define IPSEC_F_MH_BERR		0x002
-#define IPSEC_F_MH		0x004
-#define IPSEC_F_ICMP_MPD	0x008
-#define IPSEC_F_ICMP_ND		0x010
-#define IPSEC_F_ICMP		0x020
-#define IPSEC_F_ANY		0x040
 
-#define IPSEC_F_TNL_MH_RR	0x100
-#define IPSEC_F_TNL_MH		0x200
-#define IPSEC_F_TNL_ANY		0x400
-
-#define IPSEC_POLICY_TYPE_HOMEREGBINDING IPSEC_F_MH_BUBA
-#define IPSEC_POLICY_TYPE_BERROR IPSEC_F_MH_BERR
-#define IPSEC_POLICY_TYPE_MH (IPSEC_F_MH_BUBA|IPSEC_F_MH_BERR|IPSEC_F_MH)
-#define IPSEC_POLICY_TYPE_MOBPFXDISC IPSEC_F_ICMP_MPD
-#define IPSEC_POLICY_TYPE_NDISC IPSEC_F_ICMP_ND
-#define IPSEC_POLICY_TYPE_ICMP (IPSEC_F_ICMP_MPD|IPSEC_F_ICMP_ND|IPSEC_F_ICMP)
-#define IPSEC_POLICY_TYPE_ANY (IPSEC_F_MH_BUBA|IPSEC_F_MH_BERR|IPSEC_F_MH|IPSEC_F_ICMP_MPD|IPSEC_F_ICMP_ND|IPSEC_F_ICMP|IPSEC_F_ANY)
-
-#define IPSEC_POLICY_TYPE_TUNNELHOMETESTING IPSEC_F_TNL_MH_RR
-#define IPSEC_POLICY_TYPE_TUNNELMH (IPSEC_F_TNL_MH_RR|IPSEC_F_TNL_MH)
-#define IPSEC_POLICY_TYPE_TUNNELPAYLOAD (IPSEC_F_TNL_MH_RR|IPSEC_F_TNL_MH|IPSEC_F_TNL_ANY)
+typedef enum {
+	IPSEC_POLICY_TYPE_HOMEREGBINDING,
+	IPSEC_POLICY_TYPE_BERROR,
+	IPSEC_POLICY_TYPE_MH,
+	IPSEC_POLICY_TYPE_MOBPFXDISC,
+	IPSEC_POLICY_TYPE_ICMP,
+	IPSEC_POLICY_TYPE_ANY,
+	IPSEC_POLICY_TYPE_TUNNELHOMETESTING,
+	IPSEC_POLICY_TYPE_TUNNELMH,
+	IPSEC_POLICY_TYPE_TUNNELPAYLOAD
+} ipsec_policy_type_t;
 
 struct ipsec_policy_entry {
 	struct list_head list;
 	struct in6_addr ha_addr;
 	struct in6_addr mn_addr;
-	int type;
-	int ipsec_protos;
+	ipsec_policy_type_t type;
+	int use_esp;
+	int use_ah;
+	int use_ipcomp;
 	int action;
-	uint32_t reqid_toha;
-	uint32_t reqid_tomn;
+	unsigned int reqid_toha;
+	unsigned int reqid_tomn;
 };
-
-#define IPSEC_PROTO_ESP 0x1
-#ifndef MULTIPROTO_MIGRATE
-#define IPSEC_PROTO_AH 0
-#define IPSEC_PROTO_IPCOMP 0
-#else
-#define IPSEC_PROTO_AH 0x2
-#define IPSEC_PROTO_IPCOMP 0x4
-#endif
-
-static inline int ipsec_use_esp(struct ipsec_policy_entry *e)
-{
-	return e->ipsec_protos & IPSEC_PROTO_ESP;
-}
-
-static inline int ipsec_use_ah(struct ipsec_policy_entry *e)
-{
-	return e->ipsec_protos & IPSEC_PROTO_AH;
-}
-
-static inline int ipsec_use_ipcomp(struct ipsec_policy_entry *e)
-{
-	return e->ipsec_protos & IPSEC_PROTO_IPCOMP;
-}
 
 int ipsec_policy_apply(const struct in6_addr *haaddr,
 		       const struct in6_addr *hoa,

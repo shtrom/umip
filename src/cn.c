@@ -1,13 +1,11 @@
 /*
- * $Id: cn.c 1.84 06/05/07 21:52:42+03:00 anttit@tcs.hut.fi $
+ * $Id: cn.c 1.71 05/12/12 20:06:52+02:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
- * Authors: Ville Nuorvala <vnuorval@tcs.hut.fi>
- *          Antti Tuominen <anttit@tcs.hut.fi>
+ * Author: Antti Tuominen <anttit@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2004 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -29,11 +27,20 @@
 #include <config.h>
 #endif
 
+#include <syslog.h>
 #include <time.h>
-#include <pthread.h>
 
+#ifdef HAVE_LIBPTHREAD
+#include <pthread.h>
+#else
+#error "POSIX Thread Library required!"
+#endif
 #include <netinet/icmp6.h>
+#ifdef HAVE_NETINET_IP6MH_H
 #include <netinet/ip6mh.h>
+#else
+#include <netinet-ip6mh.h>
+#endif
 #include <netinet/ip6.h>
 
 #include "mipv6.h"
@@ -45,6 +52,7 @@
 #include "keygen.h"
 #include "retrout.h"
 #include "cn.h"
+#include "xfrm.h"
 #include "conf.h"
 
 #define ICMP_ERROR_PERSISTENT_THRESHOLD 3
@@ -52,10 +60,12 @@
 const struct timespec cn_brr_before_expiry_ts =
 { CN_BRR_BEFORE_EXPIRY, 0 };
 
-static void cn_recv_dst_unreach(const struct icmp6_hdr *ih, ssize_t len,
+static void cn_recv_dst_unreach(const struct icmp6_hdr *ih, 
+				const ssize_t len,
 				const struct in6_addr *src, 
 				const struct in6_addr *dst,
-				int iif, int hoplimit)
+				const int iif,
+				const int hoplimit)
 {
 	struct ip6_hdr *ip6h = (struct ip6_hdr *)(ih + 1);
 	int optlen = len - sizeof(struct icmp6_hdr);
@@ -89,8 +99,10 @@ static struct icmp6_handler cn_dst_unreach_handler = {
 	.recv = cn_recv_dst_unreach,
 };
 
-static void cn_recv_hoti(const struct ip6_mh *mh, ssize_t len,
-			 const struct in6_addr_bundle *in, int iif)
+static void cn_recv_hoti(const struct ip6_mh *mh,
+			 const ssize_t len,
+			 const struct in6_addr_bundle *in,
+			 const int iif)
 {
 	struct ip6_mh_home_test_init *hoti;
 	struct ip6_mh_home_test *hot;
@@ -119,8 +131,10 @@ static struct mh_handler cn_hoti_handler = {
 	.recv = cn_recv_hoti,
 };
 
-static void cn_recv_coti(const struct ip6_mh *mh, ssize_t len,
-			 const struct in6_addr_bundle *in, int iif)
+static void cn_recv_coti(const struct ip6_mh *mh,
+			 const ssize_t len,
+			 const struct in6_addr_bundle *in,
+			 const int iif)
 {
 	struct ip6_mh_careof_test_init *coti;
 	struct ip6_mh_careof_test *cot;
@@ -149,8 +163,10 @@ static struct mh_handler cn_coti_handler = {
 	.recv = cn_recv_coti,
 };
 
-void cn_recv_bu(const struct ip6_mh *mh, ssize_t len,
-		const struct in6_addr_bundle *in, int iif)
+void cn_recv_bu(const struct ip6_mh *mh,
+		const ssize_t len,
+		const struct in6_addr_bundle *in,
+		const int iif)
 {
 	struct mh_options mh_opts;
 	struct in6_addr_bundle out;
@@ -168,7 +184,6 @@ void cn_recv_bu(const struct ip6_mh *mh, ssize_t len,
 	status = mh_bu_parse(bu, len, in, &out, &mh_opts, &lft, key);
 	if (status < 0)
 		return;
-
 	seqno = ntohs(bu->ip6mhbu_seqno);
 	if (status >= IP6_MH_BAS_UNSPECIFIED)
 		goto send_nack;
@@ -209,8 +224,6 @@ void cn_recv_bu(const struct ip6_mh *mh, ssize_t len,
 				status = IP6_MH_BAS_NI_EXPIRED;
 				goto send_nack;
 			}
-		}
-		if (bce->type == BCE_NONCE_BLOCK) {
 			bcache_release_entry(bce);
 			bce = NULL;
 			/* don't let MN deregister BCE_NONCE_BLOCK entry */
@@ -225,8 +238,7 @@ void cn_recv_bu(const struct ip6_mh *mh, ssize_t len,
 		status = IP6_MH_BAS_HA_NOT_SUPPORTED;
 		goto send_nack;
 	}
-	status = conf.pmgr.discard_binding(out.dst, out.bind_coa,
-					   out.src, bu, len);
+	status = conf.pmgr.discard_binding(&out, bu, &mh_opts);
 
 	if (status >= IP6_MH_BAS_UNSPECIFIED) {
 		pkey = key;
@@ -305,8 +317,8 @@ void cn_init(void)
 void cn_cleanup(void)
 {
 	mh_handler_dereg(IP6_MH_TYPE_BU, &cn_bu_handler);
+	bcache_flush();
 	mh_handler_dereg(IP6_MH_TYPE_COTI, &cn_coti_handler);
 	mh_handler_dereg(IP6_MH_TYPE_HOTI, &cn_hoti_handler);
 	icmp6_handler_dereg(ICMP6_DST_UNREACH, &cn_dst_unreach_handler);
-	bcache_flush();
 }

@@ -1,12 +1,7 @@
-/* $Id: list.h 1.8 06/05/05 12:14:34+03:00 anttit@tcs.hut.fi $ */
+/* $Id: list.h 1.7 05/02/18 12:40:12+02:00 anttit@tcs.hut.fi $ */
 
 #ifndef __LIST_H__
 #define __LIST_H__ 1
-
-#include <stddef.h>
-
-#define container_of(ptr, type, member) \
-        (type *)( (char *)ptr - offsetof(type, member) )
 
 /*
  * List manipulation macros are from include/linux/list.h
@@ -158,7 +153,7 @@ static inline void list_splice(struct list_head *list, struct list_head *head)
  * @member:	the name of the list_struct within the struct.
  */
 #define list_entry(ptr, type, member) \
-        container_of(ptr, type, member)
+        (type *)( (char *)ptr - ((size_t) &((type *)0)->member) )
 
 /**
  * list_for_each	-	iterate over a list

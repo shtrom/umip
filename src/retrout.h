@@ -1,27 +1,29 @@
-/* $Id: retrout.h 1.46 06/01/31 23:48:23+02:00 vnuorval@tcs.hut.fi $ */
+/* $Id: retrout.h 1.37 05/12/10 03:59:28+02:00 vnuorval@tcs.hut.fi $ */
 
 #ifndef __RETROUT_H__
 #define __RETROUT_H__ 1
 
-#include <stdio.h>
-
 struct bulentry;
+struct ip6_mh;
+struct mn_addr;
+struct in6_addr_bundle;
+struct tq_elem;
 
-void mn_rr_refresh(struct bulentry *bule);
+int mn_rr_post_home_handoff(void *bule, void *vcoa);
 
-void mn_rr_force_refresh(struct bulentry *bule);
+int mn_rr_start_handoff(void *vbule, void *vcoa);
 
-int rr_init(void);
+void mn_rr_check_entry(struct tq_elem *tqe); 
 
-void mn_rr_delete_co(struct in6_addr *coa);
-void mn_rr_delete_bule(struct bulentry *bule);
+void mn_start_ro(struct in6_addr *cn_addr, struct in6_addr *home_addr,
+		 struct mn_addr *coa);
 
-int mn_rr_error_check(const struct in6_addr *peer,
-		      const struct in6_addr *own,
-		      struct in6_addr *hoa);
+int mn_rr_cond_start_hot(void *bule, int uncond);
 
-void rrl_dump(FILE *os);
+int mn_rr_cond_start_cot(struct bulentry *bule, struct bulentry **co_bule, 
+			 struct in6_addr *coa, int if_index, int uncond);
 
+void rr_init(void);
 void rr_cleanup(void);
 
 #endif

@@ -24,7 +24,6 @@
 #define __VT_H 1
 
 #include "list.h"
-#include <stdio.h>
 
 #define VT_DEFAULT_HOSTNAME	"localhost"
 #define VT_DEFAULT_SERVICE	"7777" /* string */
@@ -47,7 +46,6 @@ struct vt_info {
 struct vt_handle {
 	struct vt_opt vh_opt;
 	int vh_sock;
-	FILE *vh_stream;
 };
 
 struct vt_cmd_entry {
@@ -59,18 +57,13 @@ struct vt_cmd_entry {
 	struct list_head child_list;
 };
 
-#define VTDECOR_B  1
-#define VTDECOR_BU 2
-
-#define fprintf_bl(...) fprintf_decor(VTDECOR_BU,__VA_ARGS__)
-#define fprintf_b(...) fprintf_decor(VTDECOR_B,__VA_ARGS__)
-
-ssize_t fprintf_decor(int decor, const struct vt_handle *vh, 
-		      const char *fmt, ...);
-
+ssize_t vt_printf(const struct vt_handle *vh, const char *fmt, ...);
+ssize_t vt_printf_b(const struct vt_handle *vh, const char *fmt, ...);
+ssize_t vt_printf_bl(const struct vt_handle *vh, const char *fmt, ...);
 const struct vt_info *vt_info_get(void);
 int vt_cmd_add(struct vt_cmd_entry *parent, struct vt_cmd_entry *e);
 int vt_cmd_add_root(struct vt_cmd_entry *e);
+int vt_cmd_init(struct vt_cmd_entry *e);
 int vt_start(const char *vthost, const char *vtservice);
 
 int vt_bul_init(void);

@@ -1,13 +1,12 @@
 /*
- * $Id: dhaad_ha.c 1.14 06/05/07 21:52:42+03:00 anttit@tcs.hut.fi $
+ * $Id: dhaad_ha.c 1.9 05/12/12 17:59:16+02:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
  * Authors: Antti Tuominen <anttit@tcs.hut.fi>
  *          Ville Nuorvala <vnuorval@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2004 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -28,9 +27,16 @@
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
+#ifdef HAVE_LIBPTHREAD
 #include <pthread.h>
+#else
+#error "POSIX Thread Library required!"
+#endif
 #include <netinet/ip6.h>
 #include <netinet/icmp6.h>
+#ifndef HAVE_MIP6_ICMP6_H
+#include <netinet-icmp6.h>
+#endif
 #include <net/if.h>
 #include <errno.h>
 
@@ -152,9 +158,12 @@ static int dhaad_get_halist(struct ha_interface *i, int max, struct iovec *iov)
 	return n;
 }
 
-static void dhaad_recv_req(const struct icmp6_hdr *ih, ssize_t len,
+static void dhaad_recv_req(const struct icmp6_hdr *ih,
+			   const ssize_t len,
 			   const struct in6_addr *src, 
-			   const struct in6_addr *dst, int iif, int hoplimit)
+			   const struct in6_addr *dst,
+			   const int iif,
+			   const int hoplimit)
 {
 	struct mip_dhaad_req *rqh = (struct mip_dhaad_req *)ih;
 	struct mip_dhaad_rep *rph;

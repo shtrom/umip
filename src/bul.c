@@ -1,12 +1,11 @@
 /*
- * $Id: bul.c 1.114 06/05/15 13:45:42+03:00 vnuorval@tcs.hut.fi $
+ * $Id: bul.c 1.95 05/12/12 17:59:16+02:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  *
  * Author: Henrik Petander <petander@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2004 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -29,7 +28,11 @@
 #endif
 #include <time.h>
 #include <errno.h>
+#ifdef HAVE_NETINET_IP6MH_H
 #include <netinet/ip6mh.h>
+#else
+#include <netinet-ip6mh.h>
+#endif
 #include <syslog.h>
 
 #include "bul.h"
@@ -37,7 +40,6 @@
 #include "util.h"
 #include "xfrm.h"
 #include "debug.h"
-#include "retrout.h"
 #ifdef ENABLE_VT
 #include "vt.h"
 #endif
@@ -54,15 +56,12 @@
 
 static struct hash bul_hash;
 
-struct bulentry *create_bule(const struct in6_addr *hoa,
-			     const struct in6_addr *cn_addr)
+struct bulentry *create_bule(struct in6_addr *cn_addr)
 {
 	struct bulentry *bule;
 	if ((bule = malloc(sizeof(*bule))) != NULL) {
 		memset(bule, 0, sizeof(*bule));
-		bule->hoa = *hoa;
-		bule->last_coa = *hoa;
-		bule->peer_addr = *cn_addr;
+		INIT_LIST_HEAD(&bule->rr.home_addrs);
 		INIT_LIST_HEAD(&bule->tqe.list);
 		bule->seq = random();
 	}
@@ -75,40 +74,33 @@ void free_bule(struct bulentry *bule)
 	free(bule);
 }
 
-void dump_bule(void *bule, void *os)
+void dump_bule(struct bulentry *bule)
 {
-	struct bulentry *e = (struct bulentry *)bule;
-	FILE *out = (FILE *)os;
-
-	if (e->type == BUL_ENTRY)
-		fprintf(out, "== BUL_ENTRY ==\n");
-	else if (e->type == NON_MIP_CN_ENTRY)
-		fprintf(out, "== NON_MIP_CN_ENTRY ==\n");
-	else if (e->type == UNREACH_ENTRY)
-		fprintf(out, "== UNREACH_ENTRY ==\n");
+	BDBG("******* [%p] *******\n", bule);
+	BDBG("coa = %x:%x:%x:%x:%x:%x:%x:%x\n", NIP6ADDR(&bule->coa));
+	BDBG("hoa = %x:%x:%x:%x:%x:%x:%x:%x\n", NIP6ADDR(&bule->hoa));
+	BDBG("CN address = %x:%x:%x:%x:%x:%x:%x:%x\n",
+	     NIP6ADDR(&bule->peer_addr));
+	BDBG(" lifetime = %d, ", bule->lifetime.tv_sec);
+	BDBG("delay = %d\n", tstomsec(bule->delay));
+	BDBG("flags: ");
+	if (bule->flags & IP6_MH_BU_HOME)
+		BDBG("IP6_MH_BU_HOME ");
+	if (bule->flags & IP6_MH_BU_ACK)
+		BDBG("IP6_MH_BU_ACK ");
+	if (bule->flags & IP6_MH_BU_KEYM)
+		BDBG("IP6_MH_BU_KEYM");
+	BDBG("\n");
+	if (bule->type == BUL_ENTRY)
+		BDBG("type = BUL_ENTRY\n");
+	else if (bule->type == HOT_ENTRY)
+		BDBG("type = HOT_ENTRY\n");
+	else if (bule->type == COT_ENTRY)
+		BDBG("type = COT_ENTRY\n");
+	else if (bule->type == NON_MIP_CN_ENTRY)
+		BDBG("type = NON_MIP_CN_ENTRY\n");
 	else 
-		fprintf(out, "== Unknown BUL entry ==\n");
-
-	fprintf(out, "Home address    %x:%x:%x:%x:%x:%x:%x:%x\n",
-		NIP6ADDR(&e->hoa));
-	fprintf(out, "Care-of address %x:%x:%x:%x:%x:%x:%x:%x\n",
-		NIP6ADDR(&e->coa));
-	fprintf(out, "CN address      %x:%x:%x:%x:%x:%x:%x:%x\n",
-		NIP6ADDR(&e->peer_addr));
-	fprintf(out, " lifetime = %ld, ", e->lifetime.tv_sec);
-	fprintf(out, " delay = %ld\n", tstomsec(e->delay));
-	fprintf(out, " flags: ");
-	if (e->flags & IP6_MH_BU_HOME)
-		fprintf(out, "IP6_MH_BU_HOME ");
-	if (e->flags & IP6_MH_BU_ACK)
-		fprintf(out, "IP6_MH_BU_ACK ");
-	if (e->flags & IP6_MH_BU_LLOCAL)
-		fprintf(out, "IP6_MH_BU_LLOCAL");
-	if (e->flags & IP6_MH_BU_KEYM)
-		fprintf(out, "IP6_MH_BU_KEYM");
-
-	fprintf(out, "\n");
-	fflush(out);
+		BDBG("Unknown type\n");
 }
 
 /**
@@ -144,21 +136,23 @@ struct bulentry *bul_get(struct home_addr_info *hinfo,
 void bul_update_timer(struct bulentry *bule)
 {
 	struct timespec timer_expire;
+
+	BDBG("******* [%p] *******\n", bule);
 	tsadd(bule->delay, bule->lastsent, timer_expire);
-	dbg("Updating timer\n");
-	dump_bule(bule, sdbg);
 	add_task_abs(&timer_expire, &bule->tqe, bule->callback);
 }
 
 void bul_update_expire(struct bulentry *bule)
 {
 
-	if (bule->type != BUL_ENTRY)
-		bule->expires = bule->lastsent;
-	else if (tsisset(bule->lifetime))
+	BDBG("******* [%p] *******\n", bule);
+	bule->expires = bule->lastsent;
+	if (tsisset(bule->lifetime))
 		tsadd(bule->lastsent, bule->lifetime, bule->expires);
-	else {
-		/* Deregistration entry, expires after 420 seconds...*/
+	else if (bule->type == NON_MIP_CN_ENTRY) {
+		bule->expires = bule->lastsent;
+	} else {
+		/* Deregistration entry, expires after 10000 seconds...*/
 		tsadd(DEREG_BU_LIFETIME_TS, bule->lastsent, bule->expires);
 	}
 }
@@ -169,74 +163,74 @@ int bul_add(struct bulentry *bule)
 {
 	int ret = 0;
 	struct timespec timer_expire;
-	struct home_addr_info *hai = bule->home;
-
-	assert(bule && tsisset(bule->lifetime) && hai);
+	assert(bule && tsisset(bule->lifetime));
 	
+	BDBG("******* [%p] *******\n", bule);
+
 	if ((ret = hash_add(&bul_hash, bule, &bule->hoa, &bule->peer_addr)) < 0)
 		return ret;
-	if ((ret = hash_add(&hai->bul, bule, NULL, &bule->peer_addr)) < 0)
-		goto bul_free;
 
 	clock_gettime(CLOCK_REALTIME, &bule->lastsent);
 	if (bule->type == BUL_ENTRY) {
-		if ((ret = pre_bu_bul_update(bule)) < 0)
+		assert(&bule->home != NULL);
+		if ((ret = hash_add(&bule->home->bul,
+				    bule, NULL, &bule->peer_addr)) < 0)
+			goto bul_free;
+		if ((ret = xfrm_pre_bu_add_bule(bule)) < 0)
 			goto home_bul_free;
+	} else if (bule->type == HOT_ENTRY) {
+		assert(bule->home != NULL);
+		if ((ret = hash_add(&bule->home->bul, 
+				    bule, NULL, &bule->peer_addr)) < 0)
+			goto bul_free;
 	} else if (bule->type == NON_MIP_CN_ENTRY) {
-		if (bule->flags & IP6_MH_BU_HOME) {
-			if (xfrm_block_hoa(hai) < 0)
-				goto home_bul_free;
-		}
+		assert(bule->home != NULL);
+		if ((ret = hash_add(&bule->home->bul, 
+				    bule, NULL, &bule->peer_addr)) < 0)
+			goto bul_free;
+		if (bule->flags & IP6_MH_BU_HOME && xfrm_block_hoa(bule->home) < 0)
+			goto home_bul_free;
+
 	}
 	tsadd(bule->delay, bule->lastsent, timer_expire);
-	dbg("Adding bule\n");
-	dump_bule(bule, sdbg);
 	add_task_abs(&timer_expire, &bule->tqe, bule->callback);
 	return 0;
 home_bul_free:
-	hash_delete(&hai->bul, &bule->hoa, &bule->peer_addr);
+	hash_delete(&bule->home->bul, &bule->hoa, &bule->peer_addr);
 bul_free:
 	hash_delete(&bul_hash, &bule->hoa, &bule->peer_addr);
 	return ret; 
+}
+void bul_cleanup_cote(struct bulentry *bule)
+{
+	struct list_head *list, *n;
+	BDBG("Deleting entries from COT entry home address list\n");
+	list_for_each_safe(list, n, &bule->rr.home_addrs) {
+		list_del(list);
+		free(list_entry(list, struct addr_holder, list));
+	}
 }
 
 /* bul_delete - deletes a bul entry */
 void bul_delete(struct bulentry *bule)
 {
-	struct home_addr_info *hai = bule->home;
+	assert(bule);
 
-	del_task(&bule->tqe);
+	BDBG("******* [%p] *******\n", bule);
+
 	hash_delete(&bul_hash, &bule->hoa, &bule->peer_addr);
-	hash_delete(&hai->bul, NULL, &bule->peer_addr);
-
-	if (!IN6_ARE_ADDR_EQUAL(&bule->hoa, &bule->coa)) {
-		bule->last_coa = bule->coa;
-		bule->coa = bule->hoa;
-		bule->coa_changed = 1;
-	}
-	if (bule->type == BUL_ENTRY) {
-		xfrm_del_bule(bule);
-		if (!(bule->flags & IP6_MH_BU_HOME))
-			mn_rr_delete_bule(bule);
-	}
-	if (bule->flags & IP6_MH_BU_HOME) {
-		if (bule->type == UNREACH_ENTRY) {
-			pthread_mutex_lock(&hai->ha_list.c_lock);
-			if (IN6_ARE_ADDR_EQUAL(&bule->peer_addr, 
-					       &hai->ha_list.last_ha))
-				hai->ha_list.last_ha = in6addr_any;
-			pthread_mutex_unlock(&hai->ha_list.c_lock);
-		} else {
-			if (hai->home_block & HOME_LINK_BLOCK)
-				xfrm_unblock_link(hai);
-			if (hai->home_block & HOME_ADDR_BLOCK)
-				xfrm_unblock_hoa(hai);
-		}
+	del_task(&bule->tqe);
+	if (bule->type == COT_ENTRY) {
+		bul_cleanup_cote(bule);
+	} else { 
+		if (bule->type != NON_MIP_CN_ENTRY)
+			xfrm_del_bule(bule);
+		else if (bule->flags & IP6_MH_BU_HOME)
+			xfrm_unblock_hoa(bule->home);
+		hash_delete(&bule->home->bul, NULL, &bule->peer_addr);
 	}
 	while (bule->ext_cleanup)
 		bule->ext_cleanup(bule);
-	dbg("Deleting bule\n");
-	dump_bule(bule, sdbg);
 	free_bule(bule);
 }
 
@@ -266,9 +260,20 @@ int bul_home_init(struct home_addr_info *home)
 /* bule_cleanup - cleans up a bulentry */
 static int bule_cleanup(void *vbule, void *vbul)
 {
-	if (vbul == NULL)
-		BUG("bul_hash should be empty!\n");
-	bul_delete(vbule);
+	struct bulentry *bule = vbule;
+	struct hash *bul = vbul;
+	BDBG("\n");
+	if (bul)
+		hash_delete(bul, &bule->hoa, &bule->peer_addr);
+	hash_delete(&bul_hash, &bule->hoa, &bule->peer_addr);
+	del_task(&bule->tqe);
+	if (bule->ext_cleanup)
+		bule->ext_cleanup(bule);
+	if (bule->type == COT_ENTRY)
+		bul_cleanup_cote(bule);
+	else if (bule->type != NON_MIP_CN_ENTRY) 
+		xfrm_del_bule(bule);
+	free_bule(bule);
 	return 0;
 }
 

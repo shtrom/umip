@@ -1,4 +1,4 @@
-/* $Id: bul.h 1.64 06/05/15 13:41:12+03:00 vnuorval@tcs.hut.fi $ */
+/* $Id: bul.h 1.55 05/12/10 03:59:28+02:00 vnuorval@tcs.hut.fi $ */
 
 #ifndef __BUL_H__
 #define __BUL_H__ 1
@@ -13,9 +13,16 @@
 struct home_addr_info;
 
 struct retrout_info {
-	int state;
-	uint16_t co_ni;
-	uint16_t ho_ni;
+	struct timespec kgen_expires;
+	uint8_t cookie[8];
+	uint8_t kgen_token[8];
+	int dereg; /* for calculating BSA key */
+	uint8_t wait_hot; /* WAIT / READY */
+	uint8_t wait_cot; /* WAIT / READY */
+	uint8_t do_send_bu; /* send bu / not send bu */
+	uint16_t coa_nonce_ind;
+	uint16_t home_nonce_ind;
+	struct list_head home_addrs; /* List of HoAs for CoT entry */
 };
 
 struct addr_holder {
@@ -31,51 +38,37 @@ struct bulentry {
 	struct in6_addr hoa;
 	struct in6_addr coa;		/* care-of address of the sent BU */
 	int if_coa;
-	int type;                       /* BUL / NON_MIP_CN / UNREACH  */
+	struct in6_addr prev_coa;        /* Previous coa */      
+	struct timespec lastsent;
+
+	struct timespec lifetime;      	/* lifetime sent in this BU in seconds*/
+	struct timespec expires;        /* In seconds */
 	uint16_t seq;			/* sequence number of the latest BU */
 	uint16_t flags;			/* BU send flags */
-	struct in6_addr last_coa;        /* Last good coa */      
-	struct timespec lastsent;
-	struct timespec lifetime;      	/* lifetime sent in this BU */
-	struct timespec delay;		/* call back time in ms*/
-	struct timespec expires;        /* Absolute time for timer expire */
-	struct timespec hard_expire;    /* Absolute bulentry expiry time */
-	int consecutive_resends;	/* Number of consecutive BU's resent */
-	int8_t coa_changed;
 	uint8_t wait_ack;      		/* WAIT / READY */
-	uint8_t xfrm_state;
-	uint8_t use_alt_coa;            /* Whether to use alt. CoA option */
-	uint8_t dereg;                  /* for calculating BSA key */
-	uint8_t do_send_bu;             /* send bu / not send bu */
+	struct timespec delay;		/* call back time in ms*/
+	int consecutive_resends;	/* Number of consecutive BU's sent */
+
+	int xfrm_state;
+	int use_alt_coa;               /* Whether to use alt. CoA option */
+	int coa_changed;
+	
+	void (* callback)(struct tq_elem *);
+	void (*ext_cleanup)(struct bulentry *);
 
 	/* Information for return routability */
 	struct retrout_info rr;
-	uint8_t Kbm[HMAC_SHA1_KEY_SIZE];
 
-	void (* callback)(struct tq_elem *);
-	void (*ext_cleanup)(struct bulentry *);
-};	
-
-
-
-
+	uint8_t bind_key[HMAC_SHA1_KEY_SIZE];
+	int type; /* BUL entry / COT entry */
+};
 
 /* Types for bulentry */
 enum {
+	COT_ENTRY,
+	HOT_ENTRY,
 	BUL_ENTRY,
-	NON_MIP_CN_ENTRY,
-	UNREACH_ENTRY,
-};
-
-/* RR states */
-enum {
-	RR_READY,
-	RR_STARTED,
-	RR_NOT_STARTED,
-	RR_H_EXPIRED,
-	RR_C_EXPIRED,
-	RR_EXPIRED,
-	RR_NON_MIP_CN
+	NON_MIP_CN_ENTRY
 };
 
 /* Types of xfrm_states */
@@ -100,9 +93,8 @@ int bul_home_init(struct home_addr_info *home);
 void bul_home_cleanup(struct hash *bul);
 void bul_flush(void);
 void bul_cleanup(void);
-void dump_bule(void *bule, void *os);
-struct bulentry *create_bule(const struct in6_addr *hoa,
-			     const struct in6_addr *cn_addr);
+void dump_bule(struct bulentry *bule);
+struct bulentry *create_bule(struct in6_addr *cn_addr);
 void free_bule(struct bulentry *bule);
 
 #endif

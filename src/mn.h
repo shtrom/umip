@@ -1,4 +1,4 @@
-/* $Id: mn.h 1.85 06/05/15 13:45:42+03:00 vnuorval@tcs.hut.fi $ */
+/* $Id: mn.h 1.75 05/12/23 19:21:17+09:00 takamiya@po.ntts.co.jp $ */
 
 #ifndef __MN_H__
 #define __MN_H__ 1
@@ -10,7 +10,7 @@
 #include "prefix.h"
 #include "tqueue.h"
 
-#define DEREG_BU_LIFETIME               420
+#define DEREG_BU_LIFETIME               10000
 extern const struct timespec dereg_bu_lifetime_ts;
 #define DEREG_BU_LIFETIME_TS dereg_bu_lifetime_ts
 
@@ -28,6 +28,8 @@ extern const struct timespec non_mip_cn_ltime_ts;
 					    * bule in response to BE,
 					    * in seconds */
 #define MN_RO_RESTART_THRESHOLD         10 /* s */
+#define MN_MAX_CONSECUTIVE_RESENDS      5 /* Before switching to new HA */
+
 #define MIN_VALID_BU_LIFETIME           4 /* seconds */
 extern const struct timespec min_valid_bu_lifetime_ts;
 #define MIN_VALID_BU_LIFETIME_TS min_valid_bu_lifetime_ts
@@ -39,7 +41,6 @@ struct ha_candidate_list {
 	struct in6_addr last_ha;
 	int dhaad_resends;
 	int dhaad_id;
-	int if_block;
 	pthread_mutex_t c_lock;
 };
 
@@ -61,27 +62,26 @@ struct mn_addr {
 struct home_addr_info {
 	struct list_head list;
 	struct mn_addr hoa; /* Home address */
-	uint8_t plen; 
-	uint8_t home_reg_status;
-	uint8_t home_block;
-	uint8_t use_dhaad;
-	uint16_t lladdr_comp;
-	uint8_t at_home;
-	uint8_t home_plen;
-	struct in6_addr home_prefix;
 	struct hash bul; /* Binding Update List */
-	struct mn_addr primary_coa;
+	int lladdr_comp;
+	int plen; 
+	int home_reg_status;
+	int home_block;
+	int pend_ba;
 	struct list_head ro_policies;
 	struct ha_candidate_list ha_list;	
 	struct in6_addr ha_addr;
-	int pend_ba;
-	int verdict;
-	int if_tunnel;
-	int if_home;
-	int if_block;
-	short hwalen;
-	uint8_t altcoa;
+	struct in6_addr home_prefix;
+	int home_plen;
 	char name[IF_NAMESIZE];
+	int use_dhaad;
+	int verdict;
+	int at_home;
+	int altcoa;
+	int if_tunnel;
+	struct mn_addr primary_coa;
+	int if_home;
+	int hwalen;
 };
 
 enum {
@@ -90,14 +90,8 @@ enum {
 	MN_HO_IGNORE,
 	MN_HO_PROCEED,
 	MN_HO_REESTABLISH,
-	MN_HO_CHECK_LIFETIME,
-	MN_HO_RETURN_HOME
+	MN_HO_CHECK_LIFETIME
 };
-
-static inline int movement_ho_verdict(int verdict)
-{
-	return verdict == MN_HO_PROCEED;
-}
 
 static inline int positive_ho_verdict(int verdict)
 {
@@ -105,7 +99,6 @@ static inline int positive_ho_verdict(int verdict)
 	case MN_HO_PROCEED:
 	case MN_HO_REESTABLISH:
 	case MN_HO_CHECK_LIFETIME:
-	case MN_HO_RETURN_HOME:
 		return 1;
 	}
 	return 0;
@@ -126,6 +119,8 @@ void mn_send_cn_bu(struct bulentry *bule);
 
 struct home_addr_info *mn_get_home_addr_by_dhaadid(uint16_t dhaad_id);
 
+int mn_get_home_reg_coa(const struct in6_addr *hoa, struct in6_addr *coa);
+
 struct movement_event;
 
 /* Interface to movement detection */
@@ -142,14 +137,9 @@ int mn_addr_changed(int add, struct ifaddrmsg *ifa, struct rtattr **rta_tb);
 
 int mn_lladdr_dad(struct ifaddrmsg *ifa, struct rtattr *rta_tb[], void *arg);
 
-int mn_rr_start_handoff(void *vbule, void *vcoa);
-
-int mn_rr_post_home_handoff(void *bule, void *vcoa);
-
-void mn_start_ro(struct in6_addr *cn_addr, struct in6_addr *home_addr, int iif);
 
 static inline int mn_is_at_home(struct list_head *prefixes,
-				const struct in6_addr *home_prefix,
+				struct in6_addr *home_prefix,
 				int home_plen)
 {
 	return prefix_list_find(prefixes, home_prefix, home_plen);

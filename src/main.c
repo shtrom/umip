@@ -1,13 +1,11 @@
 /*
- * $Id: main.c 1.67 06/05/05 19:40:57+03:00 anttit@tcs.hut.fi $
+ * $Id: main.c 1.58 05/12/10 03:16:13+02:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
- * Authors: Antti Tuominen <anttit@tcs.hut.fi>
- *          Ville Nuorvala <vnuorval@tcs.hut.fi>
+ * Author: Antti Tuominen <anttit@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2005 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -31,7 +29,11 @@
 #include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <sys/param.h>
+#ifdef HAVE_LIBPTHREAD
 #include <pthread.h>
+#else
+#error "POSIX Thread Library required!"
+#endif
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -40,7 +42,11 @@
 #include <errno.h>
 #include <signal.h>
 #include <syslog.h>
+
 #include <netinet/icmp6.h>
+#ifndef HAVE_MIP6_ICMP6_H
+#include <netinet-icmp6.h>
+#endif
 
 #include "conf.h"
 #include "cn.h"
@@ -58,14 +64,14 @@
 #endif
 #include "tunnelctl.h"
 
-static void sig_child(int unused)
+void sig_child(int unused)
 {
 	int pid, status;
 
 	while ((pid = waitpid(0, &status, WNOHANG)) > 0);
 }
 
-static void reinit(void)
+void reinit(void)
 {
 	/* got SIGHUP, reread configuration and reinitialize */
 	dbg("got SIGHUP, reinitilize\n");
@@ -75,7 +81,7 @@ static void reinit(void)
 
 struct mip6_config conf;
 
-static void terminate(void)
+void terminate(void)
 {
 	/* got SIGINT, cleanup and exit */
 	syslog(LOG_INFO, "terminated (SIGINT)");
@@ -130,12 +136,10 @@ static void daemon_start(int ignsigcld)
 	}
 }
 
-static void *sigh(void *arg)
+void *sigh(void *arg)
 {
 	int signum;
 	sigset_t sigcatch;
-
-	pthread_dbg("thread started");
 
 	sigemptyset(&sigcatch);
 	sigaddset(&sigcatch, SIGHUP);
@@ -176,8 +180,6 @@ int main(int argc, char **argv)
 	int logflags = 0;
 	int ret = 1;
 
-	sdbg = stderr;
-
 	sigemptyset(&sigblock);
 	sigaddset(&sigblock, SIGHUP);
 	sigaddset(&sigblock, SIGINT);
@@ -186,6 +188,8 @@ int main(int argc, char **argv)
 	sigaddset(&sigblock, SIGPIPE);
 #endif
 	pthread_sigmask(SIG_BLOCK, &sigblock, NULL);
+
+	memset(&conf, 0, sizeof(conf));
 
 	if (conf_parse(&conf, argc, argv))
 		return 1;
@@ -206,8 +210,8 @@ int main(int argc, char **argv)
 	if (conf.debug_level == 0)
 		daemon_start(1);
 	else {
-		dbg("%s started in debug mode, not detaching from terminal\n",
-		    PACKAGE_NAME);
+		dbg("%s v%s started (%s)\n", PACKAGE_NAME, PACKAGE_VERSION,
+		    entity_string[conf.mip6_entity]);
 		conf_show(&conf);
 	}
 

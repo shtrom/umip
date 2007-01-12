@@ -1,0 +1,2 @@
+#define DEFAULT_CONFIG_FILE "@sysconfdir@/mip6d.conf"
+#define DEFAULT_PROGRAM_PATH "@sbindir@/mip6d"

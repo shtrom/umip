@@ -1,13 +1,11 @@
 /*
- * $Id: conf.c 1.50 06/05/12 11:48:36+03:00 vnuorval@tcs.hut.fi $
+ * $Id: conf.c 1.33 05/12/06 18:19:34+02:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
- * Authors: Antti Tuominen <anttit@tcs.hut.fi>
- *          Ville Nuorvala <vnuorval@tcs.hut.fi>
+ * Author: Antti Tuominen <anttit@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2004 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -40,7 +38,11 @@
 #include <getopt.h>
 
 #include <netinet/in.h>
+#ifdef HAVE_NETINET_IP6MH_H
 #include <netinet/ip6mh.h>
+#else
+#include <netinet-ip6mh.h>
+#endif
 #include "defpath.h"
 #include "conf.h"
 #include "debug.h"
@@ -183,43 +185,38 @@ static int conf_cmdline(struct mip6_config *cfg, int argc, char **argv)
 
 static void conf_default(struct mip6_config *c)
 {
-	memset(c, 0, sizeof(*c));
-
-	/* Common options */
+	c->mip6_entity = MIP6_ENTITY_CN;
+	c->debug_level = 0;
 #ifdef ENABLE_VT
 	c->vt_hostname = VT_DEFAULT_HOSTNAME;
 	c->vt_service = VT_DEFAULT_SERVICE;
 #endif
-	c->mip6_entity = MIP6_ENTITY_CN;
-	pmgr_init(NULL, &conf.pmgr);
-	INIT_LIST_HEAD(&c->net_ifaces);
-	INIT_LIST_HEAD(&c->bind_acl);
-	c->DefaultBindingAclPolicy = IP6_MH_BAS_ACCEPTED;
-
-	/* IPsec options */
-	c->UseMnHaIPsec = 1;
-	INIT_LIST_HEAD(&c->ipsec_policies);
-
-	/* MN options */
-	c->MnMaxHaBindingLife = MAX_BINDING_LIFETIME;
-	c->MnMaxCnBindingLife = MAX_RR_BINDING_LIFETIME;
-	tssetdsec(c->InitialBindackTimeoutFirstReg_ts, 1.5);/*seconds*/
-	tssetsec(c->InitialBindackTimeoutReReg_ts, INITIAL_BINDACK_TIMEOUT);/*seconds*/
-	INIT_LIST_HEAD(&c->home_addrs);
-	c->MoveModulePath = NULL; /* internal */
-	c->DoRouteOptimizationMN = 1;
-	c->SendMobPfxSols = 1;
-	c->OptimisticHandoff = 0;
-
-	/* HA options */
-	c->SendMobPfxAdvs = 1;
+	c->NonVolatileBindingCache = 0; /* future */
 	c->SendUnsolMobPfxAdvs = 1;
+	c->SendMobPfxAdvs = 1;
+	c->SendMobPfxSols = 1;
 	c->MaxMobPfxAdvInterval = 86400; /* seconds */
 	c->MinMobPfxAdvInterval = 600; /* seconds */
-	c->HaMaxBindingLife = MAX_BINDING_LIFETIME;
-
-	/* CN bindings */
+	tssetsec(c->MinDelayBetweenRAs_ts, 3); /* seconds */
 	c->DoRouteOptimizationCN = 1;
+	c->DoRouteOptimizationMN = 1;
+	c->MaxBindingLife = MAX_BINDING_LIFETIME;
+	tssetdsec(c->InitialBindackTimeoutFirstReg_ts, 1.5);/*seconds*/
+	tssetsec(c->InitialBindackTimeoutReReg_ts, INITIAL_BINDACK_TIMEOUT);/*seconds*/
+	c->InitialSolicitTimer = 3; /* seconds */
+	c->UseMnHaIPsec = 1;
+	c->KeyMngMobCapability = 0;
+	c->MoveModulePath = NULL; /* internal */
+	c->DefaultBindingAclPolicy = IP6_MH_BAS_ACCEPTED;
+	c->UseCnBuAck = 0;
+	c->MnUseAllInterfaces = 0;
+	c->MnRouterProbesRA = 0;
+	c->MnRouterProbesLinkUp = 0;
+	pmgr_init(NULL, &conf.pmgr);
+	INIT_LIST_HEAD(&c->home_addrs);
+	INIT_LIST_HEAD(&c->ipsec_policies);
+	INIT_LIST_HEAD(&c->bind_acl);
+	INIT_LIST_HEAD(&c->net_ifaces);
 }
 
 int conf_parse(struct mip6_config *c, int argc, char **argv)
@@ -236,18 +233,22 @@ int conf_parse(struct mip6_config *c, int argc, char **argv)
 				"%s: option requires an argument -- c\n",
 				argv[0]);
 			conf_usage(basename(argv[0]));
-			return -1;
+			exit(errno);
 		} else if (ret == -ENAMETOOLONG) {
 			fprintf(stderr,
 				"%s: argument too long -- c <file>\n",
 				argv[0]);
-			return -1;
+			exit(errno);
 		}
 		strcpy(cfile, DEFAULT_CONFIG_FILE);
 	}
 
-	if (conf_file(c, cfile) < 0 && ret == 0)
-		return -1;
+	if (conf_file(c, cfile) < 0 && ret == 0) {
+		fprintf(stderr,
+			"%s: file error: could not parse file \"%s\".\n",
+			argv[0], cfile);
+		exit(errno);
+	}
 
 	if (conf_cmdline(c, argc, argv) < 0)
 		return -1;
@@ -255,59 +256,36 @@ int conf_parse(struct mip6_config *c, int argc, char **argv)
 	return 0;
 }
 
-#define CONF_BOOL_STR(x) ((x) ? "enabled" : "disabled")
-
 void conf_show(struct mip6_config *c)
 {
-	/* Common options */
 	dbg("config_file = %s\n", c->config_file);
+	dbg("mip6_entity = %d\n", c->mip6_entity);
+	dbg("debug_level = %d\n", c->debug_level);
 #ifdef ENABLE_VT
 	dbg("vt_hostname = %s\n", c->vt_hostname);
 	dbg("vt_service = %s\n", c->vt_service);
 #endif
-	dbg("mip6_entity = %u\n", c->mip6_entity);
-	dbg("debug_level = %u\n", c->debug_level);
-	if (c->pmgr.so_path)
-		dbg("PolicyModulePath = %s\n", c->pmgr.so_path);
-	dbg("DefaultBindingAclPolicy = %u\n", c->DefaultBindingAclPolicy);
-	dbg("NonVolatileBindingCache = %s\n",
-	    CONF_BOOL_STR(c->NonVolatileBindingCache));
-	
-	/* IPsec options */
-	dbg("KeyMngMobCapability = %s\n",
-	    CONF_BOOL_STR(c->KeyMngMobCapability));
-	dbg("UseMnHaIPsec = %s\n", CONF_BOOL_STR(c->UseMnHaIPsec));
-
-	/* MN options */
-	dbg("MnMaxHaBindingLife = %u\n", c->MnMaxHaBindingLife);
-	dbg("MnMaxCnBindingLife = %u\n", c->MnMaxCnBindingLife);
-	dbg("MnRouterProbes = %u\n", c->MnRouterProbes);
-	dbg("MnRouterProbeTimeout = %f\n",
-	    tstodsec(c->MnRouterProbeTimeout_ts));
-	dbg("InitialBindackTimeoutFirstReg = %f\n", 
-	    tstodsec(c->InitialBindackTimeoutFirstReg_ts));
-	dbg("InitialBindackTimeoutReReg = %f\n", 
-	    tstodsec(c->InitialBindackTimeoutReReg_ts));
+	dbg("NonVolatileBindingCache = %d\n", c->NonVolatileBindingCache);
+	dbg("SendUnsolMobPfxAdvs = %d\n", c->SendUnsolMobPfxAdvs);
+	dbg("SendMobPfxAdvs = %d\n", c->SendMobPfxAdvs);
+	dbg("SendMobPfxSols = %d\n", c->SendMobPfxSols);
+	dbg("MaxMobPfxAdvInterval = %d\n", c->MaxMobPfxAdvInterval);
+	dbg("MinMobPfxAdvInterval = %d\n", c->MinMobPfxAdvInterval);
+	dbg("MinDelayBetweenRAs = %d.%d\n", 
+	    c->MinDelayBetweenRAs_ts.tv_sec, 
+	    c->MinDelayBetweenRAs_ts.tv_nsec);
+	dbg("DoRouteOptimizationCN = %d\n", c->DoRouteOptimizationCN);
+	dbg("DoRouteOptimizationMN = %d\n", c->DoRouteOptimizationMN);
+	dbg("MaxBindingLife = %d\n", c->MaxBindingLife);
+	dbg("InitialBindackTimeoutFirstReg = %d.%d\n", 
+	    c->InitialBindackTimeoutFirstReg_ts.tv_sec,
+	    c->InitialBindackTimeoutFirstReg_ts.tv_nsec);
+	dbg("InitialBindackTimeoutReReg = %d.%d\n", 
+	    c->InitialBindackTimeoutReReg_ts.tv_sec,
+	    c->InitialBindackTimeoutReReg_ts.tv_nsec);
+	dbg("UseMnHaIPsec = %d\n", c->UseMnHaIPsec);
+	dbg("KeyMngMobCapability = %d\n", c->KeyMngMobCapability);
 	if (c->MoveModulePath)
 		dbg("MoveModulePath = %s\n", c->MoveModulePath);
-	dbg("UseCnBuAck = %s\n", CONF_BOOL_STR(c->CnBuAck));
-	dbg("DoRouteOptimizationMN = %s\n",
-	    CONF_BOOL_STR(c->DoRouteOptimizationMN));
-	dbg("MnUseAllInterfaces = %s\n", CONF_BOOL_STR(c->MnUseAllInterfaces));
-	dbg("MnDiscardHaParamProb = %s\n",
-	    CONF_BOOL_STR(c->MnDiscardHaParamProb));
-	dbg("SendMobPfxSols = %s\n", CONF_BOOL_STR(c->SendMobPfxSols));
-	dbg("OptimisticHandoff = %s\n", CONF_BOOL_STR(c->OptimisticHandoff));
-
-	/* HA options */
-	dbg("SendMobPfxAdvs = %s\n", CONF_BOOL_STR(c->SendMobPfxAdvs));
-	dbg("SendUnsolMobPfxAdvs = %s\n",
-	    CONF_BOOL_STR(c->SendUnsolMobPfxAdvs));
-	dbg("MaxMobPfxAdvInterval = %u\n", c->MaxMobPfxAdvInterval);
-	dbg("MinMobPfxAdvInterval = %u\n", c->MinMobPfxAdvInterval);
-	dbg("HaMaxBindingLife = %u\n", c->HaMaxBindingLife);
-	
-	/* CN options */
-	dbg("DoRouteOptimizationCN = %s\n",
-	    CONF_BOOL_STR(c->DoRouteOptimizationCN));
+	dbg("PolicyModulePath = %s\n", c->pmgr.so_path);
 }

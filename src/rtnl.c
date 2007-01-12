@@ -1,14 +1,13 @@
 /*
- * $Id: rtnl.c 1.56 06/05/15 19:50:13+03:00 vnuorval@tcs.hut.fi $
+ * $Id: rtnl.c 1.45 06/01/18 17:21:47+09:00 nakam@linux-ipv6.org $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
  * Authors:
- *  Ville Nuorvala <vnuorval@tcs.hut.fi>,
  *  Antti Tuominen <anttit@tcs.hut.fi>
+ *  Ville Nuorvala <vnuorval@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2004 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -32,12 +31,9 @@
 
 #include <errno.h>
 #include <time.h>
-#include <syslog.h>
 #include <netinet/in.h>
 #include <netinet/icmp6.h>
 #include <libnetlink.h>
-#include <sys/uio.h>
-#include <sys/socket.h>
 
 #include "debug.h"
 #include "rtnl.h"
@@ -58,9 +54,6 @@ int rtnl_ext_open(struct rtnl_handle *rth, int proto, unsigned subscriptions)
 
 	rth->fd = socket(AF_NETLINK, SOCK_RAW, proto);
 	if (rth->fd < 0) {
-		syslog(LOG_ERR,
-		       "Unable to open netlink socket! "
-		       "Do you have root permissions?");
 		return -1;
 	}
 
@@ -119,10 +112,15 @@ int rtnl_ext_listen(struct rtnl_handle *rtnl,
 		status = recvmsg(rtnl->fd, &msg, 0);
 
 		if (status < 0) {
-			if (errno == EBADF)
+			if (errno == EBADF) {
+				RTDBG("recvmsg(fd=%d): %s\n", rtnl->fd, strerror(errno));
 				return -1;
+			} else if (errno == EINTR)
+				continue;
+			RTDBG("recvmsg: %s\n", strerror(errno));
 			continue;
 		}
+
 		if (status == 0)
 			return 0;
 
@@ -134,7 +132,7 @@ int rtnl_ext_listen(struct rtnl_handle *rtnl,
 			int len = h->nlmsg_len;
 			int l = len - sizeof(*h);
 
-			if (l < 0 || len > status)
+			if (l<0 || len>status)
 				break;
 
 			err = handler(&nladdr, h, jarg);
@@ -144,6 +142,8 @@ int rtnl_ext_listen(struct rtnl_handle *rtnl,
 			status -= NLMSG_ALIGN(len);
 			h = (struct nlmsghdr*)((char*)h + NLMSG_ALIGN(len));
 		}
+		if (msg.msg_flags & MSG_TRUNC || status)
+			continue;
 	}
 }
 
@@ -164,6 +164,7 @@ int addr_do(const struct in6_addr *addr, int plen, int ifindex, void *arg,
 	    int (*do_callback)(struct ifaddrmsg *ifa, 
 			       struct rtattr *rta_tb[], void *arg))
 {
+
 	uint8_t sbuf[256];
 	uint8_t rbuf[256];
 	struct nlmsghdr *sn, *rn;
@@ -189,6 +190,8 @@ int addr_do(const struct in6_addr *addr, int plen, int ifindex, void *arg,
 	rn = (struct nlmsghdr *)rbuf;
 	err = rtnl_route_do(sn, rn);
 	if (err < 0) {
+		if (err != -EADDRNOTAVAIL)
+			return err;
 		rn = sn;
 		ifa = NLMSG_DATA(rn);
 	} else {
@@ -299,8 +302,7 @@ int prefix_add(int ifindex, const struct nd_opt_prefix_info *pinfo)
 	return rtnl_route_do(n, NULL);
 }
 
-static int route_mod(int cmd, int oif, uint8_t table, uint8_t proto,
-		     unsigned flags, uint32_t priority,
+static int route_mod(int cmd, int oif, uint8_t table, uint32_t priority,
 		     const struct in6_addr *src, int src_plen,
 		     const struct in6_addr *dst, int dst_plen,
 		     const struct in6_addr *gateway)
@@ -327,10 +329,9 @@ static int route_mod(int cmd, int oif, uint8_t table, uint8_t proto,
 	rtm->rtm_dst_len = dst_plen;
 	rtm->rtm_src_len = src_plen;
 	rtm->rtm_table = table;
-	rtm->rtm_protocol = proto;
+	rtm->rtm_protocol = RTPROT_BOOT;
 	rtm->rtm_scope = RT_SCOPE_UNIVERSE;
 	rtm->rtm_type = RTN_UNICAST;
-	rtm->rtm_flags = flags;
 
 	addattr_l(n, sizeof(buf), RTA_DST, dst, sizeof(*dst));
 	if (src)
@@ -361,14 +362,13 @@ static int route_mod(int cmd, int oif, uint8_t table, uint8_t proto,
  * will be added to routing table number @table.  Returns zero on
  * success, negative otherwise.
  **/
-int route_add(int oif, uint8_t table, uint8_t proto,
-	      unsigned flags, uint32_t metric, 
+int route_add(int oif, uint8_t table, uint32_t metric, 
 	      const struct in6_addr *src, int src_plen,
 	      const struct in6_addr *dst, int dst_plen, 
 	      const struct in6_addr *gateway)
 {
-	return route_mod(RTM_NEWROUTE, oif, table, proto, flags,
-			 metric, src, src_plen, dst, dst_plen, gateway);
+	return route_mod(RTM_NEWROUTE, oif, table, metric,
+			 src, src_plen, dst, dst_plen, gateway);
 }
 
 /**
@@ -391,8 +391,8 @@ int route_del(int oif, uint8_t table, uint32_t metric,
 	      const struct in6_addr *dst, int dst_plen,
 	      const struct in6_addr *gateway)
 {
-	return route_mod(RTM_DELROUTE, oif, table, RTPROT_UNSPEC, 
-			 0, metric, src, src_plen, dst, dst_plen, gateway);
+	return route_mod(RTM_DELROUTE, oif, table, metric,
+			 src, src_plen, dst, dst_plen, gateway);
 }
 
 static int rule_mod(const char *iface, int cmd, uint8_t table, 
@@ -410,7 +410,7 @@ static int rule_mod(const char *iface, int cmd, uint8_t table,
 	n->nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg));
 	n->nlmsg_flags = NLM_F_REQUEST;
 	if (cmd == RTM_NEWRULE) {
-		n->nlmsg_flags |= NLM_F_CREATE;
+		n->nlmsg_flags |= NLM_F_CREATE|NLM_F_EXCL;
 	}
 	n->nlmsg_type = cmd;
 

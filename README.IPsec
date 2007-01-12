@@ -16,18 +16,17 @@ Contents
 ===============
 
 Mobile IPv6 uses IPsec for protecting mobility signaling messages that
-are exchanged between the MN and HA.  In order for the MN and HA to
+are exchanged between MN and HA.  In order for the MN and HA to
 utilize IPsec protection, there should be an agreement between the two
-nodes which is called a Security Association (SA).  A SA includes
-information such as the algorithm to be used for encryption and
+nodes which is called Security Association (SA).  SA includes
+information such as algorithm to be used for encryption and
 authentication, keys, and other security parameters.  In addition to
-the SA, both MN and HA should have a Security Policy (SP) set
-properly.
+SA, both MN and HA should have Security Policy (SP) set properly.
 
-In MIPL 2.0, mip6d manages the SPs by itself, while SAs should be
-provided by either (a) manual operation or (b) automated operation.
-The SP can be properly configured by specifying relevant parameters in
-the configuration file for the daemon.
+In MIPL 2.0, mip6d manages SP by itself, while SAs should be provided
+by either (a) manual operation or (b) automated operation.  SP can be
+properly configured by specifying relevant parameters in configuration
+file for the daemon.
 
 Following is the summary of IPsec use in MIPv6 operation specified in
 RFC 3775.
@@ -44,68 +43,58 @@ RFC 3775.
 	| Payload  | ESP/Tunnel      | Optional       |
         +----------+-----------------+----------------+
 
-A tunnel mode IPsec SA established between the MN and HA should hold
-the end-point addresses of the tunnel, namely the care-of address
-(CoA) of the MN and the HA's address as shown in the figure below.
+Tunnel mode IPsec SA established between the MN and HA should hold
+end-point addresses of the tunnel, namely care-of address (CoA) of
+the MN and HA's address as shown in the figure below.
 
                                           HA's
             +----+ CoA                    address +----+
             | MN |=========(IPsec tunnel)=========| HA |
             +----+                                +----+
 
-When the MN is at a foreign link and successfully makes the home
-registration to its HA, the IPsec tunnel end-point address should be
-set as the MN's CoA.  On the other hand, when the MN is at home, the
-end-point address (MN side) should be initialized with its home
-address (HoA).
+When the MN is at foreign link and successfully makes home
+registration to its HA, IPsec tunnel end-point address should be set
+as MN's CoA.  On the other hand, when the MN is at home, the end-point
+address (MN side) should be initialized with its home address (HoA).
 
 
 2. Limitation/Requirements
 ==========================
 
-The following are limitations of the Linux 2.6.16 IPsec implementation
-that should be noted when using IPsec with Mobile IPv6.
+Following are limitations of the Linux 2.6.11 IPsec that should be
+noted when using IPsec with Mobile IPv6.
 
-(1) Handling of SAs -- When there are several IPsec transport/tunnel mode
-    SPs configured between the MN and HA, eg. for BU/BA and MPS/MPA,
-    you need to add an identifier (reqid) to both the policies and SAs to
-    make sure the IPsec stack can apply the correct SA to the policy. See
-    the example below.
+(1) Handling of Transport mode SA -- When IPsec configuration is made
+    for both BU/BA and MPS/MPA, single pair of IPsec transport mode
+    SA should be commonly used.
 
 (2) IPsec between the MN and CN -- Currently, use of IPsec between MN
     and CN is not supported.
 
-(3) IPsec tunnel mode and Route Optimization -- When the SP is set in a way
-    that any payload packet (protocol unspecified) is to be protected by an
-    IPsec tunnel, route optimization cannot be performed between the MN and
+(3) IPsec tunnel and Route Optimization -- When SP is set in a way that
+    payload packet (protocol unspecified) is to be protected by IPsec
+    tunnel, route optimization cannot be performed between the MN and
     its peer.
 
 
-3. How to Make the IPsec Configuration
-======================================
+3. How to Make IPsec Configuration
+==================================
 
-First of all, in order to activate IPsec the following line should
-be included in the configuration file of both the MN and HA.
+First of all, in order to activate IPsec following single line should
+be included in configuration file of both MN and HA.
 
 UseMnHaIPsec enabled;
 
-Next, IPsecPolicySet should be properly configured with the correct HA
-addresses and MN home addresses. It should be noted that multiple
-HomeAddress entries can be configured in the HA's configuration file.
-
-Also, for both the HA and MN, several IPsecPolicySet entries can be
-defined if several HA addresses are used.
-
-Below is an example IPsecPolicySet confiureation option.  Note that
-the addresses denoted in the sample should be replaced with proper
-addresses in your own environment.
+Next, IPsecPolicySet should be properly configured with correct HA
+address and MN's home address. It should be noted that multiple
+HomeAddress can be configured in HA's configuration file.
 
 IPsecPolicySet {
         HomeAgentAddress 3ffe:501:ffff:100::feed;
+ 
         HomeAddress 3ffe:501:ffff:100::beef/64;
 
-        IPsecPolicy HomeRegBinding UseESP 1 2;
-        IPsecPolicy MobPfxDisc UseESP 3;
+        IPsecPolicy HomeRegBinding UseESP;
         IPsecPolicy TunnelMh UseESP;
 }
 
@@ -113,53 +102,39 @@ IPsecPolicySet {
 4. Manual Operation
 ===================
 
-After you make the IPsec configuration of the MIPL 2.0 daemon, you
-should prepare scripts to manually configure the SAs on both the MN
-and HA.  Below is an example of an input file for setkey to manually
-configure the SAs.  The input file can be passed to setkey by 
-"setkey -f sa.conf" with super-user privileges.  For detailed
-information of SA configuration, see the ipsec-tools documentation.
+After you made IPsec configuration of the MIPL 2.0 daemon, you should
+prepare scripts to manually configure SA on both MN and HA.  Below is
+an example of input file for setkey command to manually configure SA.
+Note that IP addresses denoted in the sample should be replaced with
+proper IP addresses in your own environment.  The input file can be
+passed to setkey command by "setkey -f sa.conf" with super-user
+privileges.  For detailed information of SA configuration, see
+ipsec-tools documentation.
 
-sa.conf example:
-----------------
+sa.conf example
+---------------
 # 3ffe:501:ffff:100::beef is home address of MN
 # and 3ffe:501:ffff:100::feed is address of HA
 
-# MN -> HA transport SA for BU
+# MN -> HA transport SA for BUs
 add 3ffe:501:ffff:100::beef 3ffe:501:ffff:100::feed esp 2000
-	-u 1
         -m transport
         -E des-cbc "TAHITEST"
         -A hmac-sha1 "this is the test key" ;
 
-# HA -> MN transport SA for BA
+# HA -> MN transport SA for BAs
 add 3ffe:501:ffff:100::feed 3ffe:501:ffff:100::beef esp 2001
-	-u 2
         -m transport
         -E des-cbc "TAHITEST"
         -A hmac-sha1 "this is the test key" ;
 
-# MN -> HA transport SA for MPS
-add 3ffe:501:ffff:100::beef 3ffe:501:ffff:100::feed esp 2002
-	-u 3
-        -m transport
-        -E des-cbc "TAHITEST"
-        -A hmac-sha1 "this is the test key" ;
-
-# HA -> MN transport SA for MPA
-add 3ffe:501:ffff:100::feed 3ffe:501:ffff:100::beef esp 2003
-	-u 3
-        -m transport
-        -E des-cbc "TAHITEST"
-        -A hmac-sha1 "this is the test key" ;
-
-# MN -> HA tunnel SA for HoTI
+# MN -> HA tunnel SA for HoTIs
 add 3ffe:501:ffff:100::beef 3ffe:501:ffff:100::feed esp 2004
         -m tunnel
         -E des-cbc "TAHITEST"
         -A hmac-sha1 "this is the test key" ;
 
-# HA -> MN tunnel SA for HoT
+# HA -> MN tunnel SA for HoTs
 add 3ffe:501:ffff:100::feed 3ffe:501:ffff:100::beef esp 2005
         -m tunnel
         -E des-cbc "TAHITEST"
@@ -168,22 +143,22 @@ add 3ffe:501:ffff:100::feed 3ffe:501:ffff:100::beef esp 2005
 4.1. HA Operation
 =================
 
-(1) make sure that you made the IPsec configuration in mip6d.conf properly
-(2) manually configure SA with setkey
+(1) make sure that you made IPsec configuration in mip6d.conf properly
+(2) manually configure SA with setkey command
 (3) run mip6d
 
 4.2. MN Operation
 =================
 
-(1) make sure that you made the IPsec configuration in mip6d.conf properly
-(2) manually configure SA with setkey
+(1) make sure that you made IPsec configuration in mip6d.conf properly
+(2) manually configure SA with setkey command
 (3) run mip6d
 
 
 5. Automated Operation
 ======================
 
-In automated operation, SAs are automatically managed by an Internet Key
+In automated operation, SA is automatically managed by Internet Key
 Exchange (IKE) daemon.  With regard to the mip6d operation, there is
 nothing special to be done in automated operation.
 

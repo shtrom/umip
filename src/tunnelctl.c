@@ -1,12 +1,11 @@
 /*
- * $Id: tunnelctl.c 1.44 06/04/25 13:24:14+03:00 anttit@tcs.hut.fi $
+ * $Id: tunnelctl.c 1.36 05/12/10 03:16:14+02:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
  * Author: Ville Nuorvala <vnuorval@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2005 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -42,13 +41,17 @@
 #include <netinet/ip.h>
 #include <linux/if_tunnel.h>
 #include <linux/ip6_tunnel.h>
+
+#ifdef HAVE_LIBPTHREAD
 #include <pthread.h>
+#else
+#error "POSIX Thread Library required!"
+#endif
 
 #include "debug.h"
 #include "hash.h"
 #include "list.h"
 #include "util.h"
-#include "tunnelctl.h"
 
 #define TUNNEL_DEBUG_LEVEL 1
 
@@ -61,8 +64,6 @@
 const char basedev[] = "ip6tnl0";
 
 static pthread_mutex_t tnl_lock;
-
-static int tnl_fd;
 
 struct mip6_tnl {
 	struct list_head list;
@@ -124,6 +125,7 @@ static inline void tnl_parm_dump(struct ip6_tnl_parm *parm)
 #define TNL_BUCKETS 32
 
 static struct hash tnl_hash;
+static int tnl_hash_usr_cnt = 0;
 
 LIST_HEAD(tnl_list);
 
@@ -155,16 +157,25 @@ static int __tunnel_del(struct mip6_tnl *tnl)
 	     tnl->users);
 
 	if (tnl->users == 0) {
-		struct ifreq ifr;
+		int fd;
+
 		list_del(&tnl->list);
 		hash_delete(&tnl_hash, &tnl->parm.laddr, &tnl->parm.raddr);
-		strcpy(ifr.ifr_name, tnl->parm.name);
-		if ((res = ioctl(tnl_fd, SIOCDELTUNNEL, &ifr)) < 0) {
-			TDBG("SIOCDELTUNNEL failed status %d %s\n", 
-			     errno, strerror(errno));
+
+		if ((fd = socket(AF_INET6, SOCK_DGRAM, 0)) < 0) {
+			TDBG("creation of tunnel socket failed\n");
 			res = -1;
-		} else
-			TDBG("tunnel deleted\n");
+		} else {
+			struct ifreq ifr;
+			strcpy(ifr.ifr_name, tnl->parm.name);
+			if ((res = ioctl(fd, SIOCDELTUNNEL, &ifr)) < 0) {
+				TDBG("SIOCDELTUNNEL failed status %d %s\n", 
+				     errno, strerror(errno));
+				res = -1;
+			} else
+				TDBG("tunnel deleted\n");
+			close(fd);
+		}
 		free(tnl);
 	}
 	return res;
@@ -204,10 +215,10 @@ int tunnel_del(int ifindex,
 }
 
 static struct mip6_tnl *__tunnel_add(struct in6_addr *local,
-				     struct in6_addr *remote,
-				     int link)
+				     struct in6_addr *remote)
 {
 	struct mip6_tnl *tnl = NULL;
+	int fd;
 	struct ifreq ifr;
 
 	if ((tnl = malloc(sizeof(struct mip6_tnl))) == NULL)
@@ -220,31 +231,36 @@ static struct mip6_tnl *__tunnel_add(struct in6_addr *local,
 	tnl->parm.hop_limit = 64;
 	tnl->parm.laddr = *local;
 	tnl->parm.raddr = *remote;
-	tnl->parm.link = link;
 
 	strcpy(ifr.ifr_name, basedev);
 	ifr.ifr_ifru.ifru_data = (void *)&tnl->parm;
-	if (ioctl(tnl_fd, SIOCADDTUNNEL, &ifr) < 0) {
+	if ((fd = socket(AF_INET6, SOCK_DGRAM, 0)) < 0) {
+		TDBG("creation of tunnel socket failed\n");
+		goto err;
+	}
+	if (ioctl(fd, SIOCADDTUNNEL, &ifr) < 0) {
 	    TDBG("SIOCADDTUNNEL failed status %d %s\n", 
 		 errno, strerror(errno));
-	    goto err;
+	    goto err_close;
 	}
 	if (!(tnl->parm.flags & IP6_TNL_F_MIP6_DEV)) {
 		TDBG("tunnel exists,but isn't used for MIPv6\n");
-		goto err;
+		goto err_close;
 	}
 	strcpy(ifr.ifr_name, tnl->parm.name);
-	if (ioctl(tnl_fd, SIOCGIFFLAGS, &ifr) < 0) {
+	if (ioctl(fd, SIOCGIFFLAGS, &ifr) < 0) {
 		TDBG("SIOCGIFFLAGS failed status %d %s\n", 
 		     errno, strerror(errno));
-		goto err;
+		goto err_close;
 	}
 	ifr.ifr_flags |= IFF_UP | IFF_RUNNING;
-	if (ioctl(tnl_fd, SIOCSIFFLAGS, &ifr) < 0) {
+	if (ioctl(fd, SIOCSIFFLAGS, &ifr) < 0) {
 		TDBG("SIOCSIFFLAGS failed status %d %s\n",
 		     errno, strerror(errno));
-		goto err;
+		goto err_close;
 	}
+	close(fd);
+
 	if (!(tnl->ifindex = if_nametoindex(tnl->parm.name))) {
 		TDBG("no device called %s\n", tnl->parm.name);
 		goto err;
@@ -261,6 +277,8 @@ static struct mip6_tnl *__tunnel_add(struct in6_addr *local,
 	     tnl->users);
 
 	return tnl;
+err_close:
+	close(fd);
 err:
 	free(tnl);
 	return NULL;
@@ -276,7 +294,6 @@ err:
  **/
 int tunnel_add(struct in6_addr *local,
 	       struct in6_addr *remote,
-	       int link,
 	       int (*ext_tunnel_ops)(int request, 
 				     int old_if, 
 				     int new_if,
@@ -294,7 +311,7 @@ int tunnel_add(struct in6_addr *local,
 		     tnl->parm.name, tnl->ifindex, 
 		     NIP6ADDR(local), NIP6ADDR(remote), tnl->users);
 	} else {
-		if ((tnl = __tunnel_add(local, remote, link)) == NULL) {
+		if ((tnl = __tunnel_add(local, remote)) == NULL) {
 			TDBG("failed to create tunnel "
 			     "from %x:%x:%x:%x:%x:%x:%x:%x "
 			     "to %x:%x:%x:%x:%x:%x:%x:%x\n",
@@ -317,11 +334,12 @@ int tunnel_add(struct in6_addr *local,
 
 static int __tunnel_mod(struct mip6_tnl *tnl,
 			struct in6_addr *local,
-			struct in6_addr *remote,
-			int link)
+			struct in6_addr *remote)
 {
 	struct ip6_tnl_parm parm;
 	struct ifreq ifr;
+	int fd;
+	int res;
 
 	memset(&parm, 0, sizeof(struct ip6_tnl_parm));
 	parm.proto = IPPROTO_IPV6;
@@ -329,29 +347,33 @@ static int __tunnel_mod(struct mip6_tnl *tnl,
 	parm.hop_limit = 64;
 	parm.laddr = *local;
 	parm.raddr = *remote;
-	parm.link = link;
-
+	
 	strcpy(ifr.ifr_name, tnl->parm.name);
 	ifr.ifr_ifru.ifru_data = (void *)&parm;
 
-	if(ioctl(tnl_fd, SIOCCHGTUNNEL, &ifr) < 0) {
+	if ((fd = socket(AF_INET6, SOCK_DGRAM, 0)) < 0) {
+		TDBG("creation of tunnel socket failed\n");
+		return -1;
+	}
+	if(ioctl(fd, SIOCCHGTUNNEL, &ifr) < 0) {
 		TDBG("SIOCCHGTUNNEL failed status %d %s\n", 
 		     errno, strerror(errno));
-		return -1;
+		res = -1;
+		goto err_close;
 	}
+	close(fd);
 	hash_delete(&tnl_hash, &tnl->parm.laddr, &tnl->parm.raddr);
 	memcpy(&tnl->parm, &parm, sizeof(struct ip6_tnl_parm));
-	if (hash_add(&tnl_hash, tnl, &tnl->parm.laddr, &tnl->parm.raddr) < 0) {
-		free(tnl);
-		return -1;
-	}
+	hash_add(&tnl_hash, tnl, &tnl->parm.laddr, &tnl->parm.raddr);
 	TDBG("modified tunnel iface %s (%d)"
 	     "from %x:%x:%x:%x:%x:%x:%x:%x "
 	     "to %x:%x:%x:%x:%x:%x:%x:%x\n",
 	     tnl->parm.name, tnl->ifindex, NIP6ADDR(&tnl->parm.laddr),
 	     NIP6ADDR(&tnl->parm.raddr));
 	return tnl->ifindex;
-	
+err_close:
+	close(fd);
+	return -1;
 }
 
 
@@ -367,7 +389,6 @@ static int __tunnel_mod(struct mip6_tnl *tnl,
 int tunnel_mod(int ifindex,
 	       struct in6_addr *local,
 	       struct in6_addr *remote,
-	       int link,
 	       int (*ext_tunnel_ops)(int request, 
 				     int old_if, 
 				     int new_if,
@@ -400,8 +421,8 @@ int tunnel_mod(int ifindex,
 		new = old;
 
 		if (old->users == 1 &&
-		    (res = __tunnel_mod(old, local, remote, link)) < 0 &&
-		    (new = __tunnel_add(local, remote, link)) == NULL) {
+		    (res = __tunnel_mod(old, local, remote)) < 0 &&
+		    (new = __tunnel_add(local, remote)) == NULL) {
 			pthread_mutex_unlock(&tnl_lock);
 			return -1;
 		}
@@ -429,16 +450,15 @@ int tunnelctl_init(void)
 	int res = 0;
 	pthread_mutexattr_t mattrs;
 
-	if ((tnl_fd = socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
-		return -1;
-
 	pthread_mutexattr_init(&mattrs);
 	pthread_mutexattr_settype(&mattrs, PTHREAD_MUTEX_FAST_NP);
 	if (pthread_mutex_init(&tnl_lock, &mattrs))
 		return -1;
 
 	pthread_mutex_lock(&tnl_lock);
-	res = hash_init(&tnl_hash, DOUBLE_ADDR, TNL_BUCKETS);
+	if (tnl_hash_usr_cnt == 0)
+	        res = hash_init(&tnl_hash, DOUBLE_ADDR, TNL_BUCKETS);
+	tnl_hash_usr_cnt++;
 	pthread_mutex_unlock(&tnl_lock);
 	return res;
 }
@@ -448,7 +468,6 @@ static int tnl_cleanup(void *data, void *arg)
 {
 	struct mip6_tnl *tnl = (struct mip6_tnl *) data;
 	list_del(&tnl->list);
-	hash_delete(&tnl_hash, &tnl->parm.laddr, &tnl->parm.raddr);
 	free(tnl);
 	return 0;
 }
@@ -456,8 +475,9 @@ static int tnl_cleanup(void *data, void *arg)
 void tunnelctl_cleanup(void)
 {
 	pthread_mutex_lock(&tnl_lock);
-	hash_iterate(&tnl_hash, tnl_cleanup, NULL);	
-	hash_cleanup(&tnl_hash);
+	if (--tnl_hash_usr_cnt == 0) {
+		hash_iterate(&tnl_hash, tnl_cleanup, NULL);	
+		hash_cleanup(&tnl_hash);
+	}
 	pthread_mutex_unlock(&tnl_lock);
-	close(tnl_fd);
 }

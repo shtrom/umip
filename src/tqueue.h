@@ -1,11 +1,14 @@
-/* $Id: tqueue.h 1.21 06/05/05 12:14:34+03:00 anttit@tcs.hut.fi $ */
+/* $Id: tqueue.h 1.19 05/12/10 03:59:28+02:00 vnuorval@tcs.hut.fi $ */
 
 #ifndef __TQUEUE_H__
 #define __TQUEUE_H__ 1
 
 #include <time.h>
+#ifdef HAVE_LIBPTHREAD
 #include <pthread.h>
-
+#else
+#error "POSIX Thread Library required!"
+#endif
 #include "list.h"
 #include "util.h"
 
@@ -17,7 +20,8 @@ struct tq_elem {
 };
 
 #define tq_data(ptr, type, member) \
-        container_of(ptr, type, member)
+        (type *)( (char *)ptr - ((size_t) &((type *)0)->member) )
+
 
 /*
  * Initialize task queue.  Must be done before using anything else.

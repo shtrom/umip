@@ -1,9 +1,5 @@
-#ifdef HAVE_NETINET_IP6MH_H
-#include_next <netinet/ip6mh.h>
-#endif
-
-#ifndef _NETINET_IP6MH_H
-#define _NETINET_IP6MH_H 1
+#ifndef _NETINET__IP6MH_H
+#define _NETINET__IP6MH_H 1
 
 #include <inttypes.h>
 #include <netinet/in.h>
@@ -56,9 +52,9 @@ struct ip6_mh_careof_test {
 
 struct ip6_mh_binding_update {
 	struct ip6_mh	ip6mhbu_hdr;
-	uint16_t	ip6mhbu_seqno;		/* Sequence Number */
-	uint16_t	ip6mhbu_flags;
-	uint16_t	ip6mhbu_lifetime;	/* Time in unit of 4 sec */
+	uint16_t 	ip6mhbu_seqno;		/* Sequence Number */
+	uint16_t 	ip6mhbu_flags;
+	uint16_t 	ip6mhbu_lifetime;	/* Time in unit of 4 sec */
 	/* Followed by optional Mobility Options */
 } __attribute__ ((packed));
 
@@ -68,15 +64,11 @@ struct ip6_mh_binding_update {
 #define IP6_MH_BU_HOME		0x4000	/* Home Registration */
 #define IP6_MH_BU_LLOCAL	0x2000	/* Link-local compatibility */
 #define IP6_MH_BU_KEYM		0x1000	/* Key management mobility */
-#define IP6_MH_BU_MAP		0x0800	/* HMIPv6 MAP Registration */
-#define IP6_MH_BU_MR		0x0400	/* NEMO MR Registration */
 #else				/* BYTE_ORDER == LITTLE_ENDIAN */
 #define IP6_MH_BU_ACK		0x0080	/* Request a binding ack */
 #define IP6_MH_BU_HOME		0x0040	/* Home Registration */
 #define IP6_MH_BU_LLOCAL	0x0020	/* Link-local compatibility */
 #define IP6_MH_BU_KEYM		0x0010	/* Key management mobility */
-#define IP6_MH_BU_MAP		0x0008	/* HMIPv6 MAP Registration */
-#define IP6_MH_BU_MR		0x0004	/* NEMO MR Registration */
 #endif
 
 struct ip6_mh_binding_ack {
@@ -90,7 +82,6 @@ struct ip6_mh_binding_ack {
 
 /* ip6mhba_flags */
 #define IP6_MH_BA_KEYM		0x80	/* Key management mobility */
-#define IP6_MH_BA_MR		0x40	/* NEMO MR registration */
 
 struct ip6_mh_binding_error {
 	struct ip6_mh	ip6mhbe_hdr;
@@ -133,16 +124,8 @@ struct ip6_mh_opt_nonce_index {
 
 struct ip6_mh_opt_auth_data {
 	uint8_t		ip6moad_type;
-	uint8_t 	ip6moad_len;
-	uint8_t 	ip6moad_data[12];	/* 96 bit Authenticator */
-} __attribute__ ((packed));
-
-struct ip6_mh_opt_mob_net_prefix {
-	uint8_t 	ip6mnp_type;
-	uint8_t 	ip6mnp_len;
-	uint8_t 	ip6mnp_reserved;
-	uint8_t 	ip6mnp_prefix_len;
-	struct in6_addr ip6mnp_prefix;
+	uint8_t		ip6moad_len;
+	uint8_t		ip6moad_data[12];	/* 96 bit Authenticator */
 } __attribute__ ((packed));
 
 /*
@@ -187,10 +170,6 @@ struct ip6_mh_opt_mob_net_prefix {
 #define IP6_MH_BAS_NI_EXPIRED		138	/* Expired Nonce Indices */
 #define IP6_MH_BAS_REG_NOT_ALLOWED	139	/* Registration type change 
 						   disallowed */
-#define IP6_MH_BAS_MR_OP_NOT_PERMITTED	140	/* MR Operation not permitted */
-#define IP6_MH_BAS_INVAL_PRFX		141	/* Invalid Prefix */
-#define IP6_MH_BAS_NOT_AUTH_FOR_PRFX	142	/* Not Authorized for Prefix */
-#define IP6_MH_BAS_FWDING_FAILED	143	/* Forwarding Setup failed */
 /*
  *    Status values for the Binding Error mobility messages
  */

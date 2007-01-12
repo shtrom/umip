@@ -1,4 +1,4 @@
-/* $Id: ha.h 1.12 06/05/07 21:52:43+03:00 anttit@tcs.hut.fi $ */
+/* $Id: ha.h 1.11 05/12/02 18:10:27+02:00 vnuorval@tcs.hut.fi $ */
 
 #ifndef __HA_H__
 #define __HA_H__ 1
@@ -36,7 +36,7 @@ struct ha_addr_holder {
 
 int homeagents_ifall_init(void);
 int homeagent_if_init(int ifindex);
-struct ha_interface *ha_get_if(int ifindex);
+struct ha_interface *ha_get_if(const int ifindex);
 struct ha_interface *ha_get_if_by_addr(const struct in6_addr *addr);
 struct ha_interface *ha_get_if_by_anycast(const struct in6_addr *anycast,
 					  struct in6_addr **addr);

@@ -1,4 +1,4 @@
-/* $Id: mpdisc_ha.h 1.5 06/03/06 20:43:55+02:00 vnuorval@tcs.hut.fi $ */
+/* $Id: mpdisc_ha.h 1.4 05/12/08 20:45:54+02:00 vnuorval@tcs.hut.fi $ */
 
 #ifndef __MPDISC_HA_H__
 #define __MPDISC_HA_H__ 1
@@ -19,8 +19,7 @@ void mpd_plist_iterate(struct ha_interface *iface,
 
 int mpd_prefix_check(struct in6_addr *dst,
 		     struct in6_addr *src,
-		     struct timespec *lft,
-		     int *ifindex,
+		     struct timespec *prefix_lifetime,
 		     int dad);
 
 void mpd_handle_mpa_flags(struct ha_interface *iface, uint8_t ra_flags);

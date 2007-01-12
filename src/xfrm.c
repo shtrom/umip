@@ -1,16 +1,15 @@
 /*
- * $Id: xfrm.c 1.250 06/05/15 18:34:56+03:00 vnuorval@tcs.hut.fi $
+ * $Id: xfrm.c 1.216 06/01/22 18:44:38+09:00 shinta@cn.v6.nrj.ericsson.se $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
  * Authors:
  *  USAGI Team
- *  Ville Nuorvala <vnuorval@tcs.hut.fi>
  *  Henrik Petander <petander@tcs.hut.fi>
+ *  Ville Nuorvala <vnuorval@tcs.hut.fi>
  *
  * Copyright 2003 USAGI/WIDE Project
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2005 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -35,12 +34,19 @@
 #include <errno.h>
 #include <string.h>
 #include <unistd.h>
+#ifdef HAVE_LIBPTHREAD
 #include <pthread.h>
+#else
+#error "POSIX Thread Library required!"
+#endif
 #include <time.h>
+#include <syslog.h>
 #include <netinet/icmp6.h>
 #include <netinet/ip6.h>
-#include <netinet/in.h>
-#include <netinet/ip6mh.h>
+
+#include <netinet-in.h>
+#include <netinet-ip6mh.h>
+#include <netinet-icmp6.h>
 
 #include <linux/xfrm.h>
 
@@ -62,12 +68,6 @@
 #define XDBG dbg
 #else
 #define XDBG(...)
-#endif
-
-#if XFRM_DEBUG_LEVEL >= 2
-#define XDBG2 dbg
-#else
-#define XDBG2(...) 
 #endif
 
 #define MIPV6_MAX_TMPLS 5 /* AH, ESP, IPCOMP, DSTOPTS, RTHDR */
@@ -98,7 +98,7 @@ static void xfrm_sel_dump(const struct xfrm_selector *sel)
 	     sel->ifindex);
 }
 			 
-static void nlmsg_dump(int nlmsg_flags, int nlmsg_type)
+static void nlmsg_dump(const int nlmsg_flags, const int nlmsg_type)
 {
 	cdbg("nlmsg_flags %x\n"
 	     "nlmsg_type %d\n",
@@ -129,9 +129,12 @@ static void xfrm_tmpl_dump(const struct xfrm_user_tmpl *tmpl)
 	     tmpl->calgos);
 }
 
-static void xfrm_policy_dump(const char *msg, int nlmsg_flags, int nlmsg_type,
+static void xfrm_policy_dump(const char *msg,
+			     const int nlmsg_flags,
+			     const int nlmsg_type,
 			     const struct xfrm_userpolicy_info *sp,
-			     struct xfrm_user_tmpl *tmpls, int num_tmpl)
+			     struct xfrm_user_tmpl *tmpls,
+			     const int num_tmpl)
 {
 	int i;
 	cdbg(msg);
@@ -155,7 +158,9 @@ static void xfrm_policy_id_dump(const char *msg,
 	cdbg("dir %d\n", sp_id->dir);
 }
 
-static void xfrm_state_dump(const char *msg, int nlmsg_flags, int nlmsg_type,
+static void xfrm_state_dump(const char *msg,
+			    const int nlmsg_flags,
+			    const int nlmsg_type,
 			    const struct xfrm_usersa_info *sa,
 			    const struct in6_addr *coa)
 {
@@ -251,11 +256,12 @@ static void set_selector(const struct in6_addr *daddr,
  * @proto: protocol. Either IPPROTO_ROUTING or IPPROTO_DSTOPTS 
  **/
 long xfrm_last_used(const struct in6_addr *daddr, 
-		    const struct in6_addr *saddr, int proto,
+		    const struct in6_addr *saddr, 
+		    const int proto,
 		    const struct timespec *now)
 {
-	uint8_t sbuf[NLMSG_LENGTH(sizeof(struct xfrm_usersa_id))];
-	uint8_t rbuf[384];
+	uint8_t sbuf[256];
+	uint8_t rbuf[256];
 	struct nlmsghdr *sn, *rn;
 	struct xfrm_usersa_id *sa_id;
 	struct xfrm_usersa_info *sa;
@@ -278,8 +284,10 @@ long xfrm_last_used(const struct in6_addr *daddr,
 	rn = (struct nlmsghdr *)rbuf;
 
 	err = rtnl_xfrm_do(sn, rn);
-	if (err < 0)
+	if (err < 0) {
+		BUG("no binding");
 		return -1;
+	}
 	sa = NLMSG_DATA(rn);
 	if (!sa->curlft.use_time) {
 		XDBG("binding was unused\n");
@@ -288,20 +296,6 @@ long xfrm_last_used(const struct in6_addr *daddr,
 	time_used = now->tv_sec - (long)sa->curlft.use_time;
 	XDBG("last use of binding was %ld seconds ago\n", time_used);
 	return time_used; 
-}
-
-long mn_bule_xfrm_last_used(const struct in6_addr *peer, 
-			    const struct in6_addr *hoa, 
-			    const struct timespec *now)
-{
-	long dst_used, rh_used, min_used, max_used;
-	dst_used = xfrm_last_used(peer, hoa, IPPROTO_DSTOPTS, now);
-	rh_used = xfrm_last_used(hoa, peer, IPPROTO_ROUTING, now);
-	min_used = min(dst_used, rh_used);
-	max_used = max(dst_used, rh_used);
-	if (min_used < 0)
-		return max_used;
-	return min_used;
 }
 
 static inline void xfrm_lft(struct xfrm_lifetime_cfg *lft)
@@ -316,9 +310,7 @@ static int xfrm_policy_add(const struct xfrm_selector *sel, int update,
 			   int dir, int action, int priority, 
 			   struct xfrm_user_tmpl *tmpls, int num_tmpl)
 {
-	uint8_t buf[NLMSG_LENGTH(sizeof(struct xfrm_userpolicy_info))
-		    + RTA_LENGTH(sizeof(struct xfrm_user_tmpl) 
-				 * MIPV6_MAX_TMPLS)];
+	uint8_t buf[512];
 	struct nlmsghdr *n;
 	struct xfrm_userpolicy_info *pol;
 	int err;
@@ -353,7 +345,7 @@ static int xfrm_policy_add(const struct xfrm_selector *sel, int update,
 
 static int xfrm_policy_del(const struct xfrm_selector *sel, int dir)
 {
-	uint8_t buf[NLMSG_LENGTH(sizeof(struct xfrm_userpolicy_id))];
+	uint8_t buf[512];
 	struct nlmsghdr *n;
 	struct xfrm_userpolicy_id *pol_id;
 	int err;
@@ -377,8 +369,7 @@ static int xfrm_state_add(const struct xfrm_selector *sel,
 			  int proto, const struct in6_addr *coa, 
 			  int update, uint8_t flags)
 {
-	uint8_t buf[NLMSG_LENGTH(sizeof(struct xfrm_usersa_info)) 
-		    + RTA_LENGTH(sizeof(struct in6_addr))];
+	uint8_t buf[256];
 	struct nlmsghdr *n;
 	struct xfrm_usersa_info *sa;
 	int err;
@@ -414,7 +405,7 @@ static int xfrm_state_add(const struct xfrm_selector *sel,
 
 static int xfrm_state_del(int proto, const struct xfrm_selector *sel)
 {
-	uint8_t buf[NLMSG_LENGTH(sizeof(struct xfrm_usersa_info))];
+	uint8_t buf[256];
 	struct nlmsghdr *n;
 	struct xfrm_usersa_id *sa_id;
 	int err;
@@ -440,7 +431,7 @@ static int xfrm_state_del(int proto, const struct xfrm_selector *sel)
 static void _create_dstopt_tmpl(struct xfrm_user_tmpl *tmpl,
 			       const struct in6_addr *dst,
 			       const struct in6_addr *src,
-			       int mode)
+				int mode)
 {
 	memset(tmpl, 0, sizeof(*tmpl));
 	tmpl->family = AF_INET6;
@@ -491,8 +482,7 @@ static void create_trig_rh_tmpl(struct xfrm_user_tmpl *tmpl)
 /* Creates a ESP/AH/IPComp policy for protecting signaling bewteen MN
  * and HA */ 
 static void create_ipsec_tmpl(struct xfrm_user_tmpl *tmpl, uint8_t proto, 
-			      int tunnel,
-			      const struct in6_addr *tdst,
+			      int tunnel, const struct in6_addr *tdst,
 			      const struct in6_addr *tsrc,
 			      uint32_t reqid)
 {
@@ -510,31 +500,6 @@ static void create_ipsec_tmpl(struct xfrm_user_tmpl *tmpl, uint8_t proto,
 	}
 }
 
-static int _mn_ha_ipsec_sub_pol_check(const struct in6_addr *haaddr,
-				      const struct in6_addr *hoa,
-				      struct ipsec_policy_entry *e,
-				      void *arg)
-{
-	struct ipsec_policy_entry *spe;
-
-	if (e->type == IPSEC_POLICY_TYPE_ANY) {
-		if ((spe = malloc(sizeof(*e))) == NULL)
-			return -1;
-		memcpy(spe, e, sizeof(*e));
-		spe->type = IPSEC_POLICY_TYPE_HOMEREGBINDING;
-		list_add_tail(&spe->list, &e->list);
-	}
-	if (e->type == IPSEC_POLICY_TYPE_ICMP ||
-	    e->type == IPSEC_POLICY_TYPE_ANY) {
-		if ((spe = malloc(sizeof(*e))) == NULL)
-			return -1;
-		memcpy(spe, e, sizeof(*e));
-		spe->type = IPSEC_POLICY_TYPE_NDISC;
-		list_add_tail(&spe->list, &e->list);
-	}
-	return 0;
-}
-
 static int _mn_ha_ipsec_init(const struct in6_addr *haaddr,
 			     const struct in6_addr *hoa,
 			     struct ipsec_policy_entry *e,
@@ -547,14 +512,9 @@ static int _mn_ha_ipsec_init(const struct in6_addr *haaddr,
 	int type_in = 0, type_out = 0;
 	int prio = MIP6_PRIO_HOME_DATA_IPSEC;
 	int dir;
+	struct ipsec_policy_entry bubae;
 
 	switch (e->type) {
-	case IPSEC_POLICY_TYPE_NDISC:
-		type_in = ND_NEIGHBOR_SOLICIT;
-		type_out = ND_NEIGHBOR_ADVERT;
-		ulp = IPPROTO_ICMPV6;
-		prio = MIP6_PRIO_HOME_SIG;
-		break;
 	case IPSEC_POLICY_TYPE_MOBPFXDISC:
 		type_in = MIP_PREFIX_ADVERT;
 		type_out = MIP_PREFIX_SOLICIT;
@@ -569,47 +529,48 @@ static int _mn_ha_ipsec_init(const struct in6_addr *haaddr,
 		prio = MIP6_PRIO_HOME_SIG;
 		break;
 	case IPSEC_POLICY_TYPE_ANY:
+		bubae.type = IPSEC_POLICY_TYPE_HOMEREGBINDING;
+		bubae.use_ipcomp = e->use_ipcomp;
+		bubae.use_esp = e->use_esp;
+		bubae.use_ah = e->use_ah;
+		bubae.action = e->action;
+		if (_mn_ha_ipsec_init(haaddr, hoa, &bubae, NULL))
+			return -1;
 		break;
 	default:
 		return 0;
 	}
+	
 	/* inbound */
 	set_selector(hoa, haaddr, ulp, type_in, 0, 0, &sel);
 	dir = XFRM_POLICY_IN;
 	ti = 0;
-	if (ipsec_use_ipcomp(e))
-		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_COMP, 0,
-				  NULL, NULL, e->reqid_tomn);
-	if (ipsec_use_esp(e))
-		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_ESP, 0,
-				  NULL, NULL, e->reqid_tomn);
-	if (ipsec_use_ah(e))
-		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_AH, 0,
-				  NULL, NULL, e->reqid_tomn);
+	if (e->use_ipcomp)
+		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_COMP, 0, NULL, NULL, e->reqid_tomn);
+	if (e->use_esp)
+		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_ESP, 0, NULL, NULL, e->reqid_tomn);
+	if (e->use_ah)
+		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_AH, 0, NULL, NULL, e->reqid_tomn);
 	if (xfrm_policy_add(&sel, 0, dir, e->action, prio, tmpls, ti))
 		return -1;
+
 
 	/* outbound */
 	set_selector(haaddr, hoa, ulp, type_out, 0, 0, &sel);
 	dir = XFRM_POLICY_OUT;
 	ti = 0;
-	if (ipsec_use_ipcomp(e))
-		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_COMP, 0,
-				  NULL, NULL, e->reqid_toha);
-	if (ipsec_use_esp(e))
-		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_ESP, 0,
-				  NULL, NULL, e->reqid_toha);
+	if (e->use_ipcomp)
+		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_COMP, 0, NULL, NULL, e->reqid_toha);
+	if (e->use_esp)
+		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_ESP, 0, NULL, NULL, e->reqid_toha);
 	/* AH template must be placed as the last one for outbound SP */
-	if (ipsec_use_ah(e))
-		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_AH, 0,
-				  NULL, NULL, e->reqid_toha);
+	if (e->use_ah)
+		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_AH, 0, NULL, NULL, e->reqid_toha);
 	return xfrm_policy_add(&sel, 0, dir, e->action, prio, &tmpls[0], ti);
 }
 
 static inline int mn_ha_ipsec_init(void)
 {
-	if (ipsec_policy_walk(_mn_ha_ipsec_sub_pol_check, NULL))
-		return -1;
 	return ipsec_policy_walk(_mn_ha_ipsec_init, NULL);
 }
 
@@ -620,12 +581,10 @@ static int xfrm_mn_init(void)
 	struct xfrm_selector sel;
 	struct xfrm_user_tmpl tmpl;
 
-	XDBG("Adding policies and states for MN\n");
-
 	if (conf.UseMnHaIPsec && mn_ha_ipsec_init() < 0)
 		return -1;
 
-	XDBG2("Adding RTHdr type 2 handling 2 state for MN\n");
+	XDBG("Adding RTHdr type 2 handling 2 state for MN\n");
 	set_selector(&in6addr_any, &in6addr_any, 0, 0, 0, 0, &sel);
 	create_rh_tmpl(&tmpl);
 	if (xfrm_policy_add(&sel, 0, XFRM_POLICY_IN, XFRM_POLICY_ALLOW,
@@ -645,14 +604,9 @@ static int _mn_ha_ipsec_cleanup(const struct in6_addr *haaddr,
 	int ulp = 0;
 	int type_in = 0, type_out = 0;
 	int prio = MIP6_PRIO_HOME_DATA_IPSEC;
+	struct ipsec_policy_entry bubae;
 
 	switch (e->type) {
-	case IPSEC_POLICY_TYPE_NDISC:
-		type_in = ND_NEIGHBOR_SOLICIT;
-		type_out = ND_NEIGHBOR_ADVERT;
-		ulp = IPPROTO_ICMPV6;
-		prio = MIP6_PRIO_HOME_SIG;
-		break;
 	case IPSEC_POLICY_TYPE_MOBPFXDISC:
 		type_in = MIP_PREFIX_ADVERT;
 		type_out = MIP_PREFIX_SOLICIT;
@@ -667,6 +621,12 @@ static int _mn_ha_ipsec_cleanup(const struct in6_addr *haaddr,
 		prio = MIP6_PRIO_HOME_SIG;
 		break;
 	case IPSEC_POLICY_TYPE_ANY:
+		bubae.type = IPSEC_POLICY_TYPE_HOMEREGBINDING;
+		bubae.use_ipcomp = e->use_ipcomp;
+		bubae.use_esp = e->use_esp;
+		bubae.use_ah = e->use_ah;
+		bubae.action = e->action;
+		_mn_ha_ipsec_cleanup(haaddr, hoa, &bubae, NULL);
 		break;
 	default:
 		return 0;
@@ -688,8 +648,7 @@ static inline void mn_ha_ipsec_cleanup(void)
 static void xfrm_mn_cleanup(void)
 {
 	struct xfrm_selector sel;
-	XDBG("Deleting policies and states for MN\n");
-	XDBG2("Deleting RTHdr type 2 handling 2 state for MN\n");
+	XDBG("Deleting RTHdr type 2 handling 2 state for MN\n");
 	set_selector(&in6addr_any, &in6addr_any, 0, 0, 0, 0, &sel);
 	xfrm_state_del(IPPROTO_ROUTING, &sel);
 	xfrm_policy_del(&sel, XFRM_POLICY_IN);
@@ -698,43 +657,10 @@ static void xfrm_mn_cleanup(void)
 		
 }
 
-static int _ha_mn_ipsec_sub_pol_check(const struct in6_addr *haaddr,
-				      const struct in6_addr *hoa,
-				      struct ipsec_policy_entry *e,
-				      void *arg)
-{
-	struct ipsec_policy_entry *spe;
-
-	if (e->type == IPSEC_POLICY_TYPE_ANY) {
-		if ((spe = malloc(sizeof(*e))) == NULL)
-			return -1;
-		memcpy(spe, e, sizeof(*e));
-		spe->type = IPSEC_POLICY_TYPE_HOMEREGBINDING;
-		list_add_tail(&spe->list, &e->list);
-	}
-	if (e->type == IPSEC_POLICY_TYPE_MH ||
-	    e->type == IPSEC_POLICY_TYPE_ANY) {
-		if ((spe = malloc(sizeof(*e))) == NULL)
-			return -1;
-		memcpy(spe, e, sizeof(*e));
-		spe->type = IPSEC_POLICY_TYPE_BERROR;
-		list_add_tail(&spe->list, &e->list);
-	}
-	if (e->type == IPSEC_POLICY_TYPE_ICMP ||
-	    e->type == IPSEC_POLICY_TYPE_ANY) {
-		if ((spe = malloc(sizeof(*e))) == NULL)
-			return -1;
-		memcpy(spe, e, sizeof(*e));
-		spe->type = IPSEC_POLICY_TYPE_NDISC;
-		list_add_tail(&spe->list, &e->list);
-	}
-	return 0;
-}
-
-static int _ha_mn_ipsec_init(const struct in6_addr *haaddr,
-			     const struct in6_addr *hoa,
-			     struct ipsec_policy_entry *e,
-			     void *arg)
+int _ha_mn_ipsec_init(const struct in6_addr *haaddr,
+		      const struct in6_addr *hoa,
+		      struct ipsec_policy_entry *e,
+		      void *arg)
 {
 	struct xfrm_user_tmpl tmpls[MIPV6_MAX_TMPLS];
 	struct xfrm_selector sel;
@@ -744,14 +670,9 @@ static int _ha_mn_ipsec_init(const struct in6_addr *haaddr,
 	int prio = MIP6_PRIO_HOME_DATA_IPSEC;
 	int use_dst = 0;
 	int dir;
+	struct ipsec_policy_entry mhee;
 
 	switch (e->type) {
-	case IPSEC_POLICY_TYPE_NDISC:
-		type_in = ND_NEIGHBOR_ADVERT;
-		type_out = ND_NEIGHBOR_SOLICIT;
-		ulp = IPPROTO_ICMPV6;
-		prio = MIP6_PRIO_HOME_SIG;
-		break;
 	case IPSEC_POLICY_TYPE_MOBPFXDISC:
 		type_in = MIP_PREFIX_SOLICIT;
 		type_out = MIP_PREFIX_ADVERT;
@@ -773,22 +694,43 @@ static int _ha_mn_ipsec_init(const struct in6_addr *haaddr,
 		prio = MIP6_PRIO_HOME_ERROR;
 		break;
 	case IPSEC_POLICY_TYPE_ANY:
+		mhee.type = IPSEC_POLICY_TYPE_HOMEREGBINDING;
+		mhee.use_ipcomp = e->use_ipcomp;
+		mhee.use_esp = e->use_esp;
+		mhee.use_ah = e->use_ah;
+		mhee.action = e->action;
+		mhee.reqid_toha = e->reqid_toha;
+		mhee.reqid_tomn = e->reqid_tomn;
+		if (_ha_mn_ipsec_init(haaddr, hoa, &mhee, NULL))
+			return -1;
 		break;
 	default:
 		return 0;
+	}
+	if (e->type == IPSEC_POLICY_TYPE_MH ||
+	    e->type == IPSEC_POLICY_TYPE_ANY) {
+		mhee.type = IPSEC_POLICY_TYPE_BERROR;
+		mhee.use_ipcomp = e->use_ipcomp;
+		mhee.use_esp = e->use_esp;
+		mhee.use_ah = e->use_ah;
+		mhee.action = e->action;
+		mhee.reqid_toha = e->reqid_toha;
+		mhee.reqid_tomn = e->reqid_tomn;
+		if (_ha_mn_ipsec_init(haaddr, hoa, &mhee, NULL))
+			return -1;
 	}
 	if (type_in >= 0) {
 		/* inbound */
 		set_selector(haaddr, hoa, ulp, type_in, 0, 0, &sel);
 		dir = XFRM_POLICY_IN;
 		ti = 0;
-		if (ipsec_use_ipcomp(e))
+		if (e->use_ipcomp)
 			create_ipsec_tmpl(&tmpls[ti++], IPPROTO_COMP, 0,
 					  NULL, NULL, e->reqid_toha);
-		if (ipsec_use_esp(e))
+		if (e->use_esp)
 			create_ipsec_tmpl(&tmpls[ti++], IPPROTO_ESP, 0,
 					  NULL, NULL, e->reqid_toha);
-		if (ipsec_use_ah(e))
+		if (e->use_ah)
 			create_ipsec_tmpl(&tmpls[ti++], IPPROTO_AH, 0,
 					  NULL, NULL, e->reqid_toha);
 		if (use_dst)
@@ -802,51 +744,40 @@ static int _ha_mn_ipsec_init(const struct in6_addr *haaddr,
 	set_selector(hoa, haaddr, ulp, type_out, 0, 0, &sel);
 	dir = XFRM_POLICY_OUT;
 	ti = 0;
-	if (ipsec_use_ipcomp(e))
-		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_COMP, 0,
-				  NULL, NULL, e->reqid_tomn);
-	if (ipsec_use_esp(e))
-		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_ESP, 0,
-				  NULL, NULL, e->reqid_tomn);
+	if (e->use_ipcomp)
+		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_COMP, 0, NULL, NULL, e->reqid_tomn);
+	if (e->use_esp)
+		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_ESP, 0, NULL, NULL, e->reqid_tomn);
 	/* AH template must be placed as the last one for outbound SP */
-	if (ipsec_use_ah(e))
-		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_AH, 0,
-				  NULL, NULL, e->reqid_tomn);
+	if (e->use_ah)
+		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_AH, 0, NULL, NULL, e->reqid_tomn);
 	return xfrm_policy_add(&sel, 0, dir, e->action, prio, &tmpls[0], ti);
 }
 
 static inline int ha_mn_ipsec_init(void)
 {
-	if (ipsec_policy_walk(_ha_mn_ipsec_sub_pol_check, NULL))
-		return -1;
 	return ipsec_policy_walk(_ha_mn_ipsec_init, NULL);
 }
 
 static int xfrm_ha_init(void)
 {
-	XDBG("Adding policies and states for HA\n");
 	if (conf.UseMnHaIPsec && ha_mn_ipsec_init() < 0)
 		return -1;
 	return 0;
 }
 
-static int _ha_mn_ipsec_cleanup(const struct in6_addr *haaddr,
-				const struct in6_addr *hoa,
-				struct ipsec_policy_entry *e,
-				void *arg)
+int _ha_mn_ipsec_cleanup(const struct in6_addr *haaddr,
+			 const struct in6_addr *hoa,
+			 struct ipsec_policy_entry *e,
+			 void *arg)
 {
 	struct xfrm_selector sel;
 	int ulp = 0;
 	int type_in = 0, type_out = 0;
 	int prio = MIP6_PRIO_HOME_DATA_IPSEC;
+	struct ipsec_policy_entry mhee;
 
 	switch (e->type) {
-	case IPSEC_POLICY_TYPE_NDISC:
-		type_in = ND_NEIGHBOR_ADVERT;
-		type_out = ND_NEIGHBOR_SOLICIT;
-		ulp = IPPROTO_ICMPV6;
-		prio = MIP6_PRIO_HOME_SIG;
-		break;
 	case IPSEC_POLICY_TYPE_MOBPFXDISC:
 		type_in = MIP_PREFIX_SOLICIT;
 		type_out = MIP_PREFIX_ADVERT;
@@ -867,9 +798,28 @@ static int _ha_mn_ipsec_cleanup(const struct in6_addr *haaddr,
 		prio = MIP6_PRIO_HOME_ERROR;
 		break;
 	case IPSEC_POLICY_TYPE_ANY:
+		mhee.type = IPSEC_POLICY_TYPE_HOMEREGBINDING;
+		mhee.use_ipcomp = e->use_ipcomp;
+		mhee.use_esp = e->use_esp;
+		mhee.use_ah = e->use_ah;
+		mhee.action = e->action;
+		mhee.reqid_toha = e->reqid_toha;
+		mhee.reqid_tomn = e->reqid_tomn;
+		_ha_mn_ipsec_cleanup(haaddr, hoa, &mhee, NULL);
 		break;
 	default:
 		return 0;
+	}
+	if (e->type == IPSEC_POLICY_TYPE_MH ||
+	    e->type == IPSEC_POLICY_TYPE_ANY) {
+		mhee.type = IPSEC_POLICY_TYPE_BERROR;
+		mhee.use_ipcomp = e->use_ipcomp;
+		mhee.use_esp = e->use_esp;
+		mhee.use_ah = e->use_ah;
+		mhee.action = e->action;
+		mhee.reqid_toha = e->reqid_toha;
+		mhee.reqid_tomn = e->reqid_tomn;
+		_ha_mn_ipsec_cleanup(haaddr, hoa, &mhee, NULL);
 	}
 	if (type_in >= 0) {
 		/* inbound */
@@ -889,8 +839,6 @@ static inline void ha_mn_ipsec_cleanup(void)
 
 static void xfrm_ha_cleanup(void)
 {
-	XDBG("Deleting policies and states for HA\n");
-
 	if (conf.UseMnHaIPsec)
 		ha_mn_ipsec_cleanup();
 }
@@ -915,21 +863,7 @@ static int xfrm_cn_init(void)
 	/* policy to not add rth type 2 to MH msgs */
 	set_selector(&in6addr_any, &in6addr_any, IPPROTO_MH, 0, 0, 0, &sel);
 	if (xfrm_policy_add(&sel, 0, XFRM_POLICY_OUT, XFRM_POLICY_ALLOW,
-			    MIP6_PRIO_NO_RO_SIG_ANY, NULL, 0) < 0)
-		return -1;
-
-	/* Let Neighbor Solicitation messages bypass bindings */
-	set_selector(&in6addr_any, &in6addr_any,
-		     IPPROTO_ICMPV6, ND_NEIGHBOR_SOLICIT, 0, 0, &sel);
-	if (xfrm_policy_add(&sel, 0, XFRM_POLICY_OUT, XFRM_POLICY_ALLOW,
-			    MIP6_PRIO_NO_RO_SIG_ANY, NULL, 0) < 0)
-		return -1;
-
-	/* Let Neighbor Advertisement messages bypass bindings */
-	set_selector(&in6addr_any, &in6addr_any,
-		     IPPROTO_ICMPV6, ND_NEIGHBOR_ADVERT, 0, 0, &sel);
-	if (xfrm_policy_add(&sel, 0, XFRM_POLICY_OUT, XFRM_POLICY_ALLOW,
-			    MIP6_PRIO_NO_RO_SIG_ANY, NULL, 0) < 0)
+			    MIP6_PRIO_RO_NO_SIG_ANY, NULL, 0) < 0)
 		return -1;
 
 	/* Let ICMPv6 error messages bypass bindings */
@@ -937,14 +871,14 @@ static int xfrm_cn_init(void)
 		     IPPROTO_ICMPV6, 0, 0, 0, &sel);
 	sel.sport_mask = htons(0x80);
 	return xfrm_policy_add(&sel, 0, XFRM_POLICY_OUT, XFRM_POLICY_ALLOW,
-			       MIP6_PRIO_NO_RO_SIG_ANY, NULL, 0);
+			       MIP6_PRIO_RO_NO_SIG_ANY, NULL, 0);
 }
 
 static void xfrm_cn_cleanup(void)
 {
 	struct xfrm_selector sel;
 	
-	XDBG("Deleting policies and states for CN\n");
+	XDBG("Deleting policies and states for CN/HA\n");
 
 	cn_wildrecv_bu_pol_del();
 
@@ -954,14 +888,6 @@ static void xfrm_cn_cleanup(void)
 	set_selector(&in6addr_any, &in6addr_any, IPPROTO_MH, 0, 0, 0, &sel);
 	xfrm_policy_del(&sel, XFRM_POLICY_OUT);
 	
-	set_selector(&in6addr_any, &in6addr_any,
-		     IPPROTO_ICMPV6, ND_NEIGHBOR_SOLICIT, 0, 0, &sel);
-	xfrm_policy_del(&sel, XFRM_POLICY_OUT);
-
-	set_selector(&in6addr_any, &in6addr_any,
-		     IPPROTO_ICMPV6, ND_NEIGHBOR_ADVERT, 0, 0, &sel);
-	xfrm_policy_del(&sel, XFRM_POLICY_OUT);
-
 	set_selector(&in6addr_any, &in6addr_any,
 		     IPPROTO_ICMPV6, 0, 0, 0, &sel);
 	sel.sport_mask = htons(0x80);
@@ -1000,6 +926,7 @@ static int _mn_bule_ro_pol_add(struct bulentry *e, int iif, int replace)
 	struct xfrm_selector sel;
 	int action;
 	int prio;
+
 	if (e->flags & IP6_MH_BU_HOME) {
 		/* block payload data to HA until binding is complete */
 		action = XFRM_POLICY_BLOCK;
@@ -1019,7 +946,7 @@ static int mn_bule_ro_pol_add(void *vbule, void *viif)
 {
 	struct bulentry *e = vbule;
 	int *iif = viif;
-	if (e->type != BUL_ENTRY)
+	if (e->type != BUL_ENTRY && e->type != HOT_ENTRY)
 		return 0;
 	return _mn_bule_ro_pol_add(e, *iif, 0);
 }
@@ -1078,11 +1005,12 @@ int mn_ro_pol_add(struct home_addr_info *hai, int ifindex, int changed)
 
 	if (!conf.DoRouteOptimizationMN)
 		return 0;
-	/* we don't use any RO triggering policy when TunnelPayload IPsec
+	/* we don't need RO triggering policy when TunnelPayload IPsec
 	   tunnel is used */
 	if (conf.UseMnHaIPsec &&
 	    ipsec_policy_entry_check(&hai->ha_addr,
-				     &hai->hoa.addr, IPSEC_F_TNL_ANY)) {
+				     &hai->hoa.addr,
+				     IPSEC_POLICY_TYPE_TUNNELPAYLOAD)) {
 		return 0;
 	}
 	if (changed)
@@ -1152,7 +1080,7 @@ static int mn_bule_ro_pol_del(void *vbule, void *viif)
 {
 	struct bulentry *e = vbule;
 	int *iif = viif;
-	if (e->type == BUL_ENTRY)
+	if (e->type == BUL_ENTRY || e->type == HOT_ENTRY)
 		_mn_bule_ro_pol_del(e, *iif);
 	return 0;
 }
@@ -1251,20 +1179,17 @@ static int _ha_mn_ipsec_pol_mod(const struct in6_addr *haaddr,
 	}
 	
 	/* outbound */
-	if (ipsec_use_ipcomp(e))
-		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_COMP, 0,
-				  NULL, NULL, e->reqid_tomn);
-	if (ipsec_use_esp(e))
-		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_ESP, 0,
-				  NULL, NULL, e->reqid_tomn);
+	if (e->use_ipcomp)
+		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_COMP, 0, NULL, NULL, e->reqid_tomn);
+	if (e->use_esp)
+		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_ESP, 0, NULL, NULL, e->reqid_tomn);
 	if (reg)
 		create_rh_tmpl(&tmpls[ti++]);
 
 	/* AH template must be placed as the last one for outbound SP */
-	if (ipsec_use_ah(e))
-		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_AH, 0,
-				  NULL, NULL, e->reqid_tomn);
-	
+	if (e->use_ah)
+		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_AH, 0, NULL, NULL, e->reqid_tomn);
+
 	set_selector(hoa, haaddr, ulp, type_out, 0, 0, &sel);
 	if (xfrm_policy_add(&sel, 1,
 			    XFRM_POLICY_OUT, e->action,
@@ -1273,15 +1198,12 @@ static int _ha_mn_ipsec_pol_mod(const struct in6_addr *haaddr,
 
 	/* inbound */
 	ti = 0;
-	if (ipsec_use_ipcomp(e))
-		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_COMP, 0,
-				  NULL, NULL, e->reqid_toha);
-	if (ipsec_use_esp(e))
-		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_ESP, 0,
-				  NULL, NULL, e->reqid_toha);
-	if (ipsec_use_ah(e))
-		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_AH, 0,
-				  NULL, NULL, e->reqid_toha);
+	if (e->use_ipcomp)
+		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_COMP, 0, NULL, NULL, e->reqid_toha);
+	if (e->use_esp)
+		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_ESP, 0, NULL, NULL, e->reqid_toha);
+	if (e->use_ah)
+		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_AH, 0, NULL, NULL, e->reqid_toha);
 	if (reg)
 		create_dstopt_tmpl(&tmpls[ti++], haaddr, hoa);
 
@@ -1393,7 +1315,8 @@ int xfrm_add_bce(const struct in6_addr *our_addr,
 		if (ipsec_policy_apply(our_addr, peer_addr,
 				       _ha_mn_ipsec_pol_mod, &reg) < 0)
 			return -1;
-		if (ipsec_policy_entry_check(our_addr, peer_addr, IPSEC_F_ANY))
+		if (ipsec_policy_entry_check(our_addr, peer_addr,
+					     IPSEC_POLICY_TYPE_ANY))
 			return 0;
 	}
 	_xfrm_add_bce(our_addr, peer_addr, replace);
@@ -1441,6 +1364,7 @@ static int _mn_ha_ipsec_pol_mod(const struct in6_addr *haaddr,
 	int type_in = 0, type_out = 0;
 	int prio = MIP6_PRIO_HOME_DATA_IPSEC;
 	int dir;
+	struct ipsec_policy_entry bubae;
 	struct in6_addr *coa = arg;
 
 	switch (e->type) {
@@ -1458,45 +1382,50 @@ static int _mn_ha_ipsec_pol_mod(const struct in6_addr *haaddr,
 		prio = MIP6_PRIO_HOME_SIG;
 		break;
 	case IPSEC_POLICY_TYPE_ANY:
+		bubae.type = IPSEC_POLICY_TYPE_HOMEREGBINDING;
+		bubae.use_ipcomp = e->use_ipcomp;
+		bubae.use_esp = e->use_esp;
+		bubae.use_ah = e->use_ah;
+		bubae.action = e->action;
+		bubae.reqid_toha = e->reqid_toha;
+		bubae.reqid_tomn = e->reqid_tomn;
+		if (_mn_ha_ipsec_pol_mod(haaddr, hoa, &bubae, arg))
+			return -1;
 		break;
 	default:
 		return 0;
 	}
+	
 	/* inbound */
 	set_selector(hoa, haaddr, ulp, type_in, 0, 0, &sel);
 	dir = XFRM_POLICY_IN;
 	ti = 0;
-	if (ipsec_use_ipcomp(e))
-		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_COMP, 0,
-				  NULL, NULL, e->reqid_tomn);
-	if (ipsec_use_esp(e))
-		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_ESP, 0,
-				  NULL, NULL, e->reqid_tomn);
-	if (ipsec_use_ah(e))
-		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_AH, 0,
-				  NULL, NULL, e->reqid_tomn);
+	if (e->use_ipcomp)
+		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_COMP, 0, NULL, NULL, e->reqid_tomn);
+	if (e->use_esp)
+		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_ESP, 0, NULL, NULL, e->reqid_tomn);
+	if (e->use_ah)
+		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_AH, 0, NULL, NULL, e->reqid_tomn);
 	if (coa)
 		create_rh_tmpl(&tmpls[ti++]);
 
 	if (xfrm_policy_add(&sel, 1, dir, e->action, prio, tmpls, ti))
 		return -1;
 
+
 	/* outbound */
 	set_selector(haaddr, hoa, ulp, type_out, 0, 0, &sel);
 	dir = XFRM_POLICY_OUT;
 	ti = 0;
-	if (ipsec_use_ipcomp(e))
-		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_COMP, 0,
-				  NULL, NULL, e->reqid_toha);
-	if (ipsec_use_esp(e))
-		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_ESP, 0,
-				  NULL, NULL, e->reqid_toha);
+	if (e->use_ipcomp)
+		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_COMP, 0, NULL, NULL, e->reqid_toha);
+	if (e->use_esp)
+		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_ESP, 0, NULL, NULL, e->reqid_toha);
 	if (coa)
 		create_dstopt_tmpl(&tmpls[ti++], hoa, haaddr);
 	/* AH template must be placed as the last one for outbound SP */
-	if (ipsec_use_ah(e))
-		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_AH, 0,
-				  NULL, NULL, e->reqid_toha);
+	if (e->use_ah)
+		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_AH, 0, NULL, NULL, e->reqid_toha);
 	return xfrm_policy_add(&sel, 1, dir, e->action, prio, &tmpls[0], ti);
 }
 
@@ -1603,17 +1532,10 @@ int xfrm_pre_bu_add_bule(struct bulentry *bule)
 	int rsig = bule->xfrm_state & BUL_XFRM_STATE_SIG;
 	int rdata = bule->xfrm_state & BUL_XFRM_STATE_DATA;
 
-	if (bule->flags & IP6_MH_BU_HOME) {
-		struct home_addr_info *hai = bule->home;
-		if (hai->home_block & HOME_LINK_BLOCK)
-			xfrm_unblock_link(hai);
-		xfrm_block_link(hai);
-	}
-	if (IN6_ARE_ADDR_EQUAL(&bule->hoa, &bule->coa)) {
-		if (rdata)
-			return _xfrm_del_bule_data(bule);
-		return 0;
-	}
+	/* check if XFRM policies and states have already been cleaned up */
+	if (IN6_ARE_ADDR_EQUAL(&bule->hoa, &bule->coa))
+		return _xfrm_del_bule_data(bule);
+
 	bule->xfrm_state = BUL_XFRM_STATE_SIG|BUL_XFRM_STATE_DATA;
 
 	if (bule->flags & IP6_MH_BU_HOME && conf.UseMnHaIPsec) {
@@ -1663,11 +1585,6 @@ int xfrm_post_ba_mod_bule(struct bulentry *bule)
 	struct xfrm_user_tmpl tmpls[2];
 	int prio;
 	
-	if (bule->flags & IP6_MH_BU_HOME) {
-		struct home_addr_info *hai = bule->home;
-		if (hai->home_block & HOME_LINK_BLOCK)
-			xfrm_unblock_link(hai);
-	}
 	/* check if XFRM policies and states have already been cleaned up */
 	if (IN6_ARE_ADDR_EQUAL(&bule->hoa, &bule->coa))
 		return 0;
@@ -1693,31 +1610,39 @@ int xfrm_post_ba_mod_bule(struct bulentry *bule)
 			       XFRM_POLICY_ALLOW, prio, tmpls, 1);
 }
 
-static void parse_acquire(struct nlmsghdr *msg)
+static inline int routable_unicast_addr(struct in6_addr *addr)
+{
+	if(IN6_IS_ADDR_LINKLOCAL(addr) ||
+	   IN6_IS_ADDR_MULTICAST(addr))
+		return 0;
+	/* TODO: add check for anycast */
+	return 1;
+}
+
+static int parse_acquire(struct nlmsghdr *msg)
 {
 	struct xfrm_user_acquire *acq;
+	struct mn_addr mn_coa;
 	int do_ro = 0;
 	struct in6_addr *hoa = NULL, *cn = NULL;
-	xfrm_address_t *daddr, *saddr;
 
+	memset(&mn_coa, 0, sizeof(mn_coa));
 	if (msg->nlmsg_len < NLMSG_LENGTH(sizeof(*acq))) {
 		XDBG("Too short nlmsg");
-		return;
+		return -1;
 	}
 	acq = NLMSG_DATA(msg);
-	daddr = &acq->sel.daddr;
-	saddr = &acq->sel.saddr;
 
 	/* First mandatory checks */
 	if (acq->sel.proto == IPPROTO_MH ||
 	    (acq->sel.proto == IPPROTO_ICMPV6 &&
 	     ntohs(acq->sel.sport) < 128) ||
-	    !in6_is_addr_routable_unicast((struct in6_addr *)daddr) ||
-	    !in6_is_addr_routable_unicast((struct in6_addr *)saddr))
-		return;
+	    !routable_unicast_addr((struct in6_addr *)acq->sel.daddr.a6) ||
+	    !routable_unicast_addr((struct in6_addr *)acq->sel.saddr.a6))
+		return 0;
 
 	if (acq->policy.dir == 	XFRM_POLICY_OUT) {
-		XDBG2("xfrm_policy_out\n");
+		XDBG("xfrm_policy_out\n");
 		if (acq->id.proto == IPPROTO_DSTOPTS) {
 			hoa = (struct in6_addr *)acq->sel.saddr.a6;
 			cn = (struct in6_addr *)acq->sel.daddr.a6; 
@@ -1725,7 +1650,7 @@ static void parse_acquire(struct nlmsghdr *msg)
 		} else 
 			XDBG("Unknown protocol %d in acquire", acq->id.proto);
 	} else if (acq->policy.dir == XFRM_POLICY_IN) {
-		XDBG2("xfrm_policy_in\n");
+		XDBG("xfrm_policy_in\n");
 		if (acq->id.proto == IPPROTO_ROUTING) {
 			hoa = (struct in6_addr *)acq->sel.daddr.a6; 
 			cn = (struct in6_addr *)acq->sel.saddr.a6;
@@ -1733,14 +1658,17 @@ static void parse_acquire(struct nlmsghdr *msg)
 		} else 
 			XDBG("Unknown protocol %d in acquire", acq->id.proto);
 	} else 
-		XDBG2("xfrm parse acquire: ignoring forwarded packets");
-	XDBG2("Acquire daddr %x:%x:%x:%x:%x:%x:%x:%x\n",
-	      NIP6ADDR((struct in6_addr *)&acq->sel.daddr.a6));
-	XDBG2("Acquire saddr %x:%x:%x:%x:%x:%x:%x:%x\n",
-	      NIP6ADDR((struct in6_addr *)&acq->sel.saddr.a6));
-	XDBG2("ifindex %d\n", acq->sel.ifindex);
-	if (do_ro)
-		mn_start_ro(cn, hoa, acq->sel.ifindex);
+		XDBG("xfrm parse acquire: ignoring forwarded packets");
+	XDBG("Acquire daddr %x:%x:%x:%x:%x:%x:%x:%x\n",
+		NIP6ADDR((struct in6_addr *)&acq->sel.daddr.a6));
+	XDBG("Acquire saddr %x:%x:%x:%x:%x:%x:%x:%x\n",
+		NIP6ADDR((struct in6_addr *)&acq->sel.saddr.a6));
+	if (do_ro) {
+		if (conf.pmgr.get_ro_coa(hoa, cn, &mn_coa.addr) < 0)
+			return -1;
+		mn_start_ro(cn, hoa, &mn_coa);
+	}
+	return 0;
 }
 
 #define XFRMRPT_RTA(x)	((struct rtattr*)(((char*)(x)) + NLMSG_ALIGN(sizeof(struct xfrm_user_report))))
@@ -1749,10 +1677,10 @@ static int parse_report(struct nlmsghdr *msg)
 {
 	struct xfrm_user_report *rpt;
 	struct rtattr *rta_tb[XFRMA_MAX+1];
-	uint8_t status = IP6_MH_BES_UNKNOWN_HAO;
+	uint8_t status;
+	xfrm_address_t *coaddr = NULL;
 	xfrm_address_t *hoaddr = NULL;
 	xfrm_address_t *cnaddr = NULL;
-	xfrm_address_t *coaddr;
 
 	if (msg->nlmsg_len < NLMSG_LENGTH(sizeof(*rpt))) {
 		XDBG("Too short nlmsg");
@@ -1764,43 +1692,53 @@ static int parse_report(struct nlmsghdr *msg)
 	    rpt->sel.family != AF_INET6)
 		return 0;
 
-	memset(rta_tb, 0, sizeof(rta_tb));
-	parse_rtattr(rta_tb, XFRMA_MAX, XFRMRPT_RTA(rpt), 
-		     msg->nlmsg_len - NLMSG_LENGTH(sizeof(*rpt)));
-
-	if (!rta_tb[XFRMA_ADDR])
-		return -1;
-
-	coaddr = (xfrm_address_t *) RTA_DATA(rta_tb[XFRMA_ADDR]);
-
-	if (rpt->sel.proto == IPPROTO_MH && 
-	    ntohs(rpt->sel.sport) > IP6_MH_TYPE_MAX)
-		status = IP6_MH_BES_UNKNOWN_MH;
+	status = (rpt->sel.proto == IPPROTO_MH) ?
+		IP6_MH_BES_UNKNOWN_MH : IP6_MH_BES_UNKNOWN_HAO;
 
 	hoaddr = &rpt->sel.saddr;
 	cnaddr = &rpt->sel.daddr;
 
+	memset(rta_tb, 0, sizeof(rta_tb));
+	parse_rtattr(rta_tb, XFRMA_MAX, XFRMRPT_RTA(rpt), 
+		     msg->nlmsg_len - NLMSG_LENGTH(sizeof(*rpt)));
+	if (rta_tb[XFRMA_ADDR]) {
+		struct rtattr *rta = rta_tb[XFRMA_ADDR];
+		coaddr = (xfrm_address_t *)RTA_DATA(rta);
+	}
+
 	XDBG("flow proto = %u\n", rpt->sel.proto);
 	XDBG("hoaddr %x:%x:%x:%x:%x:%x:%x:%x\n",
 	     NIP6ADDR((struct in6_addr *)hoaddr));
-	XDBG("coaddr %x:%x:%x:%x:%x:%x:%x:%x\n",
-	     NIP6ADDR((struct in6_addr *)coaddr));
+	if (coaddr)
+		XDBG("coaddr %x:%x:%x:%x:%x:%x:%x:%x\n",
+		     NIP6ADDR((struct in6_addr *)coaddr));
 	XDBG("cnaddr %x:%x:%x:%x:%x:%x:%x:%x\n",
 	     NIP6ADDR((struct in6_addr *)cnaddr));
 	XDBG("ifindex %d\n", rpt->sel.ifindex);
 	XDBG("sending BE status = %u\n", status);
 
-	/* ignore if CoA/HoA of original packet is invalid */
-	if (!in6_is_addr_routable_unicast((struct in6_addr *) coaddr) ||
-	    !in6_is_addr_routable_unicast((struct in6_addr *) hoaddr)) {
+	if (!coaddr) {
+		coaddr = hoaddr;
+		hoaddr = NULL;
+	}
+
+       /* ignore if CoA/HoA of original packet is invalid */
+	if (!routable_unicast_addr((struct in6_addr *)coaddr) ||
+	    (hoaddr && !routable_unicast_addr((struct in6_addr *)hoaddr))) {
 		XDBG("Invalid CoA/HoA appeared in original packet\n");
 		return 0;
 	}
+
 	mh_send_be((struct in6_addr *)coaddr, (struct in6_addr *)hoaddr,
 		   (struct in6_addr *)cnaddr, status, rpt->sel.ifindex);
 
 	return 0;
 }
+
+struct xfrm_msg {
+	struct nlmsghdr nlmsg;
+	char data[1000];
+};
 
 static int xfrm_rcv(struct sockaddr_nl *who, struct nlmsghdr *n, void *arg)
 {
@@ -1821,11 +1759,10 @@ static int xfrm_rcv(struct sockaddr_nl *who, struct nlmsghdr *n, void *arg)
 
 struct rtnl_handle xfrm_rth;
 
-static void *xfrm_listen(void *dummy)
+void *xfrm_listen(void *dummy)
 {
-	pthread_dbg("thread started");
 	rtnl_ext_listen(&xfrm_rth, xfrm_rcv, NULL);
-	pthread_exit(NULL);
+	return NULL;
 }
 
 int xfrm_init(void)
@@ -1875,36 +1812,61 @@ void xfrm_cleanup(void)
 }
 
 /* blocking all payload packets from MN */
-int xfrm_block_link(struct home_addr_info *hai)
+int xfrm_block_policy(struct home_addr_info *hai)
 {
 	int ret = 0;
 	struct xfrm_selector sel;
-	hai->home_block |= HOME_LINK_BLOCK;
-	hai->if_block = hai->hoa.iif;
+
+	if (hai->home_block & HOME_LINK_BLOCK)
+		return ret;
+
 	/* allow MN to send NA messages to HA while returning home */
 	set_selector(&in6addr_any, &in6addr_any, IPPROTO_ICMPV6, 
-		     ND_NEIGHBOR_ADVERT, 0, hai->if_block, &sel);
-	if ((ret = xfrm_policy_add(&sel, 0, XFRM_POLICY_OUT, XFRM_POLICY_ALLOW,
-				   MIP6_PRIO_HOME_SIG_ANY, NULL, 0)))
+		     ND_NEIGHBOR_ADVERT, 0, 0, &sel);
+	if ((ret = xfrm_policy_add(&sel, 0, XFRM_POLICY_OUT, 
+				   XFRM_POLICY_ALLOW,
+				   MIP6_PRIO_RO_SIG_ANY, NULL, 0)))
 		return ret;
 	/* block any packets from HoA to the CN */
-	set_selector(&in6addr_any, &in6addr_any, 0, 0, 0, hai->if_block, &sel);
+	set_selector(&in6addr_any, &hai->hoa.addr, 0, 0, 0, 0, &sel);
 	if ((ret = xfrm_policy_add(&sel, 0, XFRM_POLICY_OUT, 
 				   XFRM_POLICY_BLOCK,
-				   MIP6_PRIO_HOME_BLOCK, NULL, 0)))
+				   MIP6_PRIO_RO_BLOCK, NULL, 0)))
 		return ret;
+	/* block all link-local traffic until the MN has deregistered */
+	if (hai->lladdr_comp) {
+		struct in6_addr lladdr;
+		ipv6_addr_llocal(&hai->hoa.addr, &lladdr);
+		set_selector(&in6addr_any, &lladdr,
+			     0, 0, 0, hai->if_home, &sel);
+		if ((ret = xfrm_policy_add(&sel, 0, XFRM_POLICY_OUT, 
+					   XFRM_POLICY_BLOCK,
+					   MIP6_PRIO_RO_BLOCK, NULL, 0)))
+			return ret;
+	}
+	hai->home_block |= HOME_LINK_BLOCK;
 	return ret;
 }
 
-void xfrm_unblock_link(struct home_addr_info *hai)
+void xfrm_unblock_policy(struct home_addr_info *hai)
 {
 	struct xfrm_selector sel;
-	set_selector(&in6addr_any, &in6addr_any, 0, 0, 0, hai->if_block, &sel);
+
+	if (!(hai->home_block & HOME_LINK_BLOCK))
+		return;
+
+	if (hai->lladdr_comp) {
+		struct in6_addr lladdr;
+		ipv6_addr_llocal(&hai->hoa.addr, &lladdr);
+		set_selector(&in6addr_any, &lladdr,
+			     0, 0, 0, hai->if_home, &sel);
+		xfrm_policy_del(&sel, XFRM_POLICY_OUT);
+	}
+	set_selector(&in6addr_any, &hai->hoa.addr, 0, 0, 0, 0, &sel);
 	xfrm_policy_del(&sel, XFRM_POLICY_OUT);
 	set_selector(&in6addr_any, &in6addr_any, IPPROTO_ICMPV6, 
-		     ND_NEIGHBOR_ADVERT, 0, hai->if_block, &sel);
+		     ND_NEIGHBOR_ADVERT, 0, 0, &sel);
 	xfrm_policy_del(&sel, XFRM_POLICY_OUT);
-	hai->if_block = 0;
 	hai->home_block &= ~HOME_LINK_BLOCK;
 }
 /*
@@ -1913,23 +1875,27 @@ void xfrm_unblock_link(struct home_addr_info *hai)
 int xfrm_block_hoa(struct home_addr_info *hai)
 {
 	struct xfrm_selector sel;
-	hai->home_block |= HOME_ADDR_BLOCK;
-	hai->ha_list.if_block = hai->hoa.iif;
-	set_selector(&in6addr_any, &hai->hoa.addr,
-		     0, 0, 0, hai->ha_list.if_block, &sel);
+
+	if (hai->home_block & HOME_ADDR_BLOCK)
+		return 0;
+
+	set_selector(&in6addr_any, &hai->hoa.addr, 0, 0, 0, 0, &sel);
 	if (xfrm_policy_add(&sel, 0, XFRM_POLICY_OUT, 
-			    XFRM_POLICY_BLOCK, MIP6_PRIO_HOME_ERROR, NULL, 0))
+			    XFRM_POLICY_BLOCK, MIP6_PRIO_HOME_SIG, NULL, 0))
 		return -1;
+	hai->home_block |= HOME_ADDR_BLOCK;
 	return 0;
 }
 
 void xfrm_unblock_hoa(struct home_addr_info *hai)
 {
 	struct xfrm_selector sel;
-	set_selector(&in6addr_any, &hai->hoa.addr,
-		     0, 0, 0, hai->ha_list.if_block, &sel);
+
+	if (!(hai->home_block & HOME_ADDR_BLOCK))
+		return;
+
+	set_selector(&in6addr_any, &hai->hoa.addr, 0, 0, 0, 0, &sel);
 	xfrm_policy_del(&sel, XFRM_POLICY_OUT);
-	hai->ha_list.if_block = 0;
 	hai->home_block &= ~HOME_ADDR_BLOCK;
 }
 
@@ -1945,18 +1911,15 @@ int mn_ipsec_recv_bu_tnl_pol_add(struct bulentry *bule, int ifindex,
 
 	create_dstopt_tmpl(&tmpls[ti++], &in6addr_any, &in6addr_any);
 
-	if (ipsec_use_ipcomp(e))
+	if (e->use_ipcomp)
 		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_COMP, XFRM_MODE_TUNNEL,
-				  &bule->hoa, &bule->home->ha_addr,
-				  e->reqid_tomn);
-	if (ipsec_use_esp(e))
+				  &bule->hoa, &bule->home->ha_addr, e->reqid_tomn);
+	if (e->use_esp)
 		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_ESP, XFRM_MODE_TUNNEL,
-				  &bule->hoa, &bule->home->ha_addr,
-				  e->reqid_tomn);
-	if (ipsec_use_ah(e))
+				  &bule->hoa, &bule->home->ha_addr, e->reqid_tomn);
+	if (e->use_ah)
 		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_AH, XFRM_MODE_TUNNEL,
-				  &bule->hoa, &bule->home->ha_addr,
-				  e->reqid_tomn);
+				  &bule->hoa, &bule->home->ha_addr, e->reqid_tomn);
 
 	return xfrm_policy_add(&sel, 1, XFRM_POLICY_IN, e->action,
 			       MIP6_PRIO_RO_SIG_IPSEC, tmpls, ti);

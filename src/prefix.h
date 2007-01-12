@@ -1,4 +1,4 @@
-/* $Id: prefix.h 1.10 06/05/07 21:52:43+03:00 anttit@tcs.hut.fi $ */
+/* $Id: prefix.h 1.8 05/12/08 19:42:43+02:00 vnuorval@tcs.hut.fi $ */
 
 #ifndef __PREFIX_H__
 #define __PREFIX_H__ 1
@@ -10,8 +10,6 @@
 #include <netinet/icmp6.h>
 
 #include "list.h"
-#include "mipv6.h"
-#include "util.h"
 
 #define PREFIX_LIFETIME_INFINITE 0xFFFFFFFF
 
@@ -55,7 +53,8 @@ static inline void ipv6_addr_prefix(struct in6_addr *pfx,
 
 static inline void ipv6_addr_create(struct in6_addr *addr,
 				    const struct in6_addr *pfx,
-				    const struct in6_addr *sfx, int plen)
+				    const struct in6_addr *sfx,
+				    const int plen)
 {
 	int o, b;
 
@@ -118,18 +117,10 @@ static inline int  prefix_list_find(const struct list_head *pl,
 
 unsigned long mpd_curr_lft(const struct timespec *now,
 			   const struct timespec *tstamp,
-			   unsigned long lft);
+			   const unsigned long lft);
 
 void dhaad_gen_ha_anycast(struct in6_addr *anycast,
-			  const struct in6_addr *pfx, int plen);
-
-static inline void mpd_sanitize_lft(struct timespec *lft)
-{
-	/* make sure the lifetime doesn't exceed 0x3fffc (0xffff << 2)
-	   seconds and is given in four second time units */
-	lft->tv_sec = (umin(lft->tv_sec, MAX_BINDING_LIFETIME) &
-		       MAX_BINDING_LIFETIME);
-	lft->tv_nsec = 0;
-}
+			  const struct in6_addr *pfx,
+			  const int plen);
 
 #endif

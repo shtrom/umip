@@ -1,11 +1,9 @@
-/* $Id: mipv6.h 1.8 06/02/28 18:36:44+02:00 anttit@tcs.hut.fi $ */
+/* $Id: mipv6.h 1.5 05/11/23 15:57:36+02:00 anttit@tcs.hut.fi $ */
 
 /* Put all constants defined in MIPv6 spec in this file */
 
 #ifndef __MIPV6_H__
 #define __MIPV6_H__ 1
-
-#include <time.h>
 
 /* 12. Protocol Constants */
 #define DHAAD_RETRIES             4   /* retransmissions */
@@ -16,7 +14,7 @@
 #define MAX_NONCE_LIFETIME        240 /* seconds */
 #define MAX_TOKEN_LIFETIME        210 /* seconds */
 #define MAX_RR_BINDING_LIFETIME   420 /* seconds */
-#define MAX_CONSECUTIVE_RESENDS   5   /* retransmissions */
+#define MAX_UPDATE_RATE           3   /* times */
 #define PREFIX_ADV_RETRIES        3   /* retransmissions */
 #define PREFIX_ADV_TIMEOUT        3   /* seconds */
 

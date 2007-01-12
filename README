@@ -7,11 +7,11 @@ MIPL Mobile IPv6 for Linux
   kernels.  See INSTALL and any other documents referred there for
   installation instructions and required kernel compile options.
 
-  MIPL Mobile IPv6 for Linux has been developed in the GO-Core Project
+  MIPL Mobile IPv6 for Linux has been developed by the GO-Core Project
   at the Helsinki University of Technology.  See AUTHORS for core
   development team and THANKS for complete listing of contributors.
   The software is released under the GNU General Public License (see
-  COPYING for full license text).
+  COPYING).
 
 Official Site
 

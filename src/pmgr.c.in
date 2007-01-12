@@ -1,12 +1,11 @@
 /*
- * $Id: pmgr.c.in 1.3 06/02/08 00:53:40+02:00 vnuorval@tcs.hut.fi $
+ * $Id: pmgr.c.in 1.1 05/02/21 14:45:42+02:00 anttit@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
  * Author: Antti Tuominen <anttit@tcs.hut.fi>
  *
  * Copyright 2005 GO-Core Project
- * Copyright 2005,2006 Helsinki University of Technology
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -38,7 +37,9 @@
 
 static void pmgr_init_defaults(struct pmgr_cb *lb)
 {
-	memset(lb, 0, sizeof(struct pmgr_cb));
+	lb->old = NULL;
+	lb->handle = NULL;
+	memset(lb->so_path, 0, 255);
 	strcpy(lb->so_path, "[internal]");
 
 /* ##INSERT_DEFAULTS## */

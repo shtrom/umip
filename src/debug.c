@@ -1,12 +1,11 @@
 /*
- * $Id: debug.c 1.23 06/05/07 21:52:42+03:00 anttit@tcs.hut.fi $
+ * $Id: debug.c 1.18 05/11/10 19:11:33+02:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
  * Author: Antti Tuominen <anttit@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2004 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -29,10 +28,6 @@
 #include <stdlib.h>
 #include <sys/uio.h>
 
-#include "debug.h"
-
-FILE *sdbg;
-
 void dbgprint(const char *fname, const char *fmt, ...)
 {
         char s[1024];
@@ -46,7 +41,7 @@ void dbgprint(const char *fname, const char *fmt, ...)
         va_end(args);
 }
 
-void debug_print_buffer(const void *data, int len, const char *fname, 
+void debug_print_buffer(const void *data, const int len, const char *fname, 
 			const char *fmt, ...)
 { 
 	int i; 

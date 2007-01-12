@@ -1,13 +1,12 @@
 /*
- * $Id: dhaad_mn.c 1.21 06/05/15 12:03:38+03:00 vnuorval@tcs.hut.fi $
+ * $Id: dhaad_mn.c 1.10 05/12/23 19:20:06+09:00 takamiya@po.ntts.co.jp $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
- * Authors: Ville Nuorvala <vnuorval@tcs.hut.fi>,
- *          Antti Tuominen <anttit@tcs.hut.fi>
+ * Authors: Antti Tuominen <anttit@tcs.hut.fi>
+ *          Ville Nuorvala <vnuorval@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2004 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -28,9 +27,16 @@
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
+#ifdef HAVE_LIBPTHREAD
 #include <pthread.h>
+#else
+#error "POSIX Thread Library required!"
+#endif
 #include <netinet/ip6.h>
 #include <netinet/icmp6.h>
+#ifndef HAVE_MIP6_ICMP6_H
+#include <netinet-icmp6.h>
+#endif
 #include <stdlib.h>
 #include <errno.h>
 
@@ -104,6 +110,9 @@ static int dhaad_send_request(int oif, struct in6_addr *src,
 	return id;
 }
 
+static void _dhaad_stop(struct home_addr_info *hai,
+			struct ha_candidate_list *t);
+
 static void dhaad_resend(struct tq_elem *tqe)
 {
 	pthread_rwlock_rdlock(&mn_lock);
@@ -113,7 +122,8 @@ static void dhaad_resend(struct tq_elem *tqe)
 		hai = tq_data(tqe, struct home_addr_info, ha_list.tqe);
 		t = &hai->ha_list;
 		pthread_mutex_lock(&t->c_lock);
-		if (t->dhaad_resends == DHAAD_RETRIES) {
+		if (t->dhaad_resends > DHAAD_RETRIES) {
+			_dhaad_stop(hai, t);
 			pthread_mutex_unlock(&t->c_lock);
 			pthread_rwlock_unlock(&mn_lock);
 			return;
@@ -130,20 +140,18 @@ static void dhaad_resend(struct tq_elem *tqe)
 	pthread_rwlock_unlock(&mn_lock);
 }
 
-static void _dhaad_start(struct home_addr_info *hai, int force)
+static void _dhaad_start(struct home_addr_info *hai,
+			 struct ha_candidate_list *t)
 {
-	struct ha_candidate_list *t = &hai->ha_list;
-	if (force || 
-	    (movement_ho_verdict(hai->verdict) && 
-	     (!tsisset(t->dhaad_delay) ||
-	      t->dhaad_resends == DHAAD_RETRIES))) {
-		if (!(hai->home_block & HOME_ADDR_BLOCK))
-			xfrm_block_hoa(hai);
+	if (hai->verdict != MN_HO_CHECK_LIFETIME &&
+	    hai->verdict != MN_HO_REESTABLISH) {
+		xfrm_block_hoa(hai);
 		t->dhaad_resends = 0;
 		t->dhaad_id = dhaad_send_request(hai->primary_coa.iif,
 						 &hai->primary_coa.addr,
 						 &hai->home_prefix,
 						 hai->home_plen);
+		t->dhaad_resends++;
 		t->dhaad_delay = INITIAL_DHAAD_TIMEOUT_TS;
 		add_task_rel(&t->dhaad_delay, &t->tqe, dhaad_resend);
 	}
@@ -153,18 +161,17 @@ void dhaad_start(struct home_addr_info *hai)
 {
 	struct ha_candidate_list *t = &hai->ha_list;
 	pthread_mutex_lock(&t->c_lock);
-	_dhaad_start(hai, 0);
+	_dhaad_start(hai, t);
 	pthread_mutex_unlock(&t->c_lock);
 }
 
-static void _dhaad_stop(struct home_addr_info *hai)
+static void _dhaad_stop(struct home_addr_info *hai,
+			struct ha_candidate_list *t)
 {
-	struct ha_candidate_list *t = &hai->ha_list;
 	t->dhaad_id = -1;
 	t->dhaad_resends = 0;
 	tsclear(t->dhaad_delay);
-	if (hai->home_block & HOME_ADDR_BLOCK)
-		xfrm_unblock_hoa(hai);
+	xfrm_unblock_hoa(hai);
 }
 
 void dhaad_stop(struct home_addr_info *hai)
@@ -173,7 +180,7 @@ void dhaad_stop(struct home_addr_info *hai)
 	pthread_mutex_lock(&t->c_lock);
 	if (tsisset(t->dhaad_delay)) {
 		del_task(&t->tqe);
-		_dhaad_stop(hai);
+		_dhaad_stop(hai, t);
 	}
 	t->last_ha = in6addr_any;
 	pthread_mutex_unlock(&t->c_lock);
@@ -207,23 +214,28 @@ int dhaad_next_candidate(struct home_addr_info *hai)
 	return err;
 }
 
-int dhaad_home_reg_failed(struct home_addr_info *hai)
+int dhaad_home_reg_failed(struct home_addr_info *hai,
+			  struct in6_addr *nack_ha)
 {
 	struct ha_candidate_list *t = &hai->ha_list;
 	int err;
 	pthread_mutex_lock(&t->c_lock);
-	t->last_ha = hai->ha_addr;
+	if (nack_ha)
+		t->last_ha = *nack_ha;
 	if ((err = _dhaad_next_candidate(hai, t)) < 0) {
-		_dhaad_start(hai, 1);
+		_dhaad_start(hai, t);
 		err = -EAGAIN;
 	}
 	pthread_mutex_unlock(&t->c_lock);
 	return err;
 }
 
-static void dhaad_recv_rep(const struct icmp6_hdr *ih, ssize_t len,
+static void dhaad_recv_rep(const struct icmp6_hdr *ih,
+			   const ssize_t len,
 			   const struct in6_addr *src,
-			   const struct in6_addr *dst, int iif, int hoplimit)
+			   const struct in6_addr *dst,
+			   const int iif,
+			   const int hoplimit)
 {
 	struct mip_dhaad_rep *rph = (struct mip_dhaad_rep *)ih;
 	int i;

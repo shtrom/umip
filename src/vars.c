@@ -1,10 +1,5 @@
-/* $Id: vars.c 1.2 06/02/28 18:36:44+02:00 anttit@tcs.hut.fi $ */
-#ifdef HAVE_CONFIG_H
-#include <config.h>
-#endif
-
 #include <netinet/in.h>
-#include <time.h>
+
 #include "mipv6.h"
 
 const struct timespec initial_bindack_timeout_ts = 

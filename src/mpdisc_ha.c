@@ -1,14 +1,13 @@
 /*
- * $Id: mpdisc_ha.c 1.21 06/05/07 21:52:43+03:00 anttit@tcs.hut.fi $
+ * $Id: mpdisc_ha.c 1.13 06/01/22 12:05:01+09:00 shinta@ballpark.v6.nrj.ericsson.se $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
  * Authors:
- *  Ville Nuorvala <vnuorval@tcs.hut.fi>,
  *  Jaakko Laine <jola@tcs.hut.fi>
+ *  Ville Nuorvala <vnuorval@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2005 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -32,9 +31,16 @@
 #include <time.h>
 #include <netinet/in.h>
 #include <netinet/icmp6.h>
-#include <netinet/ip6mh.h>
+#ifndef HAVE_MIP6_ICMP6_H
+#include <netinet-icmp6.h>
+#endif
 #include <errno.h>
+#include <syslog.h>
+#ifdef HAVE_LIBPTHREAD
 #include <pthread.h>
+#else
+#error "POSIX Thread Library required!"
+#endif
 
 #include "debug.h"
 #include "mipv6.h"
@@ -68,7 +74,13 @@ static inline struct mpa_entry *mpa_get(const struct in6_addr *ha,
 					const struct in6_addr *hoa)
 					
 {
-	return hash_get(&mpa_hash, ha, hoa);
+	struct mpa_entry *e = NULL;
+
+	pthread_mutex_lock(&mpa_lock);
+	e = hash_get(&mpa_hash, ha, hoa);
+	pthread_mutex_unlock(&mpa_lock);
+
+	return e;
 }
 
 /* HA functions */
@@ -82,8 +94,8 @@ int mpd_poll_mpa(const struct in6_addr *ha,
 {
 	struct mpa_entry *e;
 	int ret = -ENOENT;
-	pthread_mutex_lock(&mpa_lock);
 	e = mpa_get(ha, hoa);
+	pthread_mutex_lock(&mpa_lock);
 	if (e != NULL) {
 		*delay = e->delay;
 		*lastsent = e->lastsent;
@@ -200,6 +212,7 @@ static void mpd_send_mpa(struct mpa_entry *e, uint16_t id)
 	if ((expired = mpd_get_mpa_prefixes(iface, iov)) > 0)
 		mpd_del_expired_pinfos(iface);
 	else if (expired < 0) {
+		syslog(LOG_WARNING, "Cannot send MPA\n");
 		free_iov_data(iov, 1);
 		return;
 	}
@@ -211,8 +224,8 @@ static void mpd_send_mpa(struct mpa_entry *e, uint16_t id)
 void mpd_cancel_mpa(const struct in6_addr *ha, const struct in6_addr *hoa)
 {
 	struct mpa_entry *e;
-	pthread_mutex_lock(&mpa_lock);
 	e = mpa_get(ha, hoa);
+	pthread_mutex_lock(&mpa_lock);
 	if (e != NULL) {
 		hash_delete(&mpa_hash, &e->ha, &e->hoa);
 		if (tsisset(e->delay))
@@ -230,8 +243,8 @@ int mpd_start_mpa(const struct in6_addr *ha, const struct in6_addr *hoa)
 	if (!conf.SendUnsolMobPfxAdvs)
 		return 0;
 
-	pthread_mutex_lock(&mpa_lock);
 	e = mpa_get(ha, hoa);
+	pthread_mutex_lock(&mpa_lock);
 	if (e == NULL) {
 		e = malloc(sizeof(struct mpa_entry));
 		if (e == NULL)
@@ -252,16 +265,19 @@ out:
 
 }
 
-static void mpd_recv_mps(const struct icmp6_hdr *ih, ssize_t len,
+static void mpd_recv_mps(const struct icmp6_hdr *ih,
+			 const ssize_t len,
 			 const struct in6_addr *src, 
-			 const struct in6_addr *dst, int iif, int hoplimit)
+			 const struct in6_addr *dst,
+			 const int iif,
+			 const int hoplimit)
 {
 	struct mpa_entry *e;
 
 	if (!conf.SendMobPfxAdvs)
 		return;
-	pthread_mutex_lock(&mpa_lock);
 	e = mpa_get(dst, src);
+	pthread_mutex_lock(&mpa_lock);
 	if (e != NULL) {
 		if (tsisset(e->delay))
 			del_task(&e->tqe);
@@ -277,7 +293,6 @@ static struct icmp6_handler mpd_mps_handler = {
 int mpd_prefix_check(struct in6_addr *dst,
 		     struct in6_addr *src,
 		     struct timespec *lft,
-		     int *ifindex,
 		     int dad)
 {
 	struct ha_interface *i;
@@ -291,31 +306,21 @@ int mpd_prefix_check(struct in6_addr *dst,
 		pthread_rwlock_rdlock(&prefix_lock);
 		p = prefix_list_get(&i->prefix_list, src, 0);
 		if (p != NULL) {
-			unsigned long valid, preferred;
+			unsigned long valid_time;
 			struct timespec now;
 			clock_gettime(CLOCK_REALTIME, &now);
-			valid = umin(mpd_curr_lft(&now, &p->timestamp,
-						  p->ple_valid_time),
-				     MAX_BINDING_LIFETIME + 1);
-			preferred = umin(mpd_curr_lft(&now, &p->timestamp,
-						      p->ple_prefd_time),
-					 MAX_BINDING_LIFETIME + 1);
+			valid_time = mpd_curr_lft(&now, &p->timestamp,
+						  p->ple_valid_time);
 
-			if (!valid)
+			if (!valid_time)
 				expired = 1;
 			else if (dad) {
 				/* decrease DAD timeout */
-				valid -= DAD_TIMEOUT;
+				valid_time -= DAD_TIMEOUT;
 			}
-			if (preferred <= lft->tv_sec)
-				res = IP6_MH_BAS_PRFX_DISCOV;
-			else
-				res = IP6_MH_BAS_ACCEPTED;
-
-			if (valid < lft->tv_sec)
-				tssetsec(*lft,
-					 umin(valid, MAX_BINDING_LIFETIME));
-			*ifindex = i->ifindex;
+			/* make sure lifetime doesn't exceed meximum value */
+			tssetsec(*lft, umax(valid_time, MAX_BINDING_LIFETIME));
+			res = i->ifindex;
 		}
 		pthread_rwlock_unlock(&prefix_lock);
 		if (expired)
@@ -495,6 +500,7 @@ int mpd_handle_pinfo(struct ha_interface *iface, struct nd_opt_prefix_info *p)
 		e = malloc(sizeof(struct prefix_list_entry));
 		if (!e) {
 			pthread_rwlock_unlock(&prefix_lock);
+			syslog(LOG_ERR, "Cannot allocate memory\n");
 			return -1;
 		}
 		memcpy(&e->pinfo, p, sizeof(struct nd_opt_prefix_info));
@@ -565,8 +571,8 @@ int mpd_ha_init(void)
 
 void mpd_ha_cleanup(void)
 {
-	icmp6_handler_dereg(MIP_PREFIX_SOLICIT, &mpd_mps_handler);
 	pthread_mutex_lock(&mpa_lock);
 	hash_cleanup(&mpa_hash);
 	pthread_mutex_unlock(&mpa_lock);
+	icmp6_handler_dereg(MIP_PREFIX_SOLICIT, &mpd_mps_handler);
 }

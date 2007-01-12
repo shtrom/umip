@@ -1,5 +1,5 @@
 /*
- * $Id: ipsec.c 1.52 06/05/15 18:34:56+03:00 vnuorval@tcs.hut.fi $
+ * $Id: ipsec.c 1.45 06/01/10 00:07:47+09:00 nakam@linux-ipv6.org $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  *
@@ -43,8 +43,8 @@
 #include <arpa/inet.h>
 
 #include <netinet/ip6.h>
-#include <netinet/in.h>
-#include <netinet/ip6mh.h>
+#include <netinet-in.h>
+#include <netinet-ip6mh.h>
 
 #include "ipsec.h"
 #include "xfrm.h"
@@ -58,10 +58,10 @@
 static void _set_tmpl(struct xfrm_user_tmpl *tmpl,
 		      uint16_t family,
 		      uint8_t proto,
-		      uint8_t mode,
+		      u_int8_t mode,
 		      const struct in6_addr *tdst,
 		      const struct in6_addr *tsrc,
-		      uint32_t reqid)
+		      u_int32_t reqid)
 {
 	memset(tmpl, 0, sizeof(*tmpl));
 	tmpl->family = family;
@@ -196,9 +196,9 @@ int ipsec_policy_dump_config(const struct in6_addr *haaddr,
 	    (e->type == IPSEC_POLICY_TYPE_TUNNELMH) ? "TunnelMh" :
 	    (e->type == IPSEC_POLICY_TYPE_TUNNELPAYLOAD) ? "TunnelPayload" : "?");
 	dbg("IPsec: IPsec templates = %s%s%s\n",
-	    ipsec_use_esp(e) ? "ESP " : "",
-	    ipsec_use_ah(e) ? "AH " : "",
-	    ipsec_use_ipcomp(e) ? "IPComp " : "");
+	    e->use_esp ? "ESP " : "",
+	    e->use_ah ? "AH " : "",
+	    e->use_ipcomp ? "IPComp " : "");
 	dbg("IPsec: IPsec reqid to-HA, to-MN = %u, %u\n", e->reqid_toha, e->reqid_tomn);
 	dbg("IPsec: IPsec action = %s\n",
 	    e->action == XFRM_POLICY_ALLOW ? "allow" : "block");
@@ -214,13 +214,26 @@ static void dump_migrate(int ifindex,
 			 const struct in6_addr *oldcoa,
 			 const struct in6_addr *newcoa)
 {
-	dbg("ifindex\t%d\n", ifindex);
-	dbg("hoa\t%x:%x:%x:%x:%x:%x:%x:%x\n", NIP6ADDR(hoa));
-	dbg("ha\t%x:%x:%x:%x:%x:%x:%x:%x\n", NIP6ADDR(haaddr));
+	char caddrbuf[INET6_ADDRSTRLEN];
+	char devbuf[IF_NAMESIZE + 1];
+	char *dev;
+
+	memset(devbuf, '\0', sizeof(devbuf));
+	dev = if_indextoname(ifindex, devbuf);
+	if (!dev || strlen(dev) == 0)
+		dbg("ifindex\t%d\n", ifindex);
+	else
+		dbg("dev\t%s\n", dev);
+	dbg("hoa\t%s\n",
+	    inet_ntop(AF_INET6, hoa, caddrbuf, INET6_ADDRSTRLEN));
+	dbg("ha\t%s\n",
+	    inet_ntop(AF_INET6, haaddr, caddrbuf, INET6_ADDRSTRLEN));
 	if (oldcoa)
-		dbg("ocoa\t%x:%x:%x:%x:%x:%x:%x:%x\n", NIP6ADDR(oldcoa));
+		dbg("ocoa\t%s\n",
+		    inet_ntop(AF_INET6, oldcoa, caddrbuf, INET6_ADDRSTRLEN));
 	if (newcoa)
-		dbg("ncoa\t%x:%x:%x:%x:%x:%x:%x:%x\n", NIP6ADDR(newcoa));
+		dbg("ncoa\t%s\n",
+		    inet_ntop(AF_INET6, newcoa, caddrbuf, INET6_ADDRSTRLEN));
 	dbg("ipsec\t%s\n",
 	    (ipsec_proto == IPPROTO_ESP) ? "ESP" :
 	    (ipsec_proto == IPPROTO_AH) ? "AH" :
@@ -246,15 +259,17 @@ int ipsec_policy_entry_check(const struct in6_addr *haaddr,
 
 	list_for_each(lp, &conf.ipsec_policies) {
 		struct ipsec_policy_entry *e;
-
+		
 		e = list_entry(lp, struct ipsec_policy_entry, list);
 
-		if ((haaddr && !IN6_ARE_ADDR_EQUAL(haaddr, &e->ha_addr)) ||
-		    (hoa && !IN6_ARE_ADDR_EQUAL(hoa, &e->mn_addr)))
+		if (haaddr && !IN6_ARE_ADDR_EQUAL(haaddr, &e->ha_addr))
 			continue;
 
-		if (e->type & type) {
-			ret = e->ipsec_protos;
+		if (hoa && !IN6_ARE_ADDR_EQUAL(hoa, &e->mn_addr))
+			continue;
+
+		if (e->type == type) {
+			ret = 1;
 			break;
 		}
 	}
@@ -310,10 +325,20 @@ static void _set_sp(struct xfrm_userpolicy_info *sp,
                 } else {
                         sp->sel.sport = 0;
                 }
-	case IPSEC_POLICY_TYPE_TUNNELMH:
+		sp->sel.dport = 0;
 		sp->sel.proto = IPPROTO_MH;
-	case IPSEC_POLICY_TYPE_TUNNELPAYLOAD:
+		break;
+	case IPSEC_POLICY_TYPE_TUNNELMH:
 		sp->priority = MIP6_PRIO_RO_SIG_RR;
+		sp->sel.sport = 0;
+		sp->sel.dport = 0;
+		sp->sel.proto = IPPROTO_MH;
+		break;
+	case IPSEC_POLICY_TYPE_TUNNELPAYLOAD:
+		sp->priority = MIP6_PRIO_NO_RO_DATA;
+		sp->sel.sport = 0;
+		sp->sel.dport = 0;
+		sp->sel.proto = 0;
 		break;
 	default:
 		/* not tunnel IPsec type */
@@ -364,11 +389,11 @@ static int _ha_tnl_update(const struct in6_addr *haaddr,
 	}
 
 	/* XXX Limitation: Single IPsec proto can only be applied */
-	if (ipsec_use_esp(e))
+	if (e->use_esp)
 		ipsec_proto = IPPROTO_ESP;
-	else if (ipsec_use_ah(e))
+	else if (e->use_ah)
 		ipsec_proto = IPPROTO_AH;
-	else if (ipsec_use_ipcomp(e))
+	else if (e->use_ipcomp)
 		ipsec_proto = IPPROTO_COMP;
 	else {
 		dbg("invalid ipsec proto\n");
@@ -456,11 +481,11 @@ static int _ha_tnl_pol_mod(const struct in6_addr *haaddr,
 	}
 
 	/* XXX Limitation: Single IPsec proto can only be applied */
-	if (ipsec_use_esp(e))
+	if (e->use_esp)
 		ipsec_proto = IPPROTO_ESP;
-	else if (ipsec_use_ah(e))
+	else if (e->use_ah)
 		ipsec_proto = IPPROTO_AH;
-	else if (ipsec_use_ipcomp(e))
+	else if (e->use_ipcomp)
 		ipsec_proto = IPPROTO_COMP;
 	else {
 		dbg("invalid ipsec proto\n");
@@ -587,11 +612,11 @@ static int _mn_tnl_update(const struct in6_addr *haaddr,
 	}
 
 	/* XXX Limitation: Single IPsec proto can only be applied */
-	if (ipsec_use_esp(e))
+	if (e->use_esp)
 		ipsec_proto = IPPROTO_ESP;
-	else if (ipsec_use_ah(e))
+	else if (e->use_ah)
 		ipsec_proto = IPPROTO_AH;
-	else if (ipsec_use_ipcomp(e))
+	else if (e->use_ipcomp)
 		ipsec_proto = IPPROTO_COMP;
 	else {
 		dbg("invalid ipsec proto\n");
@@ -600,7 +625,7 @@ static int _mn_tnl_update(const struct in6_addr *haaddr,
 
 	bule = (struct bulentry *)arg;
 	ifindex = bule->home->if_tunnel;
-	oldcoa = &bule->last_coa;
+	oldcoa = &bule->prev_coa;
 	newcoa = &bule->coa;
 
 	dump_migrate(ifindex, ipsec_proto, hoa, haaddr, oldcoa, newcoa);
@@ -683,11 +708,11 @@ static int _mn_tnl_pol_mod(const struct in6_addr *haaddr,
 	}
 
 	/* XXX Limitation: Single IPsec proto can only be applied */
-	if (ipsec_use_esp(e))
+	if (e->use_esp)
 		ipsec_proto = IPPROTO_ESP;
-	else if (ipsec_use_ah(e))
+	else if (e->use_ah)
 		ipsec_proto = IPPROTO_AH;
-	else if (ipsec_use_ipcomp(e))
+	else if (e->use_ipcomp)
 		ipsec_proto = IPPROTO_COMP;
 	else {
 		dbg("invalid ipsec proto\n");

@@ -1,12 +1,11 @@
 /*
- * $Id: proc_sys.c 1.9 06/04/25 13:24:14+03:00 anttit@tcs.hut.fi $
+ * $Id: proc_sys.c 1.6 05/12/26 01:19:12+09:00 aramoto@springbank.sharp.net $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
  * Author: Ville Nuorvala <vnuorval@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2004 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -29,34 +28,86 @@
 
 #include <net/if.h>
 
-#include "proc_sys.h"
+#define PROC_SYS_BUF_SIZE 32
 
-int set_iface_proc_entry(const char *tmpl, const char *if_name, int val)
+const char *conf_path = "/proc/sys/net/ipv6/conf/";
+const char *neigh_path = "/proc/sys/net/ipv6/neigh/";
+
+const char *autoconf_file = "/autoconf";
+const char *ra_defrtr_file = "/accept_ra_defrtr";
+const char *ra_pinfo_file = "/accept_ra_pinfo";
+const char *rs_file = "/router_solicitations";
+const char *rs_ival_file = "/router_solicitation_interval";
+const char *app_ns_file = "/app_solicit";
+
+const char *hoplimit_file = "/hop_limit";
+const char *retransmit_file = "/retrans_time_ms";
+
+static int proc_sys_get_string(const char *filename, char *buf, int buflen)
 {
 	FILE *fp;
-	char path[64+IF_NAMESIZE];
-	int ret = -1;
+	int res = -1;
 
-	sprintf(path, tmpl, if_name);
-	fp = fopen(path, "w");
-	if (!fp)
-		return ret;
-	ret = fprintf(fp, "%d", val);
-	fclose(fp);
-	return ret;
-}
+	if ((fp = fopen(filename, "r"))) {
+		if ((buf = fgets(buf, buflen, fp)))
+			res = 0;
+		fclose(fp);
+	}
+	return res;
+} 
 
-int get_iface_proc_entry(const char *tmpl, const char *if_name, int *val)
+static int proc_sys_set_string(const char *filename, char *buf, int buflen)
 {
 	FILE *fp;
-	char path[64+IF_NAMESIZE];
-	int ret = -1;
+	int res = -1;
 
-	sprintf(path, tmpl, if_name);
-	fp = fopen(path, "r");
-	if (!fp)
-		return ret;
-	ret = fscanf(fp, "%d", val);
-	fclose(fp);
-	return ret;
+	if ((fp = fopen(filename, "w"))) {
+		buf[buflen - 1] = 0;
+		if (fputs(buf, fp) > 0)
+			res = 0;
+		fclose(fp);
+	}
+	return res;
+} 
+
+static int proc_sys_get_int(const char *filename, int *ival)
+{
+	char buf[PROC_SYS_BUF_SIZE];
+	if (!proc_sys_get_string(filename, buf, PROC_SYS_BUF_SIZE))
+		if (sscanf(buf,"%d", ival) >  0)
+			return 0;
+	return -1;
+} 
+
+static int proc_sys_set_int(const char *filename, int ival)
+{
+	char buf[PROC_SYS_BUF_SIZE];
+	if (sprintf(buf,"%d", ival) >  0) {
+		return proc_sys_set_string(filename, buf, PROC_SYS_BUF_SIZE);
+	}
+	return -1;
 }
+
+int set_iface_proc_entry(const char *path, const char *if_name,
+			 const char *file, int val)
+{
+	char buf[256];
+	memset(buf, 0, sizeof(buf));
+	strcpy(buf, path);
+	strncat(buf, if_name, IF_NAMESIZE-1);
+	strcat(buf, file);
+	return proc_sys_set_int(buf, val);
+}
+
+int get_iface_proc_entry(const char *path, const char *if_name,
+			    const char *file, int *val)
+{
+	char buf[256];
+	memset(buf, 0, sizeof(buf));
+	strcpy(buf, path);
+	strncat(buf, if_name, IF_NAMESIZE-1);
+	strcat(buf, file);
+	return proc_sys_get_int(buf, val);
+
+}
+

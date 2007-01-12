@@ -1,4 +1,4 @@
-/* $Id: util.h 1.54 06/02/22 16:21:55+02:00 anttit@tcs.hut.fi $ */
+/* $Id: util.h 1.54 06/01/22 13:44:30+09:00 takamiya@po.ntts.co.jp $ */
 
 #ifndef __UTIL_H__
 #define __UTIL_H__ 1
@@ -12,13 +12,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <netinet/in.h>
-#include <sys/uio.h>
 
 #define tstomsec(tv) \
 	((tv).tv_sec * TIME_SEC_MSEC + (tv).tv_nsec / TIME_MSEC_NSEC)
 
-#define tstodsec(tv) \
-	((double)(tv).tv_sec + (double)(tv).tv_nsec / TIME_SEC_NSEC)
 
 #define tsisset(tv)	((tv).tv_sec || (tv).tv_nsec)
 #define tsclear(tv)	((tv).tv_sec = (tv).tv_nsec = 0)
@@ -30,7 +27,13 @@
 
 #define tsadd(a, b, result) \
 do { \
-	(result).tv_sec = (a).tv_sec + (b).tv_sec; \
+	unsigned long long tmp_tv_sec; \
+	tmp_tv_sec = (unsigned long long)(a).tv_sec \
+		+ (unsigned long long)(b).tv_sec; \
+	if (tmp_tv_sec & 0xffffffff80000000) \
+		(result).tv_sec = 0x7FFFFFFF; \
+	else \
+		(result).tv_sec = tmp_tv_sec; \
 	(result).tv_nsec = (a).tv_nsec + (b).tv_nsec; \
 	if ((result).tv_nsec >= TIME_SEC_NSEC) { \
 		++(result).tv_sec; \
@@ -197,6 +200,11 @@ static inline void free_iov_data(struct iovec *iov, int count)
 static inline unsigned long umin(unsigned long a, unsigned long b)
 {
 	return (a < b) ? a : b;
+}
+
+static inline unsigned long umax(unsigned long a, unsigned long b)
+{
+	return (a > b) ? a : b;
 }
 
 static inline long min(long a, long b)

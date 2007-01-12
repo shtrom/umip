@@ -1,12 +1,11 @@
 /*
- * $Id: hash.c 1.22 06/04/25 13:24:14+03:00 anttit@tcs.hut.fi $
+ * $Id: hash.c 1.19 05/12/08 18:25:09+02:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
  * Author: Henrik Petander <petander@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2004 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -51,8 +50,8 @@ struct hash_entry {
 	void *data;
 };
 
-static uint32_t calc_hash2(int s, const struct in6_addr *our_addr,
-			   const struct in6_addr *peer_addr)
+uint32_t calc_hash2(int s, const struct in6_addr *our_addr,
+		    const struct in6_addr *peer_addr)
 {
 	assert(our_addr);
 
@@ -67,8 +66,8 @@ static uint32_t calc_hash2(int s, const struct in6_addr *our_addr,
 	
 }
 
-static uint32_t calc_hash1(int s, const struct in6_addr *dummy, 
-			   const struct in6_addr *peer_addr)
+uint32_t calc_hash1(int s, const struct in6_addr *dummy, 
+		    const struct in6_addr *peer_addr)
 {
 	return 	(peer_addr->s6_addr32[0] ^
 		peer_addr->s6_addr32[1] ^
@@ -77,8 +76,8 @@ static uint32_t calc_hash1(int s, const struct in6_addr *dummy,
 	
 }
 
-static int match2(struct hash_entry *h, const struct in6_addr *our_addr, 
-		  const struct in6_addr *peer_addr)
+int match2(struct hash_entry *h, const struct in6_addr *our_addr, 
+	   const struct in6_addr *peer_addr)
 {
 	assert(h);
 	assert(our_addr && h->our_addr);
@@ -98,8 +97,7 @@ static int match2(struct hash_entry *h, const struct in6_addr *our_addr,
 
 }
 
-static int match1(struct hash_entry *h, const struct in6_addr *dummy,
-		  const struct in6_addr *peer_addr)
+int match1(struct hash_entry *h, const struct in6_addr *dummy, const struct in6_addr *peer_addr)
 {
 	assert(h);
 	assert(h->peer_addr && peer_addr);

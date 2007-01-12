@@ -1,4 +1,4 @@
-/* $Id: movement.h 1.49 06/05/19 01:51:45+03:00 vnuorval@tcs.hut.fi $ */
+/* $Id: movement.h 1.47 06/01/20 16:26:44+09:00 aramoto@springbank.sharp.net $ */
 
 #ifndef __MOVEMENT_H__
 #define __MOVEMENT_H__ 1
@@ -20,7 +20,6 @@ struct md_router {
 	struct list_head list;
 	struct in6_addr lladdr;
 	struct timespec rtr_lifetime;
-	struct timespec reachable;
 	struct timespec retransmit;
 	struct timespec adv_ival;
 	struct timespec lifetime;
@@ -30,11 +29,11 @@ struct md_router {
 	uint8_t ra_flags;
 	short hwalen;
 	uint8_t hwa[16];
-	uint32_t mtu;
 	int ifindex;
 	int prefix_cnt;
 	int raddr_cnt;
-	int probed;
+	int neighbor_solicits;
+	int max_neighbor_solicits;
 	struct in6_addr solicited_addr;
 	struct timespec timestamp;
 	struct tq_elem tqe;
@@ -78,6 +77,8 @@ enum {
 	DEVCONF_MAX_DESYNC_FACTOR,
 	DEVCONF_MAX_ADDRESSES,
 	DEVCONF_FORCE_MLD_VERSION,
+	DEVCONF_ACCEPT_RA_DEFRTR,
+	DEVCONF_ACCEPT_RA_PINFO,
 	DEVCONF_MAX
 };
 
@@ -88,16 +89,13 @@ struct md_inet6_iface {
 	struct list_head list;
 	int ifindex;
 	char name[IF_NAMESIZE];
-	unsigned int preference;
+	int preference;
 	unsigned int link_flags;
-	int home_link;
-	int ll_dad_unsafe;
 	unsigned short type;
 	short hwalen;
 	uint8_t hwa[16];
 	int32_t devconf[DEVCONF_MAX];
 	int32_t app_solicit;
-	struct timespec reachable;
 	struct timespec retransmit;
 	int router_solicits;
 	struct in6_addr lladdr;
@@ -163,7 +161,7 @@ static inline struct md_router *md_get_first_router(struct list_head *rtr_list)
 }
 
 static inline struct md_coa *md_get_coa(struct list_head *coa_list, 
-					const struct in6_addr *coaddr)
+					struct in6_addr *coaddr)
 {
 	struct list_head *list;
 	struct md_coa *coa = NULL;
@@ -179,9 +177,6 @@ static inline struct md_coa *md_get_coa(struct list_head *coa_list,
 int md_init(void);
 void md_cleanup(void);
 
-int md_start(void);
-void md_stop(void);
-
 void md_trigger_movement_event(int event_type, int data, int ifindex);
 
 struct icmp6_hdr;
@@ -193,5 +188,9 @@ static inline int md_is_link_up(struct md_inet6_iface *iface)
 } 
 
 int rtr_addr_chk(struct md_router *rtr, struct in6_addr *rtr_addr);
+
+int md_check_link_up(int ifindex);
+
+void iface_default_proc_entries_init(void);
 
 #endif

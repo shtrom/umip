@@ -1,12 +1,11 @@
 /*
- * $Id: bcache.c 1.99 06/05/07 21:53:32+03:00 anttit@tcs.hut.fi $
+ * $Id: bcache.c 1.93 06/01/22 12:05:01+09:00 shinta@ballpark.v6.nrj.ericsson.se $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  *
  * Author: Henrik Petander <petander@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2005 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -27,7 +26,11 @@
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
+#ifdef HAVE_LIBPTHREAD
 #include <pthread.h>
+#else
+#error "POSIX Thread Library required!"
+#endif
 #include <errno.h>
 
 #include "debug.h"
@@ -41,6 +44,14 @@
 #include "vt.h"
 
 #define BCACHE_BUCKETS 32
+
+#define BC_DEBUG_LEVEL 1
+
+#if BC_DEBUG_LEVEL >= 1
+#define BDBG dbg
+#else
+#define BDBG(...)
+#endif
 
 static struct hash bc_hash;
 
@@ -59,39 +70,28 @@ int get_bcache_count(int type)
 	return 0;
 }
 
-void dump_bce(void *bce, void *os)
+void dump_bce(struct bcentry *bce)
 {
-	struct bcentry *e = (struct bcentry *)bce;
-	FILE *out = (FILE *)os;
-
-	fprintf(out, " == Binding Cache entry ");
-
-	switch(e->type) {
+	switch(bce->type) {
 	case BCE_NONCE_BLOCK:
-		fprintf(out, "(NONCE_BLOCK)\n");
+		BDBG("NONCE_BLOCK entry: \n");
 		break;
 	case BCE_CACHED:
-		fprintf(out, "(CACHED)\n");
+		BDBG("CACHED entry: \n");
 		break;
 	case BCE_HOMEREG:
-		fprintf(out, "(HOMEREG)\n");
+		BDBG("HOMEREG entry: \n");
 		break;
 	default:
-		fprintf(out, "(Unknown)\n");
+		BDBG("Unknown BCE type. \n");
 	}
-	fprintf(out, " Care-of address %x:%x:%x:%x:%x:%x:%x:%x\n",
-		NIP6ADDR(&e->coa));
-	fprintf(out, " Home address    %x:%x:%x:%x:%x:%x:%x:%x\n", 
-	     NIP6ADDR(&e->peer_addr));
-	fprintf(out, " Local address   %x:%x:%x:%x:%x:%x:%x:%x\n",
-		NIP6ADDR(&e->our_addr));
-	fprintf(out, " lifetime %ld\n ", e->lifetime.tv_sec);
-	fprintf(out, " seqno %d\n", e->seqno);
-
-	fflush(out);
+	BDBG("coa = %x:%x:%x:%x:%x:%x:%x:%x\n", NIP6ADDR(&bce->coa));
+	BDBG("hoa = %x:%x:%x:%x:%x:%x:%x:%x\n", NIP6ADDR(&bce->peer_addr));
+	BDBG("Local address = %x:%x:%x:%x:%x:%x:%x:%x\n",
+	     NIP6ADDR(&bce->our_addr));
+	BDBG(" lifetime = %d\n ", bce->lifetime.tv_sec);
+	BDBG("seqno. %d\n", bce->seqno);
 }
-
-static void bce_delete(struct bcentry *bce, int flush);
 
 /**
  * _expire - expire binding cache entry
@@ -101,7 +101,9 @@ static void _expire(struct tq_elem *tqe)
 	pthread_rwlock_wrlock(&bc_lock);
 	if (!task_interrupted()) {
 		struct bcentry *e = tq_data(tqe, struct bcentry, tqe);
+	
 		pthread_rwlock_wrlock(&e->lock);
+
 		if (e->type == BCE_CACHED) {
 			/* To do: MN needs to reverse tunnel this */
 			mh_send_brr(&e->peer_addr, &e->our_addr);
@@ -112,8 +114,33 @@ static void _expire(struct tq_elem *tqe)
 			pthread_rwlock_unlock(&bc_lock);
 			return;
 		}
+		if (e->type != BCE_NONCE_BLOCK) {
+			xfrm_del_bce(&e->our_addr, &e->peer_addr);
+			bcache_count--;
+		}
+		if (e->type == BCE_CACHE_DYING) {
+			struct timespec minlft;
+
+			BDBG("Changing BC_CACHE entry to nonce block entry\n");
+			
+			if (!rr_cn_nonce_lft(e->nonce_hoa, &minlft)) {
+				clock_gettime(CLOCK_REALTIME, &e->add_time);
+				e->type = BCE_NONCE_BLOCK;
+				tssub(minlft, e->add_time, e->lifetime);
+				add_task_abs(&minlft, &e->tqe, _expire);
+				pthread_rwlock_unlock(&e->lock);
+				pthread_rwlock_unlock(&bc_lock);
+				return;
+			}
+		}
+		hash_delete(&bc_hash, &e->our_addr, &e->peer_addr);
+
+		if (e->cleanup)
+			e->cleanup(e);
+		BDBG("deleting the entry: \n");
+		dump_bce(e);
 		pthread_rwlock_unlock(&e->lock);
-		bce_delete(e, 0);
+		bcache_free(e);
 	}
 	pthread_rwlock_unlock(&bc_lock);
 }
@@ -327,10 +354,35 @@ void bcache_delete(const struct in6_addr *our_addr,
 		   const struct in6_addr *peer_addr)
 {
 	struct bcentry *bce;
+
 	pthread_rwlock_wrlock(&bc_lock);
 	bce = hash_get(&bc_hash, our_addr, peer_addr);
-	if (bce)
-		bce_delete(bce, 0);
+	if (bce == NULL) {
+		pthread_rwlock_unlock(&bc_lock);
+		return;
+	}
+	pthread_rwlock_wrlock(&bce->lock);
+	if (bce->type != BCE_DAD) {
+		del_task(&bce->tqe);
+		if (bce->type != BCE_NONCE_BLOCK)
+			xfrm_del_bce(&bce->our_addr, &bce->peer_addr);
+	}
+	bcache_count--;
+	if (bce->cleanup)
+		bce->cleanup(bce);
+	if (bce->type == BCE_CACHED || bce->type == BCE_CACHE_DYING) {
+		struct timespec minlft;
+		if (!rr_cn_nonce_lft(bce->nonce_hoa, &minlft)) {
+			bce->type = BCE_NONCE_BLOCK;
+			add_task_abs(&minlft, &bce->tqe, _expire);
+			pthread_rwlock_unlock(&bce->lock);
+			pthread_rwlock_unlock(&bc_lock);
+			return;
+		}
+	} 
+	hash_delete(&bc_hash, &bce->our_addr, &bce->peer_addr);
+	pthread_rwlock_unlock(&bce->lock);
+	bcache_free(bce);
 	pthread_rwlock_unlock(&bc_lock);
 }
 
@@ -358,38 +410,24 @@ int bcache_init(void)
 	return ret;
 }
 
-static void bce_delete(struct bcentry *bce, int flush)
-{
-	pthread_rwlock_wrlock(&bce->lock);
-	if (bce->type != BCE_DAD) {
-		del_task(&bce->tqe);
-		if (bce->type != BCE_NONCE_BLOCK)
-			xfrm_del_bce(&bce->our_addr, &bce->peer_addr);
-	}
-	if (bce->cleanup)
-		bce->cleanup(bce);
-	if (!flush &&
-	    (bce->type == BCE_CACHED || bce->type == BCE_CACHE_DYING)) {
-		struct timespec minlft;
-		if (!rr_cn_nonce_lft(bce->nonce_hoa, &minlft)) {
-			bce->type = BCE_NONCE_BLOCK;
-			add_task_abs(&minlft, &bce->tqe, _expire);
-			pthread_rwlock_unlock(&bce->lock);
-			return;
-		}
-	}
-	bcache_count--;
-	hash_delete(&bc_hash, &bce->our_addr, &bce->peer_addr);
-	pthread_rwlock_unlock(&bce->lock);
-	bcache_free(bce);
-}
-
 /**
  * bce_cleanup - cleans up a bcentry
  **/
 static int bce_cleanup(void *data, void *arg)
 {
-	bce_delete(data, 1);
+	struct bcentry *bce = (struct bcentry *)data;
+
+	pthread_rwlock_wrlock(&bce->lock);
+	if (bce->cleanup)
+		bce->cleanup(bce);
+	if (bce->type != BCE_NONCE_BLOCK)
+		xfrm_del_bce(&bce->our_addr, &bce->peer_addr);
+	if (bce->type != BCE_DAD)
+		del_task(&bce->tqe);
+	hash_delete(&bc_hash, &bce->our_addr, &bce->peer_addr);
+	pthread_rwlock_unlock(&bce->lock);
+	free(bce);
+
 	return 0;
 }
 

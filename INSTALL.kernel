@@ -7,7 +7,7 @@ compiling and last installing the new kernel in your system.
 If you have never patched or compiled a Linux kernel, you should take
 a look at the Kernel HOWTO or Kernel Rebuild Guide available through
 the Linux Documentation Project's site (http://www.tldp.org/).  Be
-careful, you can render your system unbootable quite easily.
+carefull, you can render your system unbootable quite easily.
 
 Kernel patches usually only work for the exact kernel version they
 were made for.  Therefore, you should not try to use mismatching
@@ -105,7 +105,7 @@ All that said, here follows the instructions.
 
      CONFIG_INET6_ESP=y
 
-   If you plan to use IPsec tunnel mode you need:
+   If you plan to use IPsec tunnel you need:
 
      CONFIG_NET_KEY=y
      CONFIG_NET_KEY_MIGRATE=y
@@ -120,7 +120,7 @@ All that said, here follows the instructions.
 
      ./chkconf_kernel.sh /usr/src/linux
 
-   Fix any warnings and proceed to the next step.
+   Fix any warnings and proceed to next step.
 
 6. Compile and install the kernel.  Proceed with the user space
    installation described in INSTALL.  Be sure to reboot to your new

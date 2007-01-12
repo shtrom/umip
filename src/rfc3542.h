@@ -1,32 +1,31 @@
-#ifndef _NETINET__IN_H
-#define _NETINET__IN_H 1
+/* $Id: rfc3542.h 1.2 05/11/17 22:35:25+02:00 vnuorval@tcs.hut.fi $ */
 
-#include_next <netinet/in.h>
+#ifndef __RFC3542_H__
+#define __RFC3542_H__ 1
 
-#ifndef IPPROTO_MH
-#define IPPROTO_MH	135	/* IPv6 Mobility Header */
-#endif
+#include <config.h>
+#include <netinet/in.h>
 
 /* This section is to provide limited Advanced Socket API for IPv6
  * support in non-RFC3542-compliant environments.  Any missing
  * functions will be compiled in libmissing/libmissing.a. */
-#ifndef HAVE_INET6_OPT_FIND
+#if !HAVE_INET6_OPT_FIND
 extern
 int inet6_opt_find(void *, socklen_t, int, uint8_t, socklen_t *, void **);
 #endif
-#ifndef HAVE_INET6_RTH_SPACE
+#if !HAVE_INET6_RTH_SPACE
 extern socklen_t inet6_rth_space(int, int);
 #endif
-#ifndef HAVE_INET6_RTH_INIT
+#if !HAVE_INET6_RTH_INIT
 extern void *inet6_rth_init(void *, socklen_t, int, int);
 #endif
-#ifndef HAVE_INET6_RTH_ADD
+#if !HAVE_INET6_RTH_ADD
 extern int inet6_rth_add(void *, const struct in6_addr *);
 #endif
-#ifndef HAVE_INET6_RTH_GETADDR
+#if !HAVE_INET6_RTH_GETADDR
 extern struct in6_addr *inet6_rth_getaddr(const void *, int);
 #endif
-#ifndef HAVE_INET6_RTH_GETTYPE
+#if !HAVE_INET6_RTH_GETTYPE
 extern int inet6_rth_gettype(const void *);
 #endif
 
@@ -34,13 +33,10 @@ extern int inet6_rth_gettype(const void *);
 #define IPV6_RTHDR_TYPE_2 2
 #endif
 
-#ifndef IPV6_JOIN_ANYCAST
-#define IPV6_JOIN_ANYCAST	27
-#endif
-
 /* Software only works on >=2.6.14 kernels, so RFC3542 values for
  * socket options must be used.  This is not supposed to be complete.
  * Only options that are actually used are here. */
+
 
 #ifndef IPV6_RECVPKTINFO
 #define IPV6_RECVPKTINFO        49
@@ -74,4 +70,4 @@ extern int inet6_rth_gettype(const void *);
 #endif
 #endif
 
-#endif	/* netinet/in.h */
+#endif /* __RFC3542_H__ */

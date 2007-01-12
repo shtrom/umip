@@ -1,4 +1,4 @@
-/* $Id: rtnl.h 1.25 06/01/25 04:46:24+02:00 vnuorval@tcs.hut.fi $ */
+/* $Id: rtnl.h 1.24 05/12/03 02:04:12+02:00 vnuorval@tcs.hut.fi $ */
 
 #ifndef __RTNL_H__
 #define __RTNL_H__ 1
@@ -69,8 +69,7 @@ struct nd_opt_prefix_info;
 
 int prefix_add(int ifindex, const struct nd_opt_prefix_info *pinfo);
 
-int route_add(int oif, uint8_t table, uint8_t proto,
-	      unsigned flags, uint32_t metric,
+int route_add(int oif, uint8_t table, uint32_t metric,
 	      const struct in6_addr *src, int src_plen,
 	      const struct in6_addr *dst, int dst_plen, 
 	      const struct in6_addr *gateway);

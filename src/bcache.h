@@ -1,4 +1,4 @@
-/* $Id: bcache.h 1.38 06/01/30 18:29:16+02:00 anttit@tcs.hut.fi $ */
+/* $Id: bcache.h 1.37 05/12/09 15:14:25+02:00 vnuorval@tcs.hut.fi $ */
 
 #ifndef __BCACHE_H__
 #define __BCACHE_H__ 1
@@ -75,7 +75,7 @@ static inline int bce_exists(const struct in6_addr *our_addr,
 	return bce_type(our_addr, peer_addr) >= BCE_NONCE_BLOCK;
 }
 
-void dump_bce(void *bce, void *os);
+void dump_bce(struct bcentry *bce);
 
 int get_bcache_count(int type);
 

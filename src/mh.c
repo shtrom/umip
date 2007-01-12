@@ -1,13 +1,11 @@
 /*
- * $Id: mh.c 1.103 06/05/07 21:52:43+03:00 anttit@tcs.hut.fi $
+ * $Id: mh.c 1.87 05/12/10 03:16:13+02:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
- * Authors: Antti Tuominen <anttit@tcs.hut.fi>
- *          Ville Nuorvala <vnuorval@tcs.hut.fi>
+ * Author: Antti Tuominen <anttit@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2004 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -28,19 +26,29 @@
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
+#ifdef HAVE_LIBPTHREAD
 #include <pthread.h>
+#else
+#error "POSIX Thread Library required!"
+#endif
 #include <netinet/in.h>
+#ifndef HAVE_MIP6_IN_H
+#include <netinet-in.h>
+#endif
+#ifdef HAVE_MIP6_IP6_H
 #include <netinet/ip6.h>
+#else
+#include <netinet-ip6.h>
+#endif
 #include <errno.h>
 #include <unistd.h>
 #include <string.h>
-#include <syslog.h>
 #include <sys/socket.h>
 #ifdef HAVE_LIBCRYPTO
 #include <openssl/opensslv.h>
 #include <openssl/hmac.h>
 #else
-#include "crypto.h"
+#error "OpenSSL Crypto Library required!"
 #endif
 
 #include "mipv6.h"
@@ -48,9 +56,13 @@
 #include "mh.h"
 #include "util.h"
 #include "debug.h"
+#include "rfc3542.h"
 #include "conf.h"
 #include "bcache.h"
 #include "keygen.h"
+
+/* If new types or options appear, these should be updated. */
+#define IP6_MH_TYPE_MAX IP6_MH_TYPE_BERROR
 
 #define MH_DEBUG_LEVEL 1
 
@@ -77,7 +89,7 @@ int mh_opts_dup_ok[] = {
 	0, /* Binding Auth Data */
 };
 
-#define __MH_SENTINEL (IP6_MH_TYPE_MAX + 1)
+#define __MH_SENTINEL (IP6_MH_TYPE_BERROR + 1)
 
 static pthread_rwlock_t handler_lock;
 static struct mh_handler *handlers[__MH_SENTINEL + 1];
@@ -134,8 +146,6 @@ static void *mh_listen(void *arg)
 	ssize_t len;
 	struct mh_handler *h;
 
-	pthread_dbg("thread started");
-
 	while (1) {
 		pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
 		len = mh_recv(msg, sizeof(msg), &addr, &pktinfo, &haoa, &rta);
@@ -167,7 +177,7 @@ static void *mh_listen(void *arg)
 
 		pthread_rwlock_unlock(&handler_lock);
 	}
-	pthread_exit(NULL);
+	return NULL;
 }
 
 int mh_init(void)
@@ -176,12 +186,9 @@ int mh_init(void)
 	int val;
 
 	mh_sock.fd = socket(AF_INET6, SOCK_RAW, IPPROTO_MH);
-	if (mh_sock.fd < 0) {
-		syslog(LOG_ERR,
-		       "Unable to open MH socket! "
-		       "Do you have root permissions?");
+	if (mh_sock.fd < 0)
 		return mh_sock.fd;
-	}
+
 	val = 1;
 	if (setsockopt(mh_sock.fd, IPPROTO_IPV6, IPV6_RECVPKTINFO,
 		       &val, sizeof(val)) < 0)
@@ -460,17 +467,17 @@ static int mh_try_pad(const struct iovec *in, struct iovec *out, int count)
 	return n;
 }
 
+/* If we need to add support for other crypto libraries than OpenSSL,
+ * we only need to reimplement this function. */
 static int calculate_auth_data(const struct iovec *iov, int iovlen,
 			       const struct in6_addr *coa,
 			       const struct in6_addr *cn,
 			       const uint8_t *key, uint8_t *digest)
 {
 	uint8_t buf[HMAC_SHA1_HASH_LEN];
-	int i;
-
-#ifdef HAVE_LIBCRYPTO
-	unsigned int len = HMAC_SHA1_HASH_LEN;
 	HMAC_CTX ctx;
+	int i;
+	unsigned int len = HMAC_SHA1_HASH_LEN;
 	const EVP_MD *evp_md = EVP_sha1();
 
 	HMAC_CTX_init(&ctx);
@@ -483,18 +490,7 @@ static int calculate_auth_data(const struct iovec *iov, int iovlen,
 	}
 	HMAC_Final(&ctx, buf, &len);
 	HMAC_CTX_cleanup(&ctx);
-#else
-	HMAC_SHA1_CTX ctx;
 
-	HMAC_SHA1_init(&ctx, key, HMAC_SHA1_KEY_SIZE);
-	HMAC_SHA1_update(&ctx, (uint8_t *)coa, sizeof(*coa));
-	HMAC_SHA1_update(&ctx, (uint8_t *)cn, sizeof(*coa));
-	for (i = 0; i < iovlen; i++) {
-		HMAC_SHA1_update(&ctx, (uint8_t *)iov[i].iov_base, 
-				 iov[i].iov_len);
-	}
-	HMAC_SHA1_final(&ctx, buf);
-#endif
 	memcpy(digest, buf, MIPV6_DIGEST_LEN);
 	return 0;
 }
@@ -533,8 +529,11 @@ int mh_verify_auth_data(const void *msg, int len, const void *opt,
  * set.  Binding authorization data is calculated if present.  Returns
  * number of bytes sent on success, otherwise negative error value.
  **/
-int mh_send(const struct in6_addr_bundle *addrs, const struct iovec *mh_vec,
-	    int iovlen, const uint8_t *bind_key, int oif)
+int mh_send(const struct in6_addr_bundle *addrs, 
+	    const struct iovec *mh_vec,
+	    const int iovlen, 
+	    const uint8_t *bind_key,
+	    const int oif)
 {
 	struct ip6_mh_opt_auth_data lbad;
 	struct sockaddr_in6 daddr;
@@ -668,24 +667,6 @@ int mh_send(const struct in6_addr_bundle *addrs, const struct iovec *mh_vec,
 	return ret;
 }
 
-static int mh_opt_len_chk(uint8_t type, int len)
-{
-	switch (type) {
-	case IP6_MHOPT_BREFRESH:
-		return len != sizeof(struct ip6_mh_opt_refresh_advice);
-	case IP6_MHOPT_ALTCOA:
-		return len != sizeof(struct ip6_mh_opt_altcoa);
-	case IP6_MHOPT_NONCEID:
-		return len != sizeof(struct ip6_mh_opt_nonce_index);
-	case IP6_MHOPT_BAUTH:
-		return len != sizeof(struct ip6_mh_opt_auth_data);
-	case IP6_MHOPT_PADN:
-	default:
-		return 0;
-	}	
-}
-
-		
 /**
  * mh_opt_parse - parse mobility options
  * @mh_opts: pointer to mh_options structure
@@ -698,7 +679,9 @@ static int mh_opt_len_chk(uint8_t type, int len)
  * %IP6_MHOPT_PADN are ignored.  Returns number of options parsed
  * (excluding pad) on success, otherwise negative error value.
  **/
-int mh_opt_parse(const struct ip6_mh *mh, ssize_t len, ssize_t offset,
+int mh_opt_parse(const struct ip6_mh *mh,
+		 const ssize_t len,
+		 const ssize_t offset,
 		 struct mh_options *mh_opts)
 {
 	const uint8_t *opts = (uint8_t *) mh;
@@ -718,33 +701,29 @@ int mh_opt_parse(const struct ip6_mh *mh, ssize_t len, ssize_t offset,
 			left--;
 			i++;
 			continue;
-		} 
-		if (left < sizeof(struct ip6_mh_opt) ||
-		    mh_opt_len_chk(op->ip6mhopt_type, op->ip6mhopt_len + 2)) {
-			syslog(LOG_ERR,
-			       "Kernel failed to catch malformed Mobility Option type %d. Update kernel!",
-			       op->ip6mhopt_type);
+		} else if (left < sizeof(struct ip6_mh_opt))
 			return -EINVAL;
-		}
+
 		if (op->ip6mhopt_type == IP6_MHOPT_PADN) {
 			left -= op->ip6mhopt_len + 2;
 			i += op->ip6mhopt_len + 2;
 			continue;
 		}
-		if (op->ip6mhopt_type <= IP6_MHOPT_MAX) {
-			if (op->ip6mhopt_type == IP6_MHOPT_BAUTH)
-				bauth = 1;
+		if (op->ip6mhopt_type > IP6_MHOPT_MAX)
+			return -EINVAL;
 
-			if (!mh_opts->opts[op->ip6mhopt_type])
-				mh_opts->opts[op->ip6mhopt_type] = i;
-			else if (mh_opts_dup_ok[op->ip6mhopt_type])
-				mh_opts->opts_end[op->ip6mhopt_type] = i;
-			else
-				return -EINVAL;
-			ret++;
-		}
+		if (op->ip6mhopt_type == IP6_MHOPT_BAUTH)
+			bauth = 1;
+
+		if (!mh_opts->opts[op->ip6mhopt_type])
+			mh_opts->opts[op->ip6mhopt_type] = i;
+		else if (mh_opts_dup_ok[op->ip6mhopt_type])
+			mh_opts->opts_end[op->ip6mhopt_type] = i;
+		else
+			return -EINVAL;
 		left -= op->ip6mhopt_len + 2;
 		i += op->ip6mhopt_len + 2;
+		ret++;
 	}
 	return ret;
 }
@@ -765,9 +744,9 @@ int mh_opt_parse(const struct ip6_mh *mh, ssize_t len, ssize_t offset,
  * Returns length of packet data received, or negative error value on
  * failure.
  **/
-ssize_t mh_recv(unsigned char *msg, size_t msglen,
-		struct sockaddr_in6 *addr, struct in6_pktinfo *pkt_info,
-		struct in6_addr *haoaddr, struct in6_addr *rtaddr)
+int mh_recv(unsigned char *msg, ssize_t msglen,
+	    struct sockaddr_in6 *addr, struct in6_pktinfo *pkt_info,
+	    struct in6_addr *haoaddr, struct in6_addr *rtaddr)
 {
 	struct ip6_mh *mh;
 	struct msghdr mhdr;
@@ -775,9 +754,9 @@ ssize_t mh_recv(unsigned char *msg, size_t msglen,
 	struct iovec iov;
 	static unsigned char chdr[CMSG_BUF_LEN];
 	void *databufp = NULL;
+	int len, ret = 0;
 	int sockfd = mh_sock.fd;
 	socklen_t hao_len;
-	ssize_t len;
 
 	iov.iov_len = msglen;
 	iov.iov_base = (unsigned char *)msg;
@@ -790,15 +769,13 @@ ssize_t mh_recv(unsigned char *msg, size_t msglen,
 	mhdr.msg_controllen = CMSG_BUF_LEN;
 
 	if ((len = recvmsg(sockfd, &mhdr, 0)) < 0)
-		return -errno;
+		return -1;
 
 	memset(haoaddr, 0, sizeof(*haoaddr));
 	memset(rtaddr, 0, sizeof(*rtaddr));
 
 	for (cmsg = CMSG_FIRSTHDR(&mhdr); cmsg;
 	     cmsg = CMSG_NXTHDR(&mhdr, cmsg)) {
-		int ret = 0;
-
 		if (cmsg->cmsg_level != IPPROTO_IPV6)
 			continue;
 		switch (cmsg->cmsg_type) {
@@ -856,8 +833,11 @@ ssize_t mh_recv(unsigned char *msg, size_t msglen,
 	return len;
 }
 
-void mh_send_be(struct in6_addr *dst, struct in6_addr *hoa, 
-		struct in6_addr *src, uint8_t status, int iif)
+void mh_send_be(struct in6_addr *dst, 
+		struct in6_addr *hoa, 
+		struct in6_addr *src,
+		const uint8_t status,
+		const int iif)
 {
 	struct ip6_mh_binding_error *be;
 	struct iovec iov;
@@ -912,9 +892,13 @@ void mh_send_brr(struct in6_addr *mn_addr, struct in6_addr *local)
 	free_iov_data(&mh_vec, 1);
 }
 
-void mh_send_ba(const struct in6_addr_bundle *addrs, uint8_t status,
-		uint8_t flags, uint16_t sequence, 
-		const struct timespec *lifetime, const uint8_t *key, int iif)
+void mh_send_ba(const struct in6_addr_bundle *addrs,
+		const uint8_t status, 
+		const uint8_t flags,
+		const uint16_t sequence, 
+		const struct timespec *lifetime,
+		const uint8_t *key,
+		const int iif)
 {
 	int iovlen = 1;
 	struct ip6_mh_binding_ack *ba;
@@ -935,7 +919,7 @@ void mh_send_ba(const struct in6_addr_bundle *addrs, uint8_t status,
 		struct timespec refresh;
 		tsclear(refresh);
 		if (conf.pmgr.use_bradv(addrs->dst, addrs->bind_coa,
-					addrs->src, lifetime, &refresh) &&
+					lifetime, &refresh) &&
 		    tsbefore(*lifetime, refresh))
 			mh_create_opt_refresh_advice(&mh_vec[iovlen++], 
 						     refresh.tv_sec);
@@ -946,11 +930,13 @@ void mh_send_ba(const struct in6_addr_bundle *addrs, uint8_t status,
 	free_iov_data(mh_vec, iovlen);
 }
 
-int mh_bu_parse(struct ip6_mh_binding_update *bu, ssize_t len,
+int mh_bu_parse(struct ip6_mh_binding_update *bu,
+		const ssize_t len,
 		const struct in6_addr_bundle *in_addrs,
 		struct in6_addr_bundle *out_addrs,
 		struct mh_options *mh_opts,
-		struct timespec *lifetime, uint8_t *key)
+		struct timespec *lifetime,
+		uint8_t *key)
 {
 	struct in6_addr *our_addr, *peer_addr, *remote_coa;
 	struct ip6_mh_opt_altcoa *alt_coa;

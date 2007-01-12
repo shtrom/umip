@@ -1,0 +1,73 @@
+MIPL Mobile IPv6 for Linux - Developers
+
+Environment
+===========
+
+To compile, you need the following libraries.  Your system must have
+pthreads library (built-in in glibc, the newer the better) and OpenSSL
+crypto library (version 0.9.7 will do) and possibly also the corresponding
+devel package for the crypto header files.  You also have to have a MIPv6 
+enabled kernel headers (and kernel if you wish to run MIPv6).
+
+You should have the following tools (in addition to working gcc
+compilation environment) installed on your machine if you wish to use
+Bitkeeper versions of MIPL.
+
+ * automake (anything after and including 1.7 should work)
+ * autoconf (2.5 or later)
+ * make (any version of GNU make)
+ * sed (any version of GNU sed)
+ * flex (any version)
+ * bison (any version of GNU bison)
+
+To produce configure script and other stuff just say 'autoreconf -i'.
+When doing ./configure remember to set additional CPPFLAGS to
+-Iyour_kernel_path/include.  For example:
+
+$ CPPFLAGS=-I/home/anttit/src/mip6-kernel/include ./configure
+
+
+Coding Style
+============
+
+This project uses mainly same coding conventions as Linux kernel
+(Documentation/CodingStyle in your kernel tree).  If you are using
+emacs as your editor, use the linux-c-mode.  If you don't have this in
+your system, just add the following to your $HOME/.emacs:
+
+;; Linux kernel C mode
+(defun linux-c-mode ()
+  "C mode with adjusted defaults for use with the Linux kernel."
+  (interactive)
+  (c-mode)
+  (c-set-style "K&R")
+  (setq c-basic-offset 8))
+
+If you want to make it default for all .c and .h files add this too:
+
+(setq auto-mode-alist (cons '("\.[ch]$" . linux-c-mode) auto-mode-alist))
+
+or just for this project (mip6_sources is path to source directory):
+
+(setq auto-mode-alist (cons '("mip6_sources/.*\\.[ch]$" . linux-c-mode)
+                       auto-mode-alist))
+
+If you add inline comments, please make sure they are brief but
+accurate.  When you change the code remember to change the comment if
+necessary.  All non-static functions should have a function level
+comment what they do and how to use them.  For now, we use the
+kernel-doc system (see Documentation/kernel-doc-nano-HOWTO.txt in your
+kernel tree) for generating automatic function references.
+
+
+Misc
+====
+
+You should also read README.directory-structure and
+README.file-headers before doing anything else.
+
+This file and other README.something files are _not_ supposed to go in
+a release, so do not modify Makefile.am to do this.
+
+If you want to whine about these guidelines, you can reach the
+guideline author at anttit@tcs.hut.fi.

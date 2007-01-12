@@ -1,12 +1,11 @@
 /*
- * $Id: prefix.c 1.9 06/05/07 21:52:43+03:00 anttit@tcs.hut.fi $
+ * $Id: prefix.c 1.6 05/12/08 19:42:43+02:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
  * Author: Ville Nuorvala <vnuorval@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2004 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -112,7 +111,7 @@ int prefix_list_copy(const struct list_head *pl1, struct list_head *pl2)
 
 unsigned long mpd_curr_lft(const struct timespec *now,
 			   const struct timespec *tstamp,
-			   unsigned long lft)
+			   const unsigned long lft)
 {
 		struct timespec tmp;
 		unsigned long diff;
@@ -135,7 +134,8 @@ static const struct in6_addr dhaad_gen_suffix = { { { 0xff,0xff,0xff,0xff,0xff,0
 static const struct in6_addr dhaad_eui64_suffix = { { { 0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0, 0xfd,0xff,0xff,0xff,0xff,0xff,0xff,0xfe } } };
 
 void dhaad_gen_ha_anycast(struct in6_addr *anycast,
-			  const struct in6_addr *pfx, int plen)
+			  const struct in6_addr *pfx,
+			  const int plen)
 {
 	ipv6_addr_create(anycast, 
 			 pfx, 

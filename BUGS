@@ -1,8 +1,8 @@
-Known issues in MIPL 2.0.2
-------------------------
+Known issues in MIPL 2.0 RC3
+----------------------------
 
-If you run into any of the issues below, don't bother reporting them
-unless you can provide a fix, as we are already aware of them.
+If you run into any of the issues below, don't bother reporting them.
+We are already aware of them.
 
 General issues
 --------------
@@ -11,9 +11,29 @@ General issues
   due to the design of the Linux IPsec implementation.  Read
   README.IPsec for more information.
 
+Home Agent issues
+-----------------
+
+* Removal of the Prefix List entry on lifetime expiration does not
+  work properly.  When HA stops serving (i.e. stops sending RAs), the
+  corresponding entry is not removed from the Prefix List.
+
 Mobile Node issues
 ------------------
 
-* Multihoming support hasn't been very thoroughly tested and should
-  therefore be considered developmental code.  However, it is a lot
-  more stable than in the Release Candidates.
+* The MN doesn't always manage to deregister successfully with a CN if
+  UseCnBuAck is turned on. This problem should not arise if the option
+  is turned off.
+
+* Multihoming support in the Mobile Node is still under development,
+  so we don't currently recommend defining more than one Interface in
+  the MN configuration file unless you *really* know what you are
+  doing.
+
+* The advanced route optimization policies are likewise under
+  development, so the MnRoPolicy configuration options might not work
+  as expected.
+
+* When a BUL entry for correspondent node expires, entry which holds
+  lifetime with negative value is left behind.  This may result in
+  sending unnecessary BU to the CN.

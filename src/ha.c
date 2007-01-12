@@ -1,13 +1,11 @@
 /*
- * $Id: ha.c 1.126 06/05/07 21:52:42+03:00 anttit@tcs.hut.fi $
+ * $Id: ha.c 1.99 06/01/22 13:56:55+09:00 nakam@linux-ipv6.org $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
- * Authors: Ville Nuorvala <vnuorval@tcs.hut.fi>
- *          Antti Tuominen <anttit@tcs.hut.fi>
+ * Author: Antti Tuominen <anttit@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2004 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -28,12 +26,24 @@
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
+#ifdef HAVE_LIBPTHREAD
 #include <pthread.h>
+#else
+#error "POSIX Thread Library required!"
+#endif
+#include <syslog.h>
 #include <errno.h>
 #include <net/if.h>
 #include <netinet/ip.h>
 #include <netinet/icmp6.h>
+#ifndef HAVE_MIP6_ICMP6_H
+#include <netinet-icmp6.h>
+#endif
+#ifdef HAVE_NETINET_IP6MH_H
 #include <netinet/ip6mh.h>
+#else
+#include <netinet-ip6mh.h>
+#endif
 #include <sys/ioctl.h>
 #include <linux/types.h>
 #include <linux/if_tunnel.h>
@@ -60,6 +70,10 @@
 #include "ndisc.h"
 #include "prefix.h"
 
+#ifndef IPV6_JOIN_ANYCAST
+#define IPV6_JOIN_ANYCAST	27
+#endif
+
 static pthread_mutex_t bu_worker_mutex;
 static volatile unsigned long bu_worker_count = 0;
 static pthread_cond_t cond;
@@ -67,9 +81,12 @@ static pthread_cond_t cond;
 LIST_HEAD(bu_worker_list);
 LIST_HEAD(ha_interfaces);
 
-static void ha_recv_ra(const struct icmp6_hdr *ih, ssize_t len,
+static void ha_recv_ra(const struct icmp6_hdr *ih, 
+		       const ssize_t len,
 		       const struct in6_addr *src,
-		       const struct in6_addr *dst, int iif, int hoplimit)
+		       const struct in6_addr *dst,
+		       const int iif,
+		       const int hoplimit)
 {
 	struct nd_router_advert *ra = (struct nd_router_advert *)ih;
 	int optlen = len - sizeof(struct nd_router_advert);
@@ -111,6 +128,18 @@ static void ha_recv_ra(const struct icmp6_hdr *ih, ssize_t len,
 				ntohl(p->nd_opt_pi_valid_time);
 			p->nd_opt_pi_preferred_time =
 				ntohl(p->nd_opt_pi_preferred_time);
+
+			/* XXX: Limitation: timespec cannot handle
+			 * unsigned long value; To avoid overflow,
+			 * valid/preferred lifetime are decresed and fake it
+			 * like they are received such value.
+			 * Todo: fix it correctly!
+			 */
+			p->nd_opt_pi_valid_time = umin(p->nd_opt_pi_valid_time,
+						       0x7fffffff);
+			p->nd_opt_pi_preferred_time = umin(p->nd_opt_pi_preferred_time,
+							   0x7fffffff);
+
 			if (ra->nd_ra_flags_reserved & ND_RA_FLAG_HOME_AGENT)
 				mpd_handle_pinfo(iface, p);
 			pinfo[num_pinfo++] = p;
@@ -139,7 +168,7 @@ struct icmp6_handler ha_ra_handler = {
 	.recv = ha_recv_ra,
 };
 
-struct ha_interface *ha_get_if(int ifindex)
+struct ha_interface *ha_get_if(const int ifindex)
 {
 	struct list_head *lp;
 
@@ -244,7 +273,7 @@ static int ha_if_addr_setup(struct sockaddr_nl *who,
 	return 0;
 }
 
-static int ha_addr_setup(void)
+int ha_addr_setup(void)
 {
 	struct list_head *lp;
 	list_for_each(lp, &ha_interfaces) {
@@ -319,21 +348,21 @@ static int ha_halist_vt_dump(int ifindex, void *data, void *arg)
 
 	dev = if_indextoname(ifindex, buf);
 	if (!dev || strlen(dev) == 0)
-		fprintf(vh->vh_stream, "(%d)", h->iface->ifindex);
+		vt_printf(vh, "(%d)", h->iface->ifindex);
 	else
-		fprintf(vh->vh_stream, "%s", dev);
+		vt_printf(vh, "%s", dev);
 
-	fprintf(vh->vh_stream, " ");
+	vt_printf(vh, " ");
 
-	fprintf_bl(vh, "%x:%x:%x:%x:%x:%x:%x:%x", NIP6ADDR(&h->addr));
+	vt_printf_bl(vh, "%x:%x:%x:%x:%x:%x:%x:%x", NIP6ADDR(&h->addr));
 
-	fprintf(vh->vh_stream, "\n");
+	vt_printf(vh, "\n");
 
-	fprintf(vh->vh_stream, " preference %d", h->preference);
+	vt_printf(vh, " preference %d", h->preference);
 
-	fprintf(vh->vh_stream, " lifetime %lu", h->lifetime.tv_sec);
+	vt_printf(vh, " lifetime %lu", h->lifetime);
 
-	fprintf(vh->vh_stream, "\n");
+	vt_printf(vh, "\n");
 
 	return 0;
 }
@@ -370,50 +399,49 @@ static int ha_plist_vt_dump(int ifindex, void *data, void *arg)
 
 	dev = if_indextoname(ifindex, buf);
 	if (!dev || strlen(dev) == 0)
-		fprintf(vh->vh_stream, "(%d)", ifindex);
+		vt_printf(vh, "(%d)", ifindex);
 	else
-		fprintf(vh->vh_stream, "%s", dev);
+		vt_printf(vh, "%s", dev);
 
-	fprintf(vh->vh_stream, " ");
+	vt_printf(vh, " ");
 
-	fprintf_bl(vh, "%x:%x:%x:%x:%x:%x:%x:%x/%u",
+	vt_printf_bl(vh, "%x:%x:%x:%x:%x:%x:%x:%x/%u",
 		     NIP6ADDR(&ple->ple_prefix), ple->ple_plen);
 
-	fprintf(vh->vh_stream, "\n");
+	vt_printf(vh, "\n");
 
-	fprintf(vh->vh_stream, " valid ");
+	vt_printf(vh, " valid ");
 	if (clock_gettime(CLOCK_REALTIME, &ts_now) != 0)
-		fprintf(vh->vh_stream, "(error)");
+		vt_printf(vh, "(error)");
 	else {
 		if (tsafter(ts_now, ple->timestamp))
-			fprintf(vh->vh_stream, "(broken)");
+			vt_printf(vh, "(broken)");
 		else {
-			struct timespec ts_valid = {
-				ple->ple_valid_time,
-				0
-			};
+			uint32_t valid = ple->ple_valid_time;
+			uint32_t alives;
 			struct timespec ts;
+
 			tssub(ts_now, ple->timestamp, ts);
 			/* "ts" is now time how log it alives */
-			if (tsafter(ts_valid, ts)) {
-				tssub(ts, ts_valid, ts);
-				fprintf(vh->vh_stream, "-%lu", ts.tv_sec);
+			alives = ts.tv_sec;
+
+			if (alives > valid) {
+				vt_printf(vh, "-%lu", alives - valid);
 			} else {
-				tssub(ts_valid, ts, ts);
-				fprintf(vh->vh_stream, "%lu", ts.tv_sec);
+				vt_printf(vh, "%lu", valid - alives);
 			}
 		}
 	}
-	fprintf(vh->vh_stream, " / %u", ple->ple_valid_time);
+	vt_printf(vh, " / %lu", ple->ple_valid_time);
 
-	fprintf(vh->vh_stream, " preferred %u", ple->ple_prefd_time);
+	vt_printf(vh, " preferred %lu", ple->ple_prefd_time);
 
-	fprintf(vh->vh_stream, " flags %c%c%c",
+	vt_printf(vh, " flags %c%c%c",
 		  ((ple->ple_flags & ND_OPT_PI_FLAG_ONLINK) ? 'O' : '-'),
 		  ((ple->ple_flags & ND_OPT_PI_FLAG_AUTO) ? 'A' : '-'),
 		  ((ple->ple_flags & ND_OPT_PI_FLAG_RADDR) ? 'R' : '-'));
 
-	fprintf(vh->vh_stream, "\n");
+	vt_printf(vh, "\n");
 
 	return 0;
 }
@@ -439,11 +467,11 @@ static void ha_plist_iterate(int (* func)(int, void *, void *), void *arg)
 static int ha_thread_vt_cmd(const struct vt_handle *vh, const char *str)
 {
 	if (strlen(str) > 0) {
-		fprintf(vh->vh_stream, "unknown args\n");
+		vt_printf(vh, "unknown args\n");
 		return 0;
 	}
 	pthread_mutex_lock(&bu_worker_mutex);
-	fprintf(vh->vh_stream, "bu: %lu\n", bu_worker_count);
+	vt_printf(vh, "bu: %lu\n", bu_worker_count);
 	pthread_mutex_unlock(&bu_worker_mutex);
 	return 0;
 }
@@ -453,7 +481,7 @@ static int ha_halist_vt_cmd(const struct vt_handle *vh, const char *str)
 	struct ha_vt_arg hva;
 	hva.vh = vh;
 	if (strlen(str) > 0) {
-		fprintf(vh->vh_stream, "unknown args\n");
+		vt_printf(vh, "unknown args\n");
 		return 0;
 	}
 	ha_halist_iterate(ha_halist_vt_dump, &hva);
@@ -465,7 +493,7 @@ static int ha_plist_vt_cmd(const struct vt_handle *vh, const char *str)
 	struct ha_vt_arg hva;
 	hva.vh = vh;
 	if (strlen(str) > 0) {
-		fprintf(vh->vh_stream, "unknown args\n");
+		vt_printf(vh, "unknown args\n");
 		return 0;
 	}
 	ha_plist_iterate(ha_plist_vt_dump, &hva);
@@ -490,12 +518,15 @@ static struct vt_cmd_entry vt_cmd_pl = {
 static int ha_vt_init(void)
 {
 	int ret;
+	vt_cmd_init(&vt_cmd_thread);
 	ret = vt_cmd_add_root(&vt_cmd_thread);
 	if (ret < 0)
 		return ret;
+	vt_cmd_init(&vt_cmd_hal);
 	ret = vt_cmd_add_root(&vt_cmd_hal);
 	if (ret < 0)
 		return ret;
+	vt_cmd_init(&vt_cmd_pl);
 	ret = vt_cmd_add_root(&vt_cmd_pl);
 	return ret;
 }
@@ -519,14 +550,21 @@ static int home_tnl_del(int old_if, int new_if, struct home_tnl_ops_parm *p)
 
 	if (conf.UseMnHaIPsec) {
 		/* migrate */ 
-		ha_ipsec_tnl_update(our_addr, peer_addr,
-				    coa, old_coa, p->bce->tunnel);
+		if (ha_ipsec_tnl_update(our_addr, peer_addr, coa, old_coa,
+					p->bce->tunnel) < 0) {
+			syslog(LOG_ERR, "migrate FAILED\n");
+		}
 		/* delete SP entry */ 
-		ha_ipsec_tnl_pol_del(our_addr, peer_addr, p->bce->tunnel);
+		if (ha_ipsec_tnl_pol_del(our_addr, peer_addr,
+					 p->bce->tunnel) < 0) {
+			syslog(LOG_ERR, "add SP etnry FAILED\n");
+		}
 	}
 	/* delete HoA route */
-	route_del(old_if, RT6_TABLE_MIP6,
-		  IP6_RT_PRIO_MIP6_FWD, NULL, 0, peer_addr, 128, NULL);
+	if (route_del(old_if, RT6_TABLE_MIP6, IP6_RT_PRIO_MIP6_FWD,
+		      NULL, 0, peer_addr, 128, NULL) < 0) {
+		syslog(LOG_ERR, "route_del failed");
+	}
 	/* update tunnel interface */
 	p->bce->tunnel = new_if;
 
@@ -548,8 +586,7 @@ static int home_tnl_add(int old_if, int new_if, struct home_tnl_ops_parm *p)
 	p->bce->tunnel = new_if;
 
 	/* add HoA route */
-	if (route_add(new_if, RT6_TABLE_MIP6,
-		      RTPROT_MIP, 0, IP6_RT_PRIO_MIP6_FWD,
+	if (route_add(new_if, RT6_TABLE_MIP6, IP6_RT_PRIO_MIP6_FWD,
 		      NULL, 0, peer_addr, 128, NULL) < 0) {
 		p->ba_status = IP6_MH_BAS_INSUFFICIENT;
 		goto err;
@@ -564,6 +601,7 @@ static int home_tnl_add(int old_if, int new_if, struct home_tnl_ops_parm *p)
 		/* migrate */ 
 		if (ha_ipsec_tnl_update(our_addr, peer_addr, coa, old_coa,
 					p->bce->tunnel) < 0) {
+			syslog(LOG_ERR, "migrate FAILED\n");
 			p->ba_status = IP6_MH_BAS_INSUFFICIENT;
 			goto err;
 		}
@@ -591,6 +629,7 @@ static int home_tnl_chg(int old_if, int new_if, struct home_tnl_ops_parm *p)
 		    !IN6_ARE_ADDR_EQUAL(old_coa, coa) &&
 		    ha_ipsec_tnl_update(our_addr, peer_addr, coa, old_coa,
 					p->bce->tunnel) < 0) {
+			syslog(LOG_ERR, "migrate FAILED\n");
 			return -1;
 		}
 	} else { 
@@ -643,7 +682,6 @@ struct ha_recv_bu_args {
 	struct in6_addr remote_coa;
 	struct in6_addr bind_coa;
 	struct ip6_mh_binding_update *bu;
-	ssize_t len;
 	struct mh_options mh_opts;
 	struct timespec lft;
 	int iif;
@@ -653,18 +691,15 @@ static void *ha_recv_bu_worker(void *varg)
 {
 	struct ha_recv_bu_args *arg = varg;
 	struct in6_addr_bundle out;
-	struct bcentry *bce;
+	struct bcentry *bce = NULL;
 	struct timespec lft, tmp;
-	int iif, status, new, home_ifindex;
+	int iif;
 	uint16_t bu_flags, seqno;
-	uint8_t ba_flags;
+	int status, new = 0;
+	int home_ifindex;
+	uint8_t ba_flags = 0;
 	struct home_tnl_ops_parm p;
-
-	pthread_dbg("thread started");
 restart:	
-	home_ifindex = 0;
-	new = 0;
-	ba_flags = 0;
 	lft = arg->lft;
 	iif = arg->iif;
 	bu_flags = arg->bu->ip6mhbu_flags;
@@ -681,7 +716,7 @@ restart:
 		out.bind_coa = NULL;
 	out.local_coa = NULL;
 
-	bce = bcache_get(out.src, out.dst);
+	bce = bcache_get(&arg->src, &arg->dst);
 	if (bce) {
 		if (bce->type != BCE_NONCE_BLOCK) {
 			if (!(bce->flags & IP6_MH_BU_HOME)) {
@@ -700,7 +735,7 @@ restart:
 				   active worker */
 				assert(bu_worker_count > 0);
 				pthread_mutex_unlock(&bu_worker_mutex);
-				pthread_exit(NULL);
+				return NULL;
 			}
 			if (!MIP6_SEQ_GT(seqno, bce->seqno)) {
 				/* sequence number expired */
@@ -719,38 +754,45 @@ restart:
 				goto send_nack;
 			}
 			/* else get rid of it */
-			bcache_delete(out.src, out.dst);
+			bcache_delete(&arg->src, &arg->dst);
 		}
 	} else if (!tsisset(lft)) {
 		status = IP6_MH_BAS_NOT_HA;
 		goto send_nack;
 	}
-	if ((status = mpd_prefix_check(out.src, out.dst,
-				       &lft, &home_ifindex, new)) < 0) {
+	status = conf.pmgr.discard_binding(&out, arg->bu, &arg->mh_opts);
+	if (status >= IP6_MH_BAS_UNSPECIFIED) {
+		goto send_nack;
+	}	
+	home_ifindex = mpd_prefix_check(&arg->src, &arg->dst, &tmp, new);
+	if (home_ifindex <= 0) {
 		/* not home agent for this subnet */
 		status = IP6_MH_BAS_NOT_HOME_SUBNET;
 		goto send_nack;
 	}
-	status = conf.pmgr.discard_binding(out.dst, out.bind_coa,
-					   out.src, arg->bu, arg->len);
-	if (status >= IP6_MH_BAS_UNSPECIFIED)
-		goto send_nack;
-	/* lifetime may be further decreased by local policy */
-	if (conf.pmgr.max_binding_life(out.dst, out.bind_coa, out.src,
-				       arg->bu, arg->len, &lft, &tmp)) {
-		if (tsbefore(lft, tmp))
-			lft = tmp;
+
+	/* if prefix is or will be deprecated during the
+	 * requested lifetime, ba status 1, else 0 */
+	if (tsbefore(lft, tmp)) {
+		if (conf.SendMobPfxAdvs)
+			status = IP6_MH_BAS_PRFX_DISCOV;
+		lft = tmp;
 	}
-	mpd_sanitize_lft(&lft);
+	/* lifetime may be further decreased by local policy */
+	conf.pmgr.max_binding_life(&out, arg->bu,
+				   &arg->mh_opts, &lft, &tmp);
+	if (tsbefore(lft, tmp))
+		lft = tmp;
+
 	if (!bce) {
 		bce = bcache_alloc(BCE_HOMEREG);
 		if (!bce) {
 			status = IP6_MH_BAS_INSUFFICIENT;
 			goto send_nack;
 		}
-		bce->our_addr = *out.src;
-		bce->peer_addr = *out.dst;
-		bce->coa = *out.bind_coa;
+		bce->our_addr = arg->src;
+		bce->peer_addr = arg->dst;
+		bce->coa = arg->bind_coa;
 		bce->seqno = seqno;
 		bce->flags = bu_flags;
 		bce->type = BCE_DAD;
@@ -764,14 +806,14 @@ restart:
 			goto send_nack;
 		}
 		/* Do DAD for home address */
-		if (ndisc_do_dad(home_ifindex, out.dst, 
+		if (ndisc_do_dad(home_ifindex, &arg->dst, 
 				 bu_flags & IP6_MH_BU_LLOCAL) < 0) {
-			bcache_delete(out.src, out.dst);
+			bcache_delete(&arg->src, &arg->dst);
 			bce = NULL;
 			status =  IP6_MH_BAS_DAD_FAILED;
 			goto send_nack;
 		}
-		bce = bcache_get(out.src, out.dst);
+		bce = bcache_get(&arg->src, &arg->dst);
 		if (!bce) {
 			BUG("BCE deleted before DAD completed!");
 			status =  IP6_MH_BAS_UNSPECIFIED;
@@ -785,8 +827,9 @@ restart:
 	bce->flags = bu_flags;
 	bce->lifetime = lft;
 	if (new) {
-		if (tunnel_add(out.src, out.bind_coa, 0, 
+		if (tunnel_add(&arg->src, &arg->bind_coa, 
 			       home_tnl_ops, &p) < 0) {
+			syslog(LOG_ERR, "Tunnel creation failed!");
 			if (p.ba_status >= IP6_MH_BAS_UNSPECIFIED)
 				status = p.ba_status;
 			else
@@ -795,15 +838,14 @@ restart:
 		}
 		bce->cleanup = home_cleanup;
 
-		if (route_add(bce->link, RT6_TABLE_MIP6,
-			      RTPROT_MIP, 0, IP6_RT_PRIO_MIP6_OUT,
+		if (route_add(bce->link, RT6_TABLE_MIP6, IP6_RT_PRIO_MIP6_OUT,
 			      &bce->our_addr, 128, &bce->peer_addr, 128, 
 			      NULL) < 0) {
 			status = IP6_MH_BAS_INSUFFICIENT;
 			goto send_nack;
 		}
 
-		if (proxy_nd_start(bce->link, out.dst, out.src,
+		if (proxy_nd_start(bce->link, &arg->dst, &arg->src,
 				   bu_flags) < 0) {
 			status = IP6_MH_BAS_INSUFFICIENT;
 			goto send_nack;
@@ -812,9 +854,10 @@ restart:
 		bcache_complete_homereg(bce);
 	} else {
 		bce->old_coa = bce->coa;
-		bce->coa = *out.bind_coa;
-		if (tunnel_mod(bce->tunnel, out.src, out.bind_coa, 0,
+		bce->coa = arg->bind_coa;
+		if (tunnel_mod(bce->tunnel, &arg->src, &arg->bind_coa, 
 			       home_tnl_ops, &p) < 0) { 
+			syslog(LOG_ERR, "Tunnel modification failed!");
 			if (p.ba_status >= IP6_MH_BAS_UNSPECIFIED)
 				status = p.ba_status;
 			else
@@ -826,10 +869,9 @@ restart:
 	/* bce is always valid here */
 	bcache_release_entry(bce);
 	if (!tsisset(lft))
-		bcache_delete(out.src, out.dst);
+		bcache_delete(&arg->src, &arg->dst);
 
-	if ((bu_flags & IP6_MH_BU_KEYM) && 
-	    conf.pmgr.use_keymgm(out.dst, out.src))
+	if ((bu_flags & IP6_MH_BU_KEYM) && conf.pmgr.use_keymgm(&out))
 		ba_flags |= IP6_MH_BA_KEYM;
 
 	if (ba_flags & IP6_MH_BA_KEYM) {
@@ -848,33 +890,35 @@ restart:
 		 * discard the connections to the home address. */
 	}
 	mh_send_ba(&out, status, ba_flags, seqno, &lft, NULL, iif);
-	if (new && tsisset(lft))
+	if (new)
 		mpd_start_mpa(&bce->our_addr, &bce->peer_addr);
 out:
 	free(arg);
 	pthread_mutex_lock(&bu_worker_mutex);
 	if (!list_empty(&bu_worker_list)) {
 		struct list_head *l = bu_worker_list.next;
-		list_del(l);
 		arg = list_entry(l, struct ha_recv_bu_args, list);
+		list_del(&arg->list);
 		pthread_mutex_unlock(&bu_worker_mutex);
 		goto restart;
 	}
 	if (--bu_worker_count == 0)
 		pthread_cond_signal(&cond);
 	pthread_mutex_unlock(&bu_worker_mutex);
-	pthread_exit(NULL);
+	return NULL;
 send_nack:
 	if (bce) {
 		bcache_release_entry(bce);
-		bcache_delete(out.src, out.dst);
+		bcache_delete(&arg->src, &arg->dst);
 	}
 	mh_send_ba_err(&out, status, 0, seqno, NULL, iif);
 	goto out;
 }
 
-static void ha_recv_bu(const struct ip6_mh *mh, ssize_t len,
-		       const struct in6_addr_bundle *in, int iif)
+static void ha_recv_bu(const struct ip6_mh *mh, 
+		       const ssize_t len,
+		       const struct in6_addr_bundle *in,
+		       const int iif)
 {
 	struct ip6_mh_binding_update *bu;
 	struct mh_options mh_opts;
@@ -885,10 +929,9 @@ static void ha_recv_bu(const struct ip6_mh *mh, ssize_t len,
 
 	bu = (struct ip6_mh_binding_update *)mh;
 
-	if (!(bu->ip6mhbu_flags & IP6_MH_BU_HOME)) {
+	if (!(bu->ip6mhbu_flags & IP6_MH_BU_HOME))
 		cn_recv_bu(mh, len, in, iif);
-		return;
-	}
+
 	if (mh_bu_parse(bu, len, in, &out, &mh_opts, &lft, NULL) < 0)
 		return;
 
@@ -911,21 +954,22 @@ static void ha_recv_bu(const struct ip6_mh *mh, ssize_t len,
 	else
 		arg->bind_coa = in6addr_any;
 	arg->bu = (struct ip6_mh_binding_update *)(arg + 1);
-	arg->len = len;
 	arg->mh_opts = mh_opts;
 	arg->lft = lft;
 	arg->iif = iif;
-	memcpy(arg->bu, bu, len);
+	memcpy(arg + 1, bu, len);
 
 	pthread_mutex_lock(&bu_worker_mutex);
 	bu_worker_count++;
+	pthread_mutex_unlock(&bu_worker_mutex);
+
 	if (pthread_create(&worker, NULL, ha_recv_bu_worker, arg)) {
-		free(arg);
+		free (arg);
+		pthread_mutex_lock(&bu_worker_mutex);
 		if (--bu_worker_count == 0)
 			pthread_cond_signal(&cond);
-	} else
-		pthread_detach(worker);
-	pthread_mutex_unlock(&bu_worker_mutex);
+		pthread_mutex_unlock(&bu_worker_mutex);
+	}
 }
 
 static struct mh_handler ha_bu_handler = {
@@ -964,12 +1008,12 @@ int ha_init(void)
 void ha_cleanup(void)
 {
 	mh_handler_dereg(IP6_MH_TYPE_BU, &ha_bu_handler);
-	icmp6_handler_dereg(ND_ROUTER_ADVERT, &ha_ra_handler);
 	pthread_mutex_lock(&bu_worker_mutex);
 	if (bu_worker_count)
 		pthread_cond_wait(&cond, &bu_worker_mutex);
 	pthread_mutex_unlock(&bu_worker_mutex);
 	bcache_flush();
+	icmp6_handler_dereg(ND_ROUTER_ADVERT, &ha_ra_handler);
 	rule_del(NULL, RT6_TABLE_MIP6,
 		 IP6_RULE_PRIO_MIP6_FWD, RTN_UNICAST,
 		 &in6addr_any, 0, &in6addr_any, 0);

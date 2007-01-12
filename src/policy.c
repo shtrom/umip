@@ -1,14 +1,12 @@
 /*
- * $Id: policy.c 1.100 06/05/07 21:52:43+03:00 anttit@tcs.hut.fi $
+ * $Id: policy.c 1.83 05/12/10 03:16:14+02:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
- * Authors: Ville Nuorvala <vnuorval@tcs.hut.fi>,
- *          Henrik Petander <petander@tcs.hut.fi>
+ * Authors: Henrik Petander <petander@tcs.hut.fi>,
+ *          Ville Nuorvala <vnuorval@tcs.hut.fi>,
  *
- *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2004 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -29,9 +27,18 @@
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
+#ifdef HAVE_LIBPTHREAD
 #include <pthread.h>
+#else
+#error "POSIX Thread Library required!"
+#endif
+#include <syslog.h>
 #include <errno.h>
+#ifdef HAVE_NETINET_IP6MH_H
 #include <netinet/ip6mh.h>
+#else
+#include <netinet-ip6mh.h>
+#endif
 
 #include "debug.h"
 #include "mh.h"
@@ -42,93 +49,111 @@
 #include "policy.h"
 #include "hash.h"
 
+#define POL_DEBUG_LEVEL 0
+
 #define POLICY_ACL_HASHSIZE 32
 
 pthread_rwlock_t policy_lock;
 struct hash policy_bind_acl_hash;
 int def_bind_policy = IP6_MH_BAS_PROHIBIT;
 
-/**
- * default_best_iface - select best interface during handoff
- * @hoa: MN's home address
- * @ha: HA's address
- * @pref_interface: preferred interface
- *
- * Return interface index of preferred interface.
- **/
-int default_best_iface(const struct in6_addr *hoa,
-		       const struct in6_addr *ha, int pref_iface)
+int default_best_iface(const struct home_addr_info *hai, 
+		       const struct md_inet6_iface *pref_iface, 
+		       struct list_head *iface_list,
+		       struct md_inet6_iface **best_iface)
 {
-	return 0;
-}
+	struct list_head *list;
+	int err = -ENODEV;
 
-/**
- * default_best_coa - select best CoA duning handoff
- * @hoa: MN's home address
- * @ha: HA's address
- * @iif: required interface
- * @pref_coa: preferred CoA
- * @coa: suggested CoA
- *
- * Return iif if a CoA is available and store the address in @coa 
- **/
-int default_best_coa(const struct in6_addr *hoa,
-		     const struct in6_addr *ha, int iif,
-		     const struct in6_addr *pref_coa,
-		     struct in6_addr *coa)
+	*best_iface = NULL;
+
+	list_for_each(list, iface_list) {
+		struct md_inet6_iface *iface;
+		iface = list_entry(list, struct md_inet6_iface, list);
+		if (!list_empty(&iface->coas) && 
+		    !list_empty(&iface->default_rtr) &&
+		    ((*best_iface) == NULL || 
+		     (*best_iface)->preference > iface->preference ||
+		     ((*best_iface)->preference == iface->preference &&
+		     iface == pref_iface))) {
+			*best_iface = iface;
+			err = 0;
+		}
+	}
+	return err;
+}
+		      
+int default_best_coa(const struct home_addr_info *hai,
+		     const struct md_coa *pref_coa,
+		     struct list_head *coa_list,
+		     struct md_coa **best_coa)
 {
-	return 0;
+	struct list_head *list;
+	if (pref_coa == NULL) {
+		list_for_each(list, coa_list) {
+			struct md_coa *coa;
+			coa = list_entry(list, struct md_coa, list);
+			if (tsisset(coa->valid_time)) {
+				*best_coa = coa;
+				return 0;
+			}
+		}
+	} else {
+		list_for_each(list, pref_coa->list.prev) {
+			struct md_coa *coa;
+			if (list == coa_list)
+				continue;
+			coa = list_entry(list, struct md_coa, list);
+			if (tsisset(coa->valid_time)) {
+				*best_coa = coa;
+				return 0;
+			}
+		}
+	}
+	*best_coa = NULL;
+	return -EADDRNOTAVAIL;
 }
 
 /**
  * default_max_binding_life - binding lifetime policy
- * @remote_hoa: remote MN's home address
- * @remote_coa: remote MN's care-of address
- * @local_addr: local address
- * @bu: Binding Update message 
+ * @hoa: MN's home address
+ * @coa: MN's care-of address
  * @suggested: suggested lifetime
  * @lifetime: granted lifetime
  *
  * Stores configurable maximum lifetime for a binding in @lifetime.
- * Returns 1 if successful, otherwise 0.
  **/
-int default_max_binding_life(const struct in6_addr *remote_hoa,
-			     const struct in6_addr *remote_coa,
-			     const struct in6_addr *local_addr,
+int default_max_binding_life(const struct in6_addr_bundle *out_addrs,
 			     const struct ip6_mh_binding_update *bu, 
-			     ssize_t len,
+			     const struct mh_options *opts,
 			     const struct timespec *suggested,
 			     struct timespec *lifetime)
 {
-	if (bu->ip6mhbu_flags & IP6_MH_BU_HOME) {
-		tssetsec(*lifetime, conf.HaMaxBindingLife);
-		return 1;
-	}
+	if (bu->ip6mhbu_flags & IP6_MH_BU_HOME)
+		tssetsec(*lifetime, conf.MaxBindingLife);
+	else
+		*lifetime = *suggested;
 	return 0;
 }
 
 /**
  * default_discard_binding - check for discard policy
- * @remote_hoa: remote MN's home address
- * @remote_coa: remote MN's care-of address
- * @local_addr: local address
+ * @out_addrs: address bundle
  * @bu: binding update
  *
  * Checks if there is a policy to discard this BU.  Valid return
  * values are %IP6_MH_BAS_ACCEPTED, %IP6_MH_BAS_UNSPECIFIED, and
  * %IP6_MH_BAS_PROHIBIT.
  **/
-int default_discard_binding(const struct in6_addr *remote_hoa,
-			    const struct in6_addr *remote_coa,
-			    const struct in6_addr *local_addr,
-			    const struct ip6_mh_binding_update *bu,
-			    ssize_t len)
+int default_discard_binding(const struct in6_addr_bundle *out_addrs,
+			    const struct ip6_mh_binding_update *bu, 
+			    const struct mh_options *opts)
 {
 	int ret = def_bind_policy;
 	struct policy_bind_acl_entry *acl;
 
 	pthread_rwlock_rdlock(&policy_lock);
-	acl = hash_get(&policy_bind_acl_hash, NULL, remote_hoa);
+	acl = hash_get(&policy_bind_acl_hash, NULL, out_addrs->dst);
 	if (acl != NULL) {
 		ret = acl->bind_policy;
 	}
@@ -138,74 +163,57 @@ int default_discard_binding(const struct in6_addr *remote_hoa,
 
 /**
  * policy_use_bravd - use Binding refresh advice
- * @remote_hoa: remote MN's home address
- * @remote_coa: remote MN's care-of address
- * @local_addr: local address
- * @lft: lifetime of binding
- * @refersh: used for storing refresh interval returned by policy
  *
  * Checks if a Binding Refresh Advice should be inserted in a Binding
- * Ack.  Returns 0 if BRA should not be used.  Stores proposed refresh
- * advice in @refresh,
+ * Ack.  Returns 0 if BRA should not be used, or refresh value in
+ * seconds.
  **/
-int default_use_bradv(const struct in6_addr *remote_hoa,
-		      const struct in6_addr *remote_coa,
-		      const struct in6_addr *local_addr,
-		      const struct timespec *lft,
-		      struct timespec *refresh)
+int default_use_bradv(const struct in6_addr *hoa, const struct in6_addr *coa,
+		      const struct timespec *lft, struct timespec *refresh)
 {
 	return 0;
 }
 
 /**
  * default_use_keymgm - use K-bit
- * @remote_addr: address of remote node
- * @local_addr: address of local node
+ * @addrs: address bundle
  *
  * Determine whether to use the Key Management Mobility Capability bit
- * for giver addresses.
+ * for addresses given in @addrs.
  **/
-int default_use_keymgm(const struct in6_addr *remote_addr,
-		       const struct in6_addr *local_addr)
+int default_use_keymgm(const struct in6_addr_bundle *out_addrs)
 {
 	return 0;
 }
 
 /**
  * policy_accept_inet6_iface - use interface for MIPv6
- * @iif: interface index
+ * @ifindex: interface index
  *
- * Determine whether to allow movement events from interface @ifindex or not.
- * Return 0, if unacceptable, otherwise a positive preference value,
- * 1 being the most preferrable.
+ * Determine whether to allow movement events from interface @ifindex or not
  **/
-int default_accept_inet6_iface(int iif)
+int default_accept_inet6_iface(const int iif, int *preference)
 {
 	struct list_head *list;
+
+	*preference = POL_MN_IF_DEF_PREFERENCE;
+	
 	list_for_each(list, &conf.net_ifaces) {
 		struct net_iface *nif;
 		nif = list_entry(list, struct net_iface, list);
 		if (nif->ifindex == iif) {
-			if (is_if_mn(nif)) 
-				return nif->mn_if_preference;
-			return 0;
+			if (is_mn()) {
+				*preference = nif->mn_if_preference;
+				return 1;
+			} else
+				return 0;
 		}
 	}
 	return conf.MnUseAllInterfaces;
 }
 
-
-/**
- * default_accept_ra - check if RA is acceptable
- * @iif: the incoming interface index
- * @saddr: the source of the RA
- * @daddr: the destination of the RA
- * @ra: the RA message
- *
- * Determine whether to accept RA or not
- **/
-
-int default_accept_ra(int iif, const struct in6_addr *saddr,
+int default_accept_ra(const int iif,
+		      const struct in6_addr *saddr,
 		      const struct in6_addr *daddr,
 		      const struct nd_router_advert *ra)
 {
@@ -213,18 +221,19 @@ int default_accept_ra(int iif, const struct in6_addr *saddr,
 }
 
 /**
- * default_best_ro_coa - get a suitable care-of address for RO
+ * default_get_ro_coa - get a suitable care-of address for RO
  * @hoa: own home address
  * @cn: CN address
  * @coa: care-of address
- *
- * Returns ifindex of the CoA, or <= 0 if no CoA is available,
  **/
-int default_best_ro_coa(const struct in6_addr *hoa,
-			const struct in6_addr *cn,
-			struct in6_addr *coa)
+int default_get_ro_coa(const struct in6_addr *hoa,
+		       const struct in6_addr *cn, struct in6_addr *coa)
 {
-	return 0;
+	int ret;
+	if ((ret = mn_get_home_reg_coa(hoa, coa)) < 0){
+		BUG("no home address info");
+	}
+	return ret;
 }
 
 static int policy_bind_acle_cleanup(void *data, void *arg)
@@ -248,7 +257,7 @@ void policy_cleanup(void)
 	pthread_rwlock_unlock(&policy_lock);
 }
 
-static int policy_bind_acl_add(struct policy_bind_acl_entry *acl)
+int policy_bind_acl_add(struct policy_bind_acl_entry *acl)
 {
 	int err;
 	err = hash_add(&policy_bind_acl_hash, acl, NULL, &acl->hoa);
@@ -258,7 +267,7 @@ static int policy_bind_acl_add(struct policy_bind_acl_entry *acl)
 	return err;
 }
 
-static int policy_bind_acl_config(void)
+int policy_bind_acl_config(void)
 {
 	struct list_head *list, *n;
 	int err;

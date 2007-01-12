@@ -1,15 +1,13 @@
 /*
- * $Id: retrout.c 1.141 06/05/07 21:52:43+03:00 anttit@tcs.hut.fi $
+ * $Id: retrout.c 1.110 05/12/10 03:59:28+02:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
  * Authors:
  *  Henrik Petander <petander@tcs.hut.fi>
  *  Antti Tuominen <anttit@tcs.hut.fi>
- *  Ville Nuorvala <vnuorval@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2005 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -30,15 +28,16 @@
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
+#include <syslog.h>
 #include <time.h>
+#ifdef HAVE_LIBPTHREAD
 #include <pthread.h>
-#include <netinet/in.h>
-#include <netinet/ip6mh.h>
-#ifdef HAVE_LIBCRYPTO
-#include <openssl/rand.h>
 #else
-#include "crypto.h"
+#error "POSIX Thread Library required!"
 #endif
+#include <netinet/in.h>
+#include <netinet-ip6mh.h>
+#include <openssl/rand.h>
 
 #include "debug.h"
 #include "mipv6.h"
@@ -48,8 +47,6 @@
 #include "xfrm.h"
 #include "mn.h"
 #include "keygen.h"
-#include "retrout.h"
-#include "conf.h"
 
 #define RR_DEBUG_LEVEL 1
 
@@ -59,53 +56,245 @@
 #define RRDBG(...) 
 #endif /* RRDBG */
 
-struct rrlentry {
-	struct tq_elem tqe;            /* Timer queue entry */
-	struct in6_addr peer;     /* CN address */
-	struct in6_addr own1;
-	struct in6_addr own2;
-	int iif;
-
-	struct timespec lastsent;
-	struct timespec expires;
-	struct timespec delay;	       /* call back time */
-
-	int resend_count; /* Number of consecutive [HC]oTI's sent */
-
-	void (*callback)(struct tq_elem *);
-
-	uint8_t type; /* HOT entry / COT entry */
-	uint8_t wait;
-	uint16_t index;
-	uint8_t cookie[8];
-	uint8_t kgen_token[8];
-
-	struct list_head home_addrs; /* List of HoAs for CoT entry */
-};
-
-enum {
-	COT_ENTRY,
-	HOT_ENTRY
-};
-
-struct hash rrl_hash;
-
 const struct timespec mn_test_init_delay_ts = { MN_TEST_INIT_DELAY, 0 };
 #define MN_TEST_INIT_DELAY_TS mn_test_init_delay_ts
 
-static void ti_resend(struct tq_elem *tqe);
-
-static int rrl_init(void)
+static inline int cookiecmp(const uint8_t *cookie_a, const uint8_t *cookie_b)
 {
-	return hash_init(&rrl_hash, DOUBLE_ADDR, 32);
+	return memcmp(cookie_a, cookie_b, 8);
 }
 
-static int rre_co_add_hoa(struct rrlentry *cote, struct in6_addr *addr)
+static void mn_send_hoti(struct bulentry *bule, int oif)
+{
+	struct iovec iov;
+	struct ip6_mh_home_test_init *hti;
+	struct in6_addr_bundle out;
+
+	out.src = &bule->hoa;
+	out.dst = &bule->peer_addr;
+	out.local_coa = NULL;
+	out.remote_coa = NULL;
+
+	hti = mh_create(&iov, IP6_MH_TYPE_HOTI);
+	if (!hti)
+		return;
+
+	RAND_pseudo_bytes((uint8_t *)hti->ip6mhhti_cookie, 8);
+	cookiecpy(bule->rr.cookie, hti->ip6mhhti_cookie);
+
+	mh_send(&out, &iov, 1, NULL, oif);
+	free(iov.iov_base);
+}
+
+static void mn_send_coti(struct bulentry *bule, int oif)
+{
+	struct iovec iov;
+	struct ip6_mh_careof_test_init *cti;
+	struct in6_addr_bundle out;
+
+	out.src = &bule->coa;
+	out.dst = &bule->peer_addr;
+	out.local_coa = NULL;
+	out.remote_coa = NULL;
+
+	cti = mh_create(&iov, IP6_MH_TYPE_COTI);
+	if (!cti)
+		return;
+
+	RAND_pseudo_bytes((uint8_t *)cti->ip6mhcti_cookie, 8);
+	cookiecpy(bule->rr.cookie, cti->ip6mhcti_cookie);
+	/*
+	 * Record information in the Binding Update List:
+	 * - source address (careof)
+	 * - destination address (cn)
+	 * - send time
+	 * - cookie (hti->mhcti_cookie)
+	 */
+
+	mh_send(&out, &iov, 1, NULL, oif);
+	free(iov.iov_base);
+}
+
+/* Resend HoTi or CoTi, if we haven't got HoT or CoT */ 
+static void ti_resend(struct tq_elem *tqe)
+{
+	struct timespec now;
+	struct bulentry *bule;
+	struct bulentry *home_bule = NULL;
+	struct list_head *list, *n;
+
+	pthread_rwlock_wrlock(&mn_lock);
+
+	if (task_interrupted()) {
+		pthread_rwlock_unlock(&mn_lock);
+		return;
+	}
+	bule = tq_data(tqe, struct bulentry, tqe);
+
+	clock_gettime(CLOCK_REALTIME, &now);
+	if (bule->type == COT_ENTRY) {
+		list_for_each_safe(list, n, &bule->rr.home_addrs) {
+			struct addr_holder *ah;
+			ah = list_entry(list, struct addr_holder, list);
+
+			home_bule = bul_get(NULL, &ah->addr, &bule->peer_addr);
+
+			if (home_bule == NULL)
+				goto out;
+
+			if (!IN6_ARE_ADDR_EQUAL(&bule->coa, &home_bule->coa)) {
+				/* TODO: If some of the home addresses
+				 * still use the CoA, this works
+				 * incorrectly */
+				goto out;
+			}
+			if (tsisset(home_bule->expires) &&
+			    tsafter(home_bule->expires, now))
+				goto out;
+		}
+
+		bule->rr.wait_cot = 1;
+
+		mn_send_coti(bule, bule->if_coa);
+	} else if (bule->type == HOT_ENTRY) { 
+		if (tsisset(bule->expires) && tsafter(bule->expires, now))
+			goto out;
+
+		mn_send_hoti(bule, bule->home->hoa.iif);
+	}
+
+	tsadd(bule->delay, bule->delay, bule->delay); /* 2 * bule->delay */
+	bule->delay = tsmin(bule->delay, MAX_BINDACK_TIMEOUT_TS);
+	bule->lastsent = now;
+
+	bul_update_timer(bule);
+
+	pthread_rwlock_unlock(&mn_lock);
+
+	return;
+
+ out:
+	bul_delete(bule);
+	pthread_rwlock_unlock(&mn_lock);
+}
+
+static inline void set_refresh(struct timespec *delay, 
+			       const struct timespec *exp,
+			       const struct timespec *lft)
+{
+	struct timespec rlft;
+
+	tssetsec(rlft, lft->tv_sec * BU_REFRESH_DELAY);
+	tssub(*exp, *lft, *delay);
+	tsadd(*delay, rlft, *delay);
+}
+
+/* Renew HoTi before HoT key gen. token expires to optimize handoff
+ * performance, if kernel bule has been recently used
+ */
+void mn_rr_check_entry(struct tq_elem *tqe)
+{
+	struct bulentry *bule;
+	struct bulentry *bule_cot = NULL;
+	struct timespec now, refresh_delay;
+	long last_used;
+	
+	pthread_rwlock_wrlock(&mn_lock);
+
+	if (task_interrupted()) {
+		pthread_rwlock_unlock(&mn_lock);
+		return;
+	}
+	bule = tq_data(tqe, struct bulentry, tqe);
+
+	clock_gettime(CLOCK_REALTIME, &now);
+
+	last_used = xfrm_last_used(&bule->peer_addr, &bule->hoa,
+				   IPPROTO_DSTOPTS, &now);
+
+	set_refresh(&refresh_delay, &bule->expires, &bule->lifetime);
+
+	if (last_used >= 0 && last_used < MN_RO_RESTART_THRESHOLD) {
+		struct timespec kgen_refresh_delay;
+
+		set_refresh(&kgen_refresh_delay, &bule->rr.kgen_expires,
+			    &MAX_TOKEN_LIFETIME_TS);
+		RRDBG("now                %d\n", now.tv_sec);
+		RRDBG("kgen_refresh_delay %d\n", kgen_refresh_delay.tv_sec);
+		RRDBG("refresh_delay      %d\n", refresh_delay.tv_sec);
+
+		if (tsafter(kgen_refresh_delay, now)) {
+			RRDBG("renewing HoTi\n");
+			bule->lastsent = now;
+			bule->type = HOT_ENTRY;
+			bule->callback = ti_resend; 
+			bule->lifetime = MAX_RR_BINDING_LIFETIME_TS;
+			/* XXX: original retransmit interval is too short */
+			bule->delay = MN_TEST_INIT_DELAY_TS;
+			bule->rr.wait_hot = 1;
+			if (tsafter(refresh_delay, now))
+				bule->rr.do_send_bu = 1;
+			else
+				bule->rr.do_send_bu = 0;
+			mn_send_hoti(bule, bule->home->hoa.iif);
+			bul_update_timer(bule);
+
+		} else if (tsafter(refresh_delay, now)) {
+			bule_cot = bul_get(NULL, &bule->coa, &bule->peer_addr);
+			if (bule_cot == NULL) {
+				BUG("no COT bulentry");
+				pthread_rwlock_unlock(&mn_lock);
+				return;
+			
+			} else if (bule_cot && bule_cot->rr.wait_cot) {
+				/* Wait for CoT */
+				bule->delay = MN_TEST_INIT_DELAY_TS;
+				bule->lifetime = MAX_RR_BINDING_LIFETIME_TS;
+				bul_update_timer(bule);
+				pthread_rwlock_unlock(&mn_lock);
+				return;
+				/* Foreign Reg BU case */
+			} else if (bule_cot && !bule_cot->rr.wait_cot) {
+				bule->rr.coa_nonce_ind = bule_cot->rr.coa_nonce_ind;
+				rr_mn_calc_Kbm(bule->rr.kgen_token,
+					       bule_cot->rr.kgen_token, 
+					       bule->bind_key);
+			
+				mn_send_cn_bu(bule);
+			}
+		}
+	} else {
+		RRDBG("now           %d\n", now.tv_sec);
+		RRDBG("refresh_delay %d\n", refresh_delay.tv_sec);
+		if (tsbefore(refresh_delay, now)) {
+			/* enough lifetime left, don't delete bule */
+			bule->type = BUL_ENTRY;
+			tssub(bule->expires, bule->lifetime, bule->lastsent);
+			tssub(refresh_delay, bule->lastsent, bule->delay);
+			bule->callback = mn_rr_check_entry; 
+			RRDBG("expires       %d\n", bule->expires.tv_sec);
+			RRDBG("lastsent      %d\n", bule->lastsent.tv_sec);
+			RRDBG("refresh_delay %d\n", refresh_delay.tv_sec);
+			RRDBG("delay         %d\n", bule->delay.tv_sec);
+			bul_update_timer(bule);
+		} else {
+			RRDBG("deleting unused binding\n");
+			bule_cot = bul_get(NULL, &bule->coa, &bule->peer_addr);
+			if (bule_cot != NULL) 
+				bul_delete(bule_cot);
+
+			bul_delete(bule);
+		}
+	}
+	pthread_rwlock_unlock(&mn_lock);
+}
+
+static int add_hoa_to_bule(struct bulentry *bule, struct in6_addr *addr)
 {
 	struct list_head *list;
 	struct addr_holder *addr_c;
 
-	list_for_each(list, &cote->home_addrs) {
+	list_for_each(list, &bule->rr.home_addrs) {
 		addr_c = list_entry(list, struct addr_holder, list);
 		if (IN6_ARE_ADDR_EQUAL(addr, &addr_c->addr)) 
 			return 1;
@@ -114,552 +303,349 @@ static int rre_co_add_hoa(struct rrlentry *cote, struct in6_addr *addr)
 	if (!addr_c) 
 		return -1;
 	addr_c->addr = *addr;
-	list_add(&addr_c->list, &cote->home_addrs);
-
-	return 0;
-}
-static void rrl_delete(struct rrlentry *rre);
-
-static struct rrlentry *rre_create(int type, struct in6_addr *own1, int iif,
-				   struct in6_addr *peer,
-				   struct in6_addr *own2)
-{
-	struct rrlentry *rre;
-
-	dbg("%x:%x:%x:%x:%x:%x:%x:%x\n", NIP6ADDR(own1));
-	dbg("%x:%x:%x:%x:%x:%x:%x:%x\n", NIP6ADDR(peer));
-
-	rre = malloc(sizeof(*rre));
-
-	if (!rre) {
-		RRDBG("Malloc failed\n");
-		return NULL;
-	}
-	memset(rre, 0, sizeof(*rre));
-	INIT_LIST_HEAD(&rre->tqe.list);
-	INIT_LIST_HEAD(&rre->home_addrs);
-
-	if (type == COT_ENTRY) {
-		if (rre_co_add_hoa(rre, own2) < 0) {
-			free(rre);
-			return NULL;
-		}
-	}
-	rre->type = type;
-	rre->own1 = *own1;
-	rre->peer = *peer;
-	rre->own2 = *own2;
-	rre->iif = iif;
-
-	if (hash_add(&rrl_hash, rre, &rre->own1, &rre->peer) < 0) {
-		rrl_delete(rre);
-		return NULL;
-	}
-	return rre;
-}
-
-static struct rrlentry *rrl_get(int type, const struct in6_addr *our_addr,
-				const struct in6_addr *peer_addr)
-{
-	struct rrlentry *rre;
-
-	dbg("%x:%x:%x:%x:%x:%x:%x:%x\n", NIP6ADDR(our_addr));
-	dbg("%x:%x:%x:%x:%x:%x:%x:%x\n", NIP6ADDR(peer_addr));
-
-	assert(our_addr);
-
-	rre = (struct rrlentry *)hash_get(&rrl_hash, our_addr, peer_addr);
-
-	if (rre != NULL && rre->type != type)
-		return NULL;
-
-	return rre;
-}
-
-static int rrl_iterate(int (* func)(void *, void *), void *arg)
-{
-	return hash_iterate(&rrl_hash, func, arg);
-}
-
-static void rrl_delete(struct rrlentry *rre)
-{
-	assert(rre);
-
-	TRACE;
-
-	del_task(&rre->tqe);
-	hash_delete(&rrl_hash, &rre->own1, &rre->peer);
-
-	if (rre->type == COT_ENTRY) {
-		struct list_head *list, *n;
-
-		list_for_each_safe(list, n, &rre->home_addrs) {
-			list_del(list);
-			free(list_entry(list, struct addr_holder, list));
-		}
-	}
-
-	free(rre);
-}
-
-static void rrl_delete_co_hoa(const struct in6_addr *coa,
-			      const struct in6_addr *peer,
-			      const struct in6_addr *hoa)
-{
-	struct rrlentry *rre = rrl_get(COT_ENTRY, coa, peer);
-
-	TRACE;
-
-	if (rre != NULL) {
-		struct list_head *l, *n;
-		list_for_each_safe(l, n, &rre->home_addrs) {
-			struct addr_holder *ah;
-			ah = list_entry(l, struct addr_holder, list);
-
-			if (!IN6_ARE_ADDR_EQUAL(hoa, &ah->addr))
-				continue;
-
-			list_del(l);
-			free(ah);
-		}
-		if (list_empty(&rre->home_addrs))
-			rrl_delete(rre);
-	}
-}
-
-static void rrl_update_timer(struct rrlentry *rre)
-{
-	struct timespec timer_expire;
-
-	tsadd(rre->delay, rre->lastsent, timer_expire);
-	add_task_abs(&timer_expire, &rre->tqe, rre->callback);
-}
-
-static int rre_dump(void *entry, void *os)
-{
-	struct rrlentry *e = (struct rrlentry *)entry;
-	FILE *out = (FILE *)os;
-	char buf[IF_NAMESIZE + 1];
-	char *dev = if_indextoname(e->iif, buf);
-	struct timespec ts, ts_now;
-
-	fprintf(out, "== Return Routability Entry (%s) == \n",
-		e->type == COT_ENTRY ? "COT_ENTRY" : "HOT_ENTRY");
-
-	fprintf(out, " %s %x:%x:%x:%x:%x:%x:%x:%x\n",
-		(e->type == COT_ENTRY) ? "CoA" : "HoA",
-		NIP6ADDR(&e->own1));
-	
-	fprintf(out, " CN  %x:%x:%x:%x:%x:%x:%x:%x\n", NIP6ADDR(&e->peer));
-
-	if (e->type == COT_ENTRY) {
-		struct list_head *l;
-		list_for_each(l, &e->home_addrs) {
-			struct addr_holder *a;
-			a = list_entry(l, struct addr_holder, list);
-			fprintf(out, " HoA %x:%x:%x:%x:%x:%x:%x:%x\n",
-				NIP6ADDR(&a->addr));
-		}
-	} else {
-		fprintf(out, " CoA %x:%x:%x:%x:%x:%x:%x:%x\n",
-			NIP6ADDR(&e->own2));
-	}
-
-	if (!dev || strlen(dev) == 0)
-		fprintf(out, " Interface (%d)\n", e->iif);
-	else
-		fprintf(out, " Interface %s\n", dev);
-
-	clock_gettime(CLOCK_REALTIME, &ts_now);
-
-	fprintf(out, " resend %d", e->resend_count);
-	fprintf(out, " delay %ld (after %ld seconds)", e->delay.tv_sec,
-		e->lastsent.tv_sec + e->delay.tv_sec - ts_now.tv_sec);
-
-	tssub(e->expires, ts_now, ts);
-	fprintf(out, " expires in %ld seconds\n", ts.tv_sec);
-
-	fflush(out);
+	list_add(&addr_c->list, &bule->rr.home_addrs);
 
 	return 0;
 }
 
-void rrl_dump(FILE *os)
+static struct bulentry *create_cot_bule(struct in6_addr *coa, int coa_if,
+					struct in6_addr *cn_addr, 
+					struct in6_addr *home)
 {
-	rrl_iterate(rre_dump, os);
-}
+	struct bulentry *bule = create_bule(NULL);
 
-static inline int cookiecmp(const uint8_t *cookie_a, const uint8_t *cookie_b)
-{
-	return memcmp(cookie_a, cookie_b, 8);
-}
-
-static void mn_send_hoti(struct in6_addr *hoa, struct in6_addr *peer,
-			 uint8_t *cookie, int oif)
-{
-	struct iovec iov;
-	struct ip6_mh_home_test_init *hti;
-	struct in6_addr_bundle out;
-
-	out.src = hoa;
-	out.dst = peer;
-	out.local_coa = NULL;
-	out.remote_coa = NULL;
-
-	hti = mh_create(&iov, IP6_MH_TYPE_HOTI);
-	if (!hti)
-		return;
-
-#ifdef HAVE_LIBCRYPTO
-	RAND_pseudo_bytes((uint8_t *)hti->ip6mhhti_cookie, 8);
-#else
-	random_bytes((uint8_t *)hti->ip6mhhti_cookie, 8);
-#endif
-	cookiecpy(cookie, hti->ip6mhhti_cookie);
-
-	mh_send(&out, &iov, 1, NULL, oif);
-	free(iov.iov_base);
-}
-
-static void mn_send_coti(struct in6_addr *coa, struct in6_addr *peer,
-			 uint8_t *cookie, int oif)
-{
-	struct iovec iov;
-	struct ip6_mh_careof_test_init *cti;
-	struct in6_addr_bundle out;
-
-	out.src = coa;
-	out.dst = peer;
-	out.local_coa = NULL;
-	out.remote_coa = NULL;
-
-	cti = mh_create(&iov, IP6_MH_TYPE_COTI);
-	if (!cti)
-		return;
-
-#ifdef HAVE_LIBCRYPTO
-	RAND_pseudo_bytes((uint8_t *)cti->ip6mhcti_cookie, 8);
-#else
-	random_bytes((uint8_t *)cti->ip6mhcti_cookie, 8);
-#endif
-	cookiecpy(cookie, cti->ip6mhcti_cookie);
-
-	mh_send(&out, &iov, 1, NULL, oif);
-	free(iov.iov_base);
-}
-
-/* Resend HoTI or CoTI, if we haven't got HoT or CoT */ 
-static void ti_resend(struct tq_elem *tqe)
-{
-	struct rrlentry *rre;
-
-	pthread_rwlock_wrlock(&mn_lock);
-
-	if (task_interrupted()) {
-		pthread_rwlock_unlock(&mn_lock);
-		return;
+	if (!bule) {
+		RRDBG("Malloc failed in create_cot_bule\n");
+		return NULL;
 	}
-	rre = tq_data(tqe, struct rrlentry, tqe);
+	bule->hoa = *coa;
+	bule->peer_addr = *cn_addr;
 
-	clock_gettime(CLOCK_REALTIME, &rre->lastsent);
+	/* XXX: original retransmit interval is too short */
+	bule->delay = MN_TEST_INIT_DELAY_TS;
+	bule->lifetime = MAX_TOKEN_LIFETIME_TS;
+	bule->callback = ti_resend;
+	bule->coa = *coa;
+	bule->if_coa = coa_if;
+	bule->type = COT_ENTRY;
 
-	if (rre->type == COT_ENTRY)
-		mn_send_coti(&rre->own1, &rre->peer, rre->cookie, rre->iif);
-	else
-		mn_send_hoti(&rre->own1, &rre->peer, rre->cookie, rre->iif);
-
-	/* exponential backoff */
-	tsadd(rre->delay, rre->delay, rre->delay); /* 2 * rre->delay */
-	rre->delay = tsmin(rre->delay, MAX_BINDACK_TIMEOUT_TS);
-	rre->resend_count++;
-	rrl_update_timer(rre);
-
-	pthread_rwlock_unlock(&mn_lock);
-}
-
-static void rre_reset(struct rrlentry *rre, struct timespec *now)
-{
-	rre->lastsent = *now;
-	rre->wait = 1;
-	rre->resend_count = 0;
-	rre->delay = MN_TEST_INIT_DELAY_TS;
-	rre->callback = ti_resend;
-	rre->expires = rre->lastsent;
-}
-
-/* Renew HoTI before home keygen token expires to optimize handoff
- * performance, if kernel bule has been recently used
- */
-static void mn_rr_homekgt_refresh(struct tq_elem *tqe)
-{
-	struct rrlentry *rre_ho;
-	struct timespec now;
-	long last_used;
-
-	pthread_rwlock_wrlock(&mn_lock);
-
-	if (task_interrupted()) {
-		pthread_rwlock_unlock(&mn_lock);
-		return;
+	if (add_hoa_to_bule(bule, home) < 0 || bul_add(bule) < 0) {
+		free(bule);
+		return NULL;
 	}
-	rre_ho = tq_data(tqe, struct rrlentry, tqe);
-
-	clock_gettime(CLOCK_REALTIME, &now);
-
-	last_used = mn_bule_xfrm_last_used(&rre_ho->peer, &rre_ho->own1, &now);
-
-	if (last_used >= 0 && last_used < MN_RO_RESTART_THRESHOLD) {
-		rre_reset(rre_ho, &now);
-		mn_send_hoti(&rre_ho->own1, &rre_ho->peer,
-			     rre_ho->cookie, rre_ho->iif);
-		rrl_update_timer(rre_ho);
-	} else
-		rrl_delete(rre_ho);
-
-	pthread_rwlock_unlock(&mn_lock);
-}
-
-/* Renew CoTI before home keygen token expires to optimize handoff
- * performance, if kernel bule has been recently used
- */
-static void mn_rr_careofkgt_refresh(struct tq_elem *tqe)
-{
-	struct rrlentry *rre_co;
-	struct timespec now;
-	struct list_head *l;
-	int refresh = 0;
-	pthread_rwlock_wrlock(&mn_lock);
-
-	if (task_interrupted()) {
-		pthread_rwlock_unlock(&mn_lock);
-		return;
-	}
-	rre_co = tq_data(tqe, struct rrlentry, tqe);
-
-	clock_gettime(CLOCK_REALTIME, &now);
-
-	list_for_each(l, &rre_co->home_addrs) {
-		struct addr_holder *ah;
-		long last_used;
-
-		ah = list_entry(l, struct addr_holder, list);
-
-		last_used = xfrm_last_used(&rre_co->peer, &ah->addr,
-					   IPPROTO_DSTOPTS, &now);
-		
-		if (last_used >= 0 && last_used < MN_RO_RESTART_THRESHOLD) {
-			rre_reset(rre_co, &now);
-			mn_send_coti(&rre_co->own1, &rre_co->peer,
-				     rre_co->cookie, rre_co->iif);
-			rrl_update_timer(rre_co);
-			refresh = 1;
-			break;
-		}
-	}
-	if (!refresh)
-		rrl_delete(rre_co);
-
-	pthread_rwlock_unlock(&mn_lock);
+	return bule;
 }
 
 /* Checks if COT/HOT token is valid  */
-static inline int mn_rr_token_valid(struct rrlentry *rre, struct timespec *now)
+static inline int mn_rr_token_valid(struct bulentry *bule)
 {
-	if (!rre->wait && tsbefore(rre->expires, *now))
+	struct timespec now;
+
+	clock_gettime(CLOCK_REALTIME, &now);
+	if (tsbefore(bule->rr.kgen_expires, now))
 		return 1;
 
 	return 0;
 }
 
 /** 
- * mn_rr_cond_start_hot - send HoTI, if it is necessary
- * bule: bul entry for RO binding created in start_ro  
- * uncond: set this to override all freshness checks and send HoTI in any case
+ * mn_rr_cond_start_hot - send HoTi, if it is necessary
+ * v_bule: bul entry for RO binding created in start_ro  
+ * uncond: set this to override all freshness checks and send HoTi in any case
  */
-static int mn_rr_cond_start_hot(struct bulentry *bule, int uncond)
+int mn_rr_cond_start_hot(void *vbule, int uncond)
 {
-	struct rrlentry *rre;
+	struct bulentry *bule = vbule;
 	struct timespec now;
 
-	assert(bule->type == BUL_ENTRY);
+	if (bule->type != BUL_ENTRY)
+		return 1;
 
-	rre = rrl_get(HOT_ENTRY, &bule->hoa, &bule->peer_addr);
-
-	clock_gettime(CLOCK_REALTIME, &now);
-
-	if (rre != NULL) {
-		rre->own2 = bule->coa;
-		if (!uncond && mn_rr_token_valid(rre, &now)) {
-			RRDBG("Home keygen token valid, no HoTI\n");
-			return 0;
-		}
-		if (rre->wait) {
-			RRDBG("HoTI already sent\n");
-			return 2;
-		}
-	} else {
-		rre = rre_create(HOT_ENTRY, &bule->hoa, bule->home->hoa.iif,
-				 &bule->peer_addr, &bule->coa);
-		if (rre == NULL)
-			return 0;
+	if (!uncond && mn_rr_token_valid(bule)) {
+		RRDBG("RR key gen token valid for HoT entry\n");
+		return 0;
 	}
-	RRDBG("Home keygen token not valid, send HoTI\n");
-	rre_reset(rre, &now);
-	mn_send_hoti(&rre->own1, &rre->peer, rre->cookie, bule->home->hoa.iif);
-	rrl_update_timer(rre);
+
+	RRDBG("RR key gen token not valid for HoT entry\n");
+
+	clock_gettime(CLOCK_REALTIME, &now);	
+	bule->type = HOT_ENTRY;
+	bule->callback = ti_resend; 
+	bule->lastsent = now;
+	bule->lifetime = MAX_RR_BINDING_LIFETIME_TS;
+	bule->delay = MN_TEST_INIT_DELAY_TS;
+	tsclear(bule->rr.kgen_expires);
+	bule->rr.wait_hot = 1;
+	bule->rr.do_send_bu = 1;
+	mn_send_hoti(bule, bule->home->hoa.iif);
+	bul_update_timer(bule);
+
 	return 1;
 }
 
 /**
- * mn_rr_cond_start_cot - send CoTI, if necessary 
+ * mn_rr_post_home_handoff - finalize RO after handoff
+ * @vbule: bulentry for CN
+ * @vhbule: bulentry from which CoA is taken
+ *
+ * Sends HoTi after tunnel with HA is ready or 
+ * dereg BU to CN after getting dereg BA from HA.
+ **/
+int mn_rr_post_home_handoff(void *vbule, void *vdereg)
+{
+	struct bulentry *bule = vbule;
+	int dereg = *(int*) vdereg; 
+
+	if (vbule == NULL)
+		return -1;
+
+	if ((bule->flags & IP6_MH_BU_HOME))
+		return 0;
+
+	/* Is HoT kgen token is still valid ? */
+	if (mn_rr_cond_start_hot(bule, 0))
+		return 0;
+
+	if (dereg) {
+		RRDBG("Returning home, no need for CoT cookie\n");
+		bule->coa = bule->hoa;
+		tsclear(bule->lifetime);
+		rr_mn_calc_Kbm(bule->rr.kgen_token, NULL, bule->bind_key);
+		bule->rr.dereg = 1;
+		mn_send_cn_bu(bule);
+	}
+
+	return 0;
+}
+
+/**
+ * mn_rr_cond_start_cot - send Coti, if necessary 
  * @bule: RO bul entry
+ * @co_bule_p: pointer to CoT bulentry or NULL
  * @coa: Care-of address for CoT
  * @ifindex: interface index for CoA
  * @uncond: send CoT even if current kgen token is fresh
  *
- * Function manages sending of CoTI in a handoff and also changes the
+ * Function manages sending of CoTi in a handoff and also changes the
  * CoA in RO bul entry.
  **/
-static int mn_rr_cond_start_cot(struct bulentry *bule, int uncond)
+int mn_rr_cond_start_cot(struct bulentry *bule, struct bulentry **co_bule_p, 
+			 struct in6_addr *coa, int ifindex, int uncond)
 {
-	struct rrlentry *rre;
 	struct timespec now;
+	struct bulentry *co_bule = NULL;
 
-	assert(bule->type == BUL_ENTRY);
-
-	rre = rrl_get(COT_ENTRY, &bule->coa, &bule->peer_addr);
-
-	clock_gettime(CLOCK_REALTIME, &now);
-
-	if (rre != NULL) {
-		if (!uncond && mn_rr_token_valid(rre, &now)) {
-			RRDBG("Care-of keygen token valid, no CoTI\n");
-			return 0;
-		}
-		if (rre->wait) {
-			RRDBG("CoTI already sent\n");
-			return 2;
-		}
-	} else {
-		rre = rre_create(COT_ENTRY, &bule->coa, bule->if_coa,
-				 &bule->peer_addr, &bule->hoa);
-		if (rre == NULL)
-			return 0;
-	}
-	if (rre_co_add_hoa(rre, &bule->hoa) < 0) {
-		RRDBG("Failed to add HoA to CoT entry\n");
+	if (co_bule_p != NULL && *co_bule_p != NULL)
+		co_bule = *co_bule_p;
+	
+	if (bule->type != BUL_ENTRY && (bule->flags & IP6_MH_BU_HOME)){
+		RRDBG("Not starting Care of test with HA\n");
 		return 0;
 	}
-	RRDBG("Care-of keygen token not valid, send CoTI\n"); 
-	rre_reset(rre, &now);
-	mn_send_coti(&rre->own1, &rre->peer, rre->cookie, rre->iif);
-	rrl_update_timer(rre);
+
+	if (co_bule == NULL) {
+		co_bule = bul_get(NULL, coa, &bule->peer_addr);
+		if (co_bule == NULL) {
+			co_bule = create_cot_bule(coa, ifindex,
+						  &bule->peer_addr, 
+						  &bule->hoa);
+			if (co_bule == NULL) {
+				RRDBG("Failed to create new CoT bulentry\n");
+				return -1;
+			}
+			RRDBG("Created new CoT bulentry for CoA\n");
+		} else {
+			if (add_hoa_to_bule(co_bule, &bule->hoa) < 0)
+				RRDBG("Failed to add HoA to CoT bule\n");
+		}
+	}
+	bule->coa = *coa;
+	bule->if_coa = ifindex;
+
+	if (!uncond && mn_rr_token_valid(co_bule)){
+		RRDBG("No need to send CoTi\n");
+		if (co_bule_p)
+			*co_bule_p = co_bule;
+		return 0;
+	}
+	if (co_bule->rr.wait_cot) {
+		RRDBG("CoTi already sent\n");
+		return 0;
+	}
+
+	co_bule->rr.wait_cot = 1;
+	bule->rr.do_send_bu = 1;
+	clock_gettime(CLOCK_REALTIME, &now);	
+	co_bule->lastsent = now;
+	co_bule->lifetime = MAX_RR_BINDING_LIFETIME_TS;
+	co_bule->delay = MN_TEST_INIT_DELAY_TS;
+	/* Invalidate cookie */
+	co_bule->rr.kgen_expires = now;
+	RRDBG("Sending CoTi\n"); 
+	mn_send_coti(co_bule, co_bule->if_coa);
+	bul_update_timer(co_bule);
+
 	return 1;
 }
 
-void mn_rr_force_refresh(struct bulentry *bule)
+/**
+ * mn_rr_start_handoff - start RR procedure after changing CoA
+ * vbule: RO bulentry
+ * vcoa: New care-of address
+ * 
+ * Function sends CoTi to CN, if MN doesn't have a fresh CoT key
+ * gen. token. If MN has a fresh CoT & HoT key gen. token, function
+ * sends a BU to CN.
+ **/
+int mn_rr_start_handoff(void *vbule, void *vcoa)
 {
-	if (bule->rr.state == RR_H_EXPIRED || bule->rr.state == RR_EXPIRED)
-		mn_rr_cond_start_hot(bule, 1);
-	if (bule->rr.state == RR_C_EXPIRED || bule->rr.state == RR_EXPIRED)
-		mn_rr_cond_start_cot(bule, 1);
-	bule->rr.state = RR_STARTED;
-}
+	struct bulentry *bule = vbule;
+	struct mn_addr *coa = vcoa;
+	struct bulentry *co_bule = NULL;
 
-void mn_rr_refresh(struct bulentry *bule)
-{
-	struct rrlentry *rre_ho, *rre_co;
+	if (vbule == NULL) return -1;
 
-	if (bule->coa_changed > 0)
-		rrl_delete_co_hoa(&bule->last_coa,
-				  &bule->peer_addr, &bule->hoa);
+	switch (bule->type) {
+	case COT_ENTRY:
+	case HOT_ENTRY:
+		RRDBG("HoT/CoT entry\n");	
+		break;
+	case NON_MIP_CN_ENTRY:
+		RRDBG("Non-MIP6 entry\n");
+		/* flush Non-MIP6 entries when returning home */
+		if (bule->home->at_home) 
+			bul_delete(bule);
+		break;
+	case BUL_ENTRY:
+		if ((bule->flags & IP6_MH_BU_HOME)) {
+			RRDBG("Home entry\n");
+			break;
+		}
 
-	if (mn_rr_cond_start_hot(bule, 0))
-		bule->rr.state = RR_STARTED;
-	if (!bule->dereg && mn_rr_cond_start_cot(bule, 0))
-		bule->rr.state = RR_STARTED;
+		/* mn_rr_cond_start_cot() may set co_bule */
+		if (mn_rr_cond_start_cot(bule, &co_bule, &coa->addr, coa->iif, 0)) {
+			RRDBG("Started RR test for CoTi\n");
+			break;
+		}
 
-	if (bule->rr.state == RR_STARTED || bule->rr.state == RR_NOT_STARTED)
-		return;
+		RRDBG("RR test not necessary for CoTi\n");
+		if (!co_bule) {
+			BUG("co_bule ptr not set");
+			break;
+		}
 
-	rre_ho = rrl_get(HOT_ENTRY, &bule->hoa, &bule->peer_addr);
-
-	if (bule->dereg) {
-		rr_mn_calc_Kbm(rre_ho->kgen_token, NULL, bule->Kbm);
-		bule->rr.state = RR_READY;
-		bule->rr.co_ni = 0;
-		return;
+		if (mn_rr_token_valid(bule)) {
+			rr_mn_calc_Kbm(bule->rr.kgen_token, 
+				       co_bule->rr.kgen_token, bule->bind_key);
+			mn_send_cn_bu(bule);
+		}
+		break;
+	default:
+		/* should not be reachable */
+		break;
 	}
 
-	rre_co = rrl_get(COT_ENTRY, &bule->coa, &bule->peer_addr);
-
-	rr_mn_calc_Kbm(rre_ho->kgen_token, rre_co->kgen_token, bule->Kbm);
-
-	bule->rr.state = RR_READY;
+	return 0;	
 }
 
-static int _mn_rr_delete_co(void *vrre, void *vcoa)
+
+/* mn_start_ro - start RO, triggered by tunneled packet */
+void mn_start_ro(struct in6_addr *cn_addr, struct in6_addr *home_addr,
+		 struct mn_addr *coa)
 {
-	struct rrlentry *rre = vrre;
-	struct in6_addr *coa = vcoa;
+	struct bulentry *bule_ro;
+	
+	RRDBG("MN: Start RO to %x:%x:%x:%x:%x:%x:%x:%x, "
+	      "from %x:%x:%x:%x:%x:%x:%x:%x\n", 
+	      NIP6ADDR(cn_addr), NIP6ADDR(home_addr));
+	
+	pthread_rwlock_wrlock(&mn_lock);
 
-	if (rre->type == COT_ENTRY && IN6_ARE_ADDR_EQUAL(&rre->own1, coa))
-		rrl_delete(rre);
-	return 0;
-}
+	/* First look up bulentry for CN */
+	bule_ro = bul_get(NULL, home_addr, cn_addr);
 
-void mn_rr_delete_co(struct in6_addr *coa)
-{
-	rrl_iterate(_mn_rr_delete_co, coa);
-}
+	/* See, if RR is already in progress for HoA and CoA (ie
+	 * bulentry for HoT exists). If no bulentry exists create one
+	 * for HoT */
+	if (bule_ro) {
+		/* This whole branch is just for debugging */
+		if (bule_ro->flags & IP6_MH_BU_HOME) {
+			/* HA communicates with us through the tunnel
+			 * for some reason */
+			RRDBG("HA triggered RO by sending packets through tunnel ?\n");
+		} else if (bule_ro->type == COT_ENTRY) {
+			/* We already are using the home address as
+			 * CoA with CN ?? */
+			RRDBG("Looping RO coa <-> hoa ??\n");
+		} else if (bule_ro->type == HOT_ENTRY) {
+			RRDBG("Already doing RR, bailing out\n");
+		} else if (bule_ro->type == BUL_ENTRY) {
+			RRDBG("Valid BUL entry for CN, no RR necessary\n");
+		} else if (bule_ro->type == NON_MIP_CN_ENTRY) {
+			RRDBG("Not starting RO with non-mipv6 capable CN\n");
+		} 
 
-void mn_rr_delete_bule(struct bulentry *e)
-{
-	struct rrlentry *rre_ho;
+		pthread_rwlock_unlock(&mn_lock);
+		return;
+	} 
 
-	if (e->coa_changed > 0)
-		rrl_delete_co_hoa(&e->last_coa, &e->peer_addr, &e->hoa);
-
-	rre_ho = rrl_get(HOT_ENTRY, &e->hoa, &e->peer_addr);
-	if (rre_ho != NULL)
-		rrl_delete(rre_ho);
-}
-
-int mn_rr_error_check(const struct in6_addr *own,
-		      const struct in6_addr *peer,
-		      struct in6_addr *hoa)
-{
-	struct rrlentry *rre = hash_get(&rrl_hash, own, peer);
-
-	if (rre == NULL || !rre->wait)
-		return 0;
-
-	if (rre->type == HOT_ENTRY) {
-		*hoa = rre->own1;
-		return 1;
-	} else if (!list_empty(&rre->home_addrs)) {
-		/* just return the first available HoA */
-		struct addr_holder *ah;
-		ah = list_entry(rre->home_addrs.next,
-				struct addr_holder, list);
-		*hoa = ah->addr;
-		return 1;
+	struct home_addr_info *hai = mn_get_home_addr(home_addr);
+	if (!hai) {
+		RRDBG("Failed to find home address info for starting of RO\n");
+		pthread_rwlock_unlock(&mn_lock);
+		return;
 	}
-	return 0;
+	bule_ro = create_bule(NULL);
+	if (!bule_ro) {
+		RRDBG("Malloc failed at starting of RO\n");
+		pthread_rwlock_unlock(&mn_lock);
+		return;
+	}
+	bule_ro->hoa = *home_addr;
+	bule_ro->peer_addr = *cn_addr;
+	bule_ro->callback = ti_resend;
+	bule_ro->lifetime = MAX_TOKEN_LIFETIME_TS;
+	bule_ro->delay = MN_TEST_INIT_DELAY_TS;
+	bule_ro->coa = coa->addr;
+	bule_ro->if_coa = coa->iif;
+	bule_ro->type = HOT_ENTRY;
+	bule_ro->rr.wait_hot = 1;
+	bule_ro->home = hai;
+	if (bul_add(bule_ro) < 0) {
+		free(bule_ro);
+		pthread_rwlock_unlock(&mn_lock);
+		return;
+	}
+	bule_ro->rr.do_send_bu = 1;
+	mn_send_hoti(bule_ro, bule_ro->home->hoa.iif);
+
+	RRDBG("Started RO & sent HoTi\n");
+
+	/* See if we already have a bulentry for CoT */
+	if (mn_rr_cond_start_cot(bule_ro, NULL, &coa->addr, coa->iif, 0)) {
+		RRDBG("Started RR test for CoA\n");
+	} else {
+		RRDBG("RR test not necessary for CoA\n");
+	} 
+
+	pthread_rwlock_unlock(&mn_lock);
 }
 
-static void mn_recv_cot(const struct ip6_mh *mh, ssize_t len,
-			const struct in6_addr_bundle *in, int iif)
+static void mn_recv_cot(const struct ip6_mh *mh,
+			const ssize_t len,
+			const struct in6_addr_bundle *in,
+			const int iif)
 {
 	struct in6_addr *cn_addr = in->src;
 	struct in6_addr *co_addr = in->dst;
 	uint8_t *cookie;
 	uint8_t *keygen;
 	uint16_t index;
-	struct rrlentry *rre_ho;
-	struct rrlentry *rre_co;
+	struct bulentry *bule_home; /* Real bule for HoT / RR entry for CoT */ 
+	struct bulentry *bule_cot; /* RR entry for HoT / real one for CoT */
 	struct ip6_mh_careof_test *ct;
 	struct list_head *list, *n;
+	struct timespec now,refresh_delay;
 
 	if (len < sizeof(struct ip6_mh_careof_test) || in->remote_coa)
 		return;
@@ -670,65 +656,67 @@ static void mn_recv_cot(const struct ip6_mh *mh, ssize_t len,
 	index = ntohs(ct->ip6mhct_nonce_index);
 
 	pthread_rwlock_wrlock(&mn_lock);
-	rre_co = rrl_get(COT_ENTRY, co_addr, cn_addr);
+	bule_cot = bul_get(NULL, co_addr, cn_addr);
 
-	if (rre_co == NULL || cookiecmp(rre_co->cookie, cookie)) {
-		RRDBG("Got CoT, but no corresponding RR entry\n");
+	if (bule_cot == NULL || cookiecmp(bule_cot->rr.cookie, cookie)) {
+		RRDBG("Got CoT, but no corresponding bulentry\n");
 		pthread_rwlock_unlock(&mn_lock);
 		return;
 	}
 
-	if (!rre_co->wait) {
+	if (!bule_cot->rr.wait_cot) {
 		RRDBG("Got unexpected CoT\n");
 		pthread_rwlock_unlock(&mn_lock);
 		return;
 	}
 
-	rre_co->wait = 0;
-	rre_co->resend_count = 0;
-	memcpy(rre_co->kgen_token, keygen, sizeof(rre_co->kgen_token));
-	rre_co->index = index;
+	bule_cot->rr.wait_cot = 0;
+	bule_cot->rr.coa_nonce_ind = index;
+	memcpy(bule_cot->rr.kgen_token, keygen, sizeof(bule_cot->rr.kgen_token));
 	/* Send BU to CN for every home address waiting for the CoT */
-	list_for_each_safe(list, n, &rre_co->home_addrs) {
-		struct bulentry *bule = NULL;
+	clock_gettime(CLOCK_REALTIME, &now);
+	list_for_each_safe(list, n, &bule_cot->rr.home_addrs) {
 		struct addr_holder *ah;
 
 		ah = list_entry(list, struct addr_holder, list);
-		bule = bul_get(NULL, &ah->addr, cn_addr);
+		bule_home = bul_get(NULL, &ah->addr, cn_addr);
 
-		if (bule == NULL || bule->type != BUL_ENTRY ||
-		    !IN6_ARE_ADDR_EQUAL(&rre_co->own1, &bule->coa)) {
+		if (bule_home == NULL) {
+			RRDBG("No bule for home address in list, deleting entry\n");
 			list_del(list);
 			free(ah);
 			continue;
 		}
 
-		if (!bule->do_send_bu) {
-			/* This happens when we automatically refresh home
-			 * keygen token while binding still in use */
-			continue;
-		}
-		rre_ho = rrl_get(HOT_ENTRY, &ah->addr, cn_addr);
+		RRDBG("Got CoT and found bulentry for home address \n");
 
-		if (rre_ho == NULL || rre_ho->wait) {
+		if (bule_home->rr.wait_hot) {
 			RRDBG("Still waiting for HoT, not sending BU\n");
 			continue;
 		}
-		RRDBG("Got CoT and found RR entry for home address\n");
-		bule->rr.state = RR_READY;
-		bule->rr.ho_ni = rre_ho->index;
-		bule->rr.co_ni = index;
-		rr_mn_calc_Kbm(rre_ho->kgen_token, keygen, bule->Kbm);
-		mn_send_cn_bu(bule);
+
+		set_refresh(&refresh_delay, &bule_home->expires, 
+			    &bule_home->lifetime);
+
+		RRDBG("refresh_delay %d\n", refresh_delay.tv_sec);
+		RRDBG("now           %d\n", now.tv_sec);
+		RRDBG("expires       %d\n", bule_home->expires.tv_sec);
+
+		if (bule_home->rr.do_send_bu || tsafter(refresh_delay, now)) {
+			bule_home->coa = *co_addr;
+			rr_mn_calc_Kbm(bule_home->rr.kgen_token, keygen,
+				       bule_home->bind_key);
+			bule_home->rr.coa_nonce_ind = index;
+			bule_home->type = BUL_ENTRY;
+			mn_send_cn_bu(bule_home);
+		}
 	}
-	if (list_empty(&rre_co->home_addrs))
-		rrl_delete(rre_co);
-	else {
-		rre_co->callback = mn_rr_careofkgt_refresh;
-		rre_co->delay = MAX_TOKEN_LIFETIME_TS;
-		tsadd(rre_co->delay, rre_co->lastsent, rre_co->expires);
-		rrl_update_timer(rre_co);
-	}
+	tssetsec(bule_cot->delay, MAX_TOKEN_LIFETIME - MN_RR_BEFORE_EXPIRE);
+	bule_cot->lastsent = now;
+	tsadd(MAX_TOKEN_LIFETIME_TS, bule_cot->lastsent, 
+	      bule_cot->rr.kgen_expires);
+
+	bul_update_timer(bule_cot);
 	pthread_rwlock_unlock(&mn_lock);
 }
 
@@ -737,89 +725,123 @@ static struct mh_handler mn_cot_handler = {
 };
 
 /* mh_hot_recv - handles MH HoT msg */
-static void mn_recv_hot(const struct ip6_mh *mh, ssize_t len,
-			const struct in6_addr_bundle *in, int iif)
+static void mn_recv_hot(const struct ip6_mh *mh,
+			const ssize_t len,
+			const struct in6_addr_bundle *in,
+			const int iif)
 {
 	struct in6_addr *cn_addr = in->src;
 	struct in6_addr *home_addr = in->dst;
 	uint8_t *cookie;
-	uint8_t *keygen;
 	uint16_t index;
-	struct rrlentry *rre_ho;
-	struct rrlentry *rre_co = NULL;
-	struct bulentry *bule = NULL;
+	struct bulentry *bule_home; /* Real bule for HoT / RR entry for CoT */ 
+	struct bulentry *bule_cot = NULL; /* RR entry for HoT / real for CoT */
 	struct ip6_mh_home_test *ht;
+	struct timespec now, tmp, refresh_delay;
 
 	if (len < sizeof(struct ip6_mh_home_test) || in->remote_coa)
 		return;
 
 	ht = (struct ip6_mh_home_test *)mh;
 	cookie = (uint8_t *)ht->ip6mhht_cookie;
-	keygen = (uint8_t *)ht->ip6mhht_keygen;
 	index = ntohs(ht->ip6mhht_nonce_index);
 
 	pthread_rwlock_wrlock(&mn_lock);
 
-	rre_ho = rrl_get(HOT_ENTRY, home_addr, cn_addr);
+	bule_home = bul_get(NULL, home_addr, cn_addr);
 
-	if (rre_ho == NULL || cookiecmp(rre_ho->cookie, cookie)) {
-		RRDBG("Got HoT, but no corresponding RR entry\n");
+	if (bule_home == NULL || cookiecmp(bule_home->rr.cookie, cookie)) {
+		RRDBG("Got HoT, but no corresponding bulentry\n");
 		pthread_rwlock_unlock(&mn_lock);
+		
 		return;
 	}
 
-	if (!rre_ho->wait) {
+	if (bule_home->type == NON_MIP_CN_ENTRY || !bule_home->rr.wait_hot) {
 		RRDBG("Got unexpected HoT\n");
 		pthread_rwlock_unlock(&mn_lock);
+		
 		return;
-	}
-	bule = bul_get(NULL, home_addr, cn_addr);
+	}  
+	
+	bule_home->rr.wait_hot = 0;
+	clock_gettime(CLOCK_REALTIME, &now);	
+	tssub(now, bule_home->lastsent, tmp);
 
-	if (bule == NULL || bule->type != BUL_ENTRY) {
-		rrl_delete(rre_ho);
-		pthread_rwlock_unlock(&mn_lock);
-		return;
-	}
-	rre_ho->wait = 0;
-	rre_ho->resend_count = 0;
-	memcpy(rre_ho->kgen_token, keygen, sizeof(rre_ho->kgen_token));
-	rre_ho->index = index;
+	bule_home->lastsent = now;
+	tsadd(bule_home->lastsent, MAX_TOKEN_LIFETIME_TS,
+	      bule_home->rr.kgen_expires);
+	bule_home->rr.home_nonce_ind = index;
+	memcpy(bule_home->rr.kgen_token, ht->ip6mhht_keygen,
+	       sizeof(bule_home->rr.kgen_token));
 
-	if (!bule->do_send_bu) {
-		/* This happens when we automatically refresh home
-		 * keygen token while binding still in use */
-		pthread_rwlock_unlock(&mn_lock);
-		return;
-	}
+	bule_cot = bul_get(NULL, &bule_home->coa, cn_addr);
 
-	if (bule->dereg) {
-		/* Dereg BUL entry waiting for RR_READY */
-		RRDBG("Got HoT\n");
-		if (bule->do_send_bu) {
-			bule->rr.state = RR_READY;
-			bule->rr.ho_ni = index;
-			bule->rr.co_ni = 0;
-			rr_mn_calc_Kbm(keygen, NULL, bule->Kbm);
-			mn_send_cn_bu(bule);
-		}
-	} else {
-		rre_co = rrl_get(COT_ENTRY, &rre_ho->own2, cn_addr);
-		if (rre_co == NULL || rre_co->wait)
-			RRDBG("Still waiting for CoT, not sending BU\n");
-		else if (bule->do_send_bu) {
-			RRDBG("Got HoT and found RR entry for care-of address\n");
-			/* Foreign Reg BU case */
-			bule->rr.state = RR_READY;
-			bule->rr.ho_ni = index;
-			bule->rr.co_ni = rre_co->index;
-			rr_mn_calc_Kbm(keygen, rre_co->kgen_token, bule->Kbm);
-			mn_send_cn_bu(bule);
+	if (bule_cot == NULL) {
+		if (bule_home->rr.dereg) {
+			rr_mn_calc_Kbm(bule_home->rr.kgen_token, NULL, 
+				       bule_home->bind_key);
+			goto out;
+		} else {
+			BUG("no COT bulentry");
+			pthread_rwlock_unlock(&mn_lock);
+			return;
 		}
 	}
-	rre_ho->callback = mn_rr_homekgt_refresh;
-	rre_ho->delay = MAX_TOKEN_LIFETIME_TS;
-	tsadd(rre_ho->delay, rre_ho->lastsent, rre_ho->expires);
-	rrl_update_timer(rre_ho);
+
+	if (bule_cot->rr.wait_cot) {
+		/* Wait for CoT */
+		tssub(bule_home->rr.kgen_expires, now, bule_home->delay);
+		bule_home->lifetime = MAX_RR_BINDING_LIFETIME_TS;
+		bul_update_timer(bule_home);
+		pthread_rwlock_unlock(&mn_lock);
+
+		return;
+	}
+
+	/* Foreign Reg BU case */
+	bule_home->rr.coa_nonce_ind = bule_cot->rr.coa_nonce_ind;
+	rr_mn_calc_Kbm(bule_home->rr.kgen_token, bule_cot->rr.kgen_token, 
+		       bule_home->bind_key);
+
+	set_refresh(&refresh_delay, &bule_home->expires, &bule_home->lifetime);
+
+	if (!bule_home->rr.do_send_bu && tsbefore(refresh_delay, now)) {
+		struct timespec rr_lifetime;
+
+		bule_home->type = BUL_ENTRY;
+		tssub(bule_home->expires, bule_home->lifetime, 
+		      bule_home->lastsent);
+		tssub(bule_home->rr.kgen_expires, bule_home->lastsent,
+		      rr_lifetime);
+
+		if (tsbefore(refresh_delay, bule_home->rr.kgen_expires))
+			tssetsec(bule_home->delay, 
+				 max(rr_lifetime.tv_sec - 
+				     MN_RR_BEFORE_EXPIRE, 0));
+		else
+			tssub(refresh_delay, bule_home->lastsent, 
+			      bule_home->delay);
+
+		bule_home->callback = mn_rr_check_entry; 
+
+		RRDBG("delay         %d\n", bule_home->delay.tv_sec);
+		RRDBG("refresh_delay %d\n", refresh_delay.tv_sec);
+		RRDBG("kgen_expires  %d\n", bule_home->rr.kgen_expires.tv_sec);
+		RRDBG("lifetime      %d\n", bule_home->lifetime.tv_sec);
+		RRDBG("expires       %d\n", bule_home->expires.tv_sec);
+		RRDBG("lastsent      %d\n", bule_home->lastsent.tv_sec);
+		RRDBG("now           %d\n", now.tv_sec);
+
+		bul_update_timer(bule_home);
+		pthread_rwlock_unlock(&mn_lock);
+
+		return;
+}
+
+ out:
+	bule_home->type = BUL_ENTRY;
+	mn_send_cn_bu(bule_home);
 	pthread_rwlock_unlock(&mn_lock);
 }
 
@@ -827,28 +849,14 @@ static struct mh_handler mn_hot_handler = {
 	.recv = mn_recv_hot,
 };
 
-int rr_init(void)
+void rr_init(void)
 {
-	if (rrl_init() < 0)
-		return -1;
 	mh_handler_reg(IP6_MH_TYPE_COT, &mn_cot_handler);
 	mh_handler_reg(IP6_MH_TYPE_HOT, &mn_hot_handler);
-	return 0;
-}
-
-static int rre_cleanup(void *vbule, void *dummy)
-{
-	BUG("rrl_hash should be empty");
-	rrl_delete(vbule);
-	return 0;
 }
 
 void rr_cleanup(void)
 {
 	mh_handler_dereg(IP6_MH_TYPE_HOT, &mn_hot_handler);
 	mh_handler_dereg(IP6_MH_TYPE_COT, &mn_cot_handler);
-	pthread_rwlock_wrlock(&mn_lock);
-	rrl_iterate(rre_cleanup, NULL);
-	pthread_rwlock_unlock(&mn_lock);
-	hash_cleanup(&rrl_hash);
 }

@@ -1,36 +1,13 @@
-Changes since 2.0.1:
+MIPL 2.0 RC3 is a preview release of the upcoming MIPL 2.0 release of
+user space Mobile IPv6.  MIPL 2.0 will be fully compliant with RFC
+3775.  There are some issues with RC3, which need to be solved before
+the final release.  See BUGS for details.
 
-* Fixed netlink message buffer overflow problem on machines with 64
-  bit alignment.
+Main changes since RC2:
 
-* Minor improvements to configure build checks.
-
-* The kernel version for the MIPv6 patch has been updated to 2.6.16.
-
-* Fixed hang some users reported on mip6d shutdown.
-
-* Fixed problem some users had with mip6d not receiving notification
-  about new CoAs.
-
-* Added new OptimisticHandoff option for MN.
-
-* Fixed problems with TAHI MN conformance tests when DHAAD is enabled.
-
-* Integrated IPSec reqid support (see README.IPsec) patch from USAGI.
-
-* Merged most of other smaller USAGI patches.
-
-* Let the kernel handle the MN Neighbor Unreachability Detection
-  probes to old routers.
-
-Main changes since 2.0:
-
-* Fixed broken virtual terminal support.
-
-* Fix memory leak that caused HA to run out of memory after a couple
-  of hundred BUs.
-
-* Use built in cryptographic functions if openssl crypto library isn't
-  available.
-
-* The kernel version for the MIPv6 patch has been updated to 2.6.15.
+* Lot of minor general bugs fixed
+* Even more IPsec problems fixed
+* HA link-layer address resolution problem fixed
+* Unauthorized MH problem in HA fixed (switched to 2.6.11 kernel)
+* Movement detection inefficiency fixed
+* Kernel version for MIPv6 patch updated to 2.6.11

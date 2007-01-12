@@ -1,5 +1,5 @@
 /*
- * $Id: tqueue.c 1.49 06/02/28 18:57:32+02:00 anttit@tcs.hut.fi $
+ * $Id: tqueue.c 1.43 05/12/12 17:59:17+02:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
@@ -7,8 +7,7 @@
  *  Antti Tuominen <anttit@tcs.hut.fi>
  *  Ville Nuorvala <vnuorval@tcs.hut.fi>
  *
- * Copyright 2001-2005 GO-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2001-2004 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -33,7 +32,11 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#ifdef HAVE_LIBPTHREAD
 #include <pthread.h>
+#else
+#error "POSIX Thread Library required!"
+#endif
 
 #include "debug.h"
 #include "util.h"
@@ -41,7 +44,7 @@
 
 LIST_HEAD(tq_list);
 
-static volatile int killed = 0;
+static int killed = 0;
 static pthread_mutex_t mutex;
 static pthread_cond_t cond;
 static pthread_t tq_runner;
@@ -185,7 +188,6 @@ int task_interrupted(void)
  **/
 static void *runner(void *arg)
 {
-	pthread_dbg("thread started");
 	pthread_mutex_lock(&mutex);
 	for (;;) {
 		struct timespec now;
@@ -216,5 +218,5 @@ static void *runner(void *arg)
 		}		
 	}
 	pthread_mutex_unlock(&mutex);
-	pthread_exit(NULL);
+	return NULL;
 }

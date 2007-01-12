@@ -1,12 +1,11 @@
 /*
- * $Id: keygen.c 1.15 06/05/05 19:40:57+03:00 anttit@tcs.hut.fi $
+ * $Id: keygen.c 1.9 05/12/10 03:59:28+02:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
  * Author: Antti Tuominen <anttit@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2005 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -28,23 +27,27 @@
 #include <config.h>
 #endif
 
+#ifdef HAVE_LIBPTHREAD
 #include <pthread.h>
+#else
+#error "POSIX Thread Library required!"
+#endif
+
 #include <inttypes.h>
-#ifdef HAVE_LIBCRYPTO
 #include <openssl/sha.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
-#else
-#include "crypto.h"
-#endif
 
 #include <netinet/ip6.h>
+#ifdef HAVE_NETINET_IP6MH_H
 #include <netinet/ip6mh.h>
+#else
+#include <netinet-ip6mh.h>
+#endif
 
 #include "mipv6.h"
 #include "tqueue.h"
-#include "keygen.h"
 
 /* MAX_NONCES controls how many nonces we circulate.  It must be a
  * power of two */
@@ -76,11 +79,7 @@ static void nonce_regen(struct tq_elem *tqe)
 	count.min_nce++;
 	n->nonce_index += MAX_NONCES;
 	tsclear(n->valid_until);
-#ifdef HAVE_LIBCRYPTO
 	RAND_bytes(n->nonce, NONCE_LENGTH);
-#else
-	random_bytes(n->nonce, NONCE_LENGTH);
-#endif
 	pthread_rwlock_unlock(&nonce_lock);
 }
 
@@ -94,12 +93,8 @@ static int nonce_init(void)
 	for (i = 1; i <= MAX_NONCES; i++) {
 		struct nonce_holder *n;
 		n = &nonces[i & (MAX_NONCES - 1)];
-#ifdef HAVE_LIBCRYPTO
 		if (!RAND_bytes(n->nonce, NONCE_LENGTH))
 			return -1;
-#else
-		random_bytes(n->nonce, NONCE_LENGTH);
-#endif
 		tsclear(n->valid_until);
 		n->nonce_index = i;
 	}
@@ -169,10 +164,9 @@ static struct nonce_holder *_validate_nonce(uint16_t nidx)
 static void build_kgen_token(struct in6_addr *addr, uint8_t *nonce, 
 			     uint8_t id, uint8_t *buf)
 {
-	uint8_t tmp[20];
-#ifdef HAVE_LIBCRYPTO
-	unsigned int len = 20;
 	HMAC_CTX ctx;
+	unsigned int len = 20;
+	uint8_t tmp[20];
 
 	HMAC_CTX_init(&ctx);
 	HMAC_Init_ex(&ctx, key_cn, sizeof(key_cn), EVP_sha1(), NULL);
@@ -181,15 +175,7 @@ static void build_kgen_token(struct in6_addr *addr, uint8_t *nonce,
 	HMAC_Update(&ctx, &id, sizeof(id));
 	HMAC_Final(&ctx, tmp, &len);
 	HMAC_CTX_cleanup(&ctx);
-#else
-	HMAC_SHA1_CTX ctx;
 
-	HMAC_SHA1_init(&ctx, key_cn, sizeof(key_cn));
-	HMAC_SHA1_update(&ctx, (unsigned char *)addr, sizeof(*addr));
-	HMAC_SHA1_update(&ctx, nonce, NONCE_LENGTH);
-	HMAC_SHA1_update(&ctx, &id, sizeof(id));
-	HMAC_SHA1_final(&ctx, tmp);
-#endif
 	memcpy(buf, tmp, 8);
 }
 
@@ -247,7 +233,6 @@ int rr_cn_nonce_lft(uint16_t index, struct timespec *lft)
  **/
 void rr_mn_calc_Kbm(uint8_t *keygen_hoa, uint8_t *keygen_coa, uint8_t *kbm)
 {
-#ifdef HAVE_LIBCRYPTO
 	SHA_CTX ctx;
 
 	SHA1_Init(&ctx);
@@ -256,16 +241,6 @@ void rr_mn_calc_Kbm(uint8_t *keygen_hoa, uint8_t *keygen_coa, uint8_t *kbm)
 		SHA1_Update(&ctx, keygen_coa, NONCE_LENGTH);
 
 	SHA1_Final(kbm, &ctx);
-#else
-	SHA1_CTX ctx;
-
-	SHA1_init(&ctx);
-	SHA1_update(&ctx, keygen_hoa, NONCE_LENGTH);
-	if (keygen_coa)
-		SHA1_update(&ctx, keygen_coa, NONCE_LENGTH);
-
-	SHA1_final(&ctx, kbm);
-#endif
 }
 
 /** 
@@ -318,12 +293,8 @@ int rr_cn_calc_Kbm(uint16_t home_nonce_ind, uint16_t coa_nonce_ind,
  **/
 int rr_cn_init(void)
 {
-#ifdef HAVE_LIBCRYPTO
 	if (!RAND_bytes(key_cn, HMAC_SHA1_KEY_SIZE))
 		return -1;
-#else
-	random_bytes(key_cn, HMAC_SHA1_KEY_SIZE);
-#endif
 
 	return nonce_init();
 }

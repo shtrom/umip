@@ -1,12 +1,17 @@
-## $Id: Makefile.am 1.55 06/05/07 17:37:11+03:00 anttit@tcs.hut.fi $
+## $Id: Makefile.am 1.47 05/12/08 19:42:43+02:00 vnuorval@tcs.hut.fi $
 ## Process this file with automake to produce Makefile.in
 
-AM_CFLAGS = -Wall -Wpointer-arith -Wreturn-type -pedantic -std=gnu99
-AM_CPPFLAGS = -isystem ../include
+AM_CFLAGS = -Wall -std=gnu99
+AM_CPPFLAGS = -I../include
 AM_YFLAGS = -d
 
-defpath.h: Makefile.am
-	echo "#define DEFAULT_CONFIG_FILE \"$(sysconfdir)/mip6d.conf\"" > $@
+edit = sed \
+	-e 's,@sysconfdir\@,$(sysconfdir),g' \
+        -e 's,@sbindir\@,$(sbindir),g'
+
+defpath.h: Makefile defpath.h.in
+	$(edit) defpath.h.in > defpath.h.tmp
+	mv -f defpath.h.tmp defpath.h
 
 pmgr.c: mk-pmgr_c.sh pmgr.c.in policy.h
 	sh mk-pmgr_c.sh
@@ -15,7 +20,7 @@ pmgr.h: mk-pmgr_h.sh pmgr.h.in policy.h
 	sh mk-pmgr_h.sh
 
 BUILT_SOURCES = defpath.h pmgr.c pmgr.h
-EXTRA_DIST = mk-pmgr_c.sh mk-pmgr_h.sh pmgr.c.in pmgr.h.in
+EXTRA_DIST = mk-pmgr_c.sh mk-pmgr_h.sh pmgr.c.in pmgr.h.in defpath.h.in
 
 sbin_PROGRAMS = mip6d
 
@@ -48,27 +53,16 @@ mip6d_SOURCES = pmgr.c pmgr.h defpath.h \
 		xfrm.c xfrm.h \
 		proc_sys.c proc_sys.h \
 		prefix.c prefix.h \
-		ipsec.c ipsec.h
+		ipsec.c ipsec.h \
+		rfc3542.h
 
 if ENABLE_VT
 mip6d_SOURCES += vt.c vt.h
 endif
 
-if BUILTIN_CRYPTO
-mip6d_SOURCES += crypto.c crypto.h
-endif
+mip6d_LDADD = -L../libnetlink -lnetlink -L../libmissing -lmissing
 
-mip6d_LDADD = 
-
-if MISSING
-mip6d_LDADD += -L../libmissing -lmissing
-endif
-
-if LOCAL_NETLINK
-mip6d_LDADD += -L../libnetlink -lnetlink
-endif
-
-noinst_HEADERS = ../include/netinet/icmp6.h \
-		 ../include/netinet/in.h \
-		 ../include/netinet/ip6.h \
-		 ../include/netinet/ip6mh.h
+noinst_HEADERS = ../include/netinet-icmp6.h \
+		 ../include/netinet-in.h \
+		 ../include/netinet-ip6.h \
+		 ../include/netinet-ip6mh.h

@@ -1,5 +1,5 @@
-.\" $Id: mip6d.conf.tmpl 1.33 06/05/12 11:48:36+03:00 vnuorval@tcs.hut.fi $
-.TH mip6d.conf 5 "January 31, 2006" "" "Mobile IPv6 Daemon Configuration"
+.\" $Id: mip6d.conf.tmpl 1.16 05/11/09 15:59:21+02:00 vnuorval@tcs.hut.fi $
+.TH mip6d.conf 5 "May 16, 2005" "" "Mobile IPv6 Daemon Configuration"
 .SH NAME
 mip6d.conf \- MIPL Mobile IPv6 Configuration file
 .SH SYNOPSIS
@@ -56,6 +56,7 @@ These options are used both in the Home Agent and Mobile Node:
 .nf
 .BR "Interface " "name" " {"
 .BR "	MnIfPreference " "number" ";"
+.BR "	IsRouter " "boolean" ";"
 .BR "	IfType " "CN | HA | MN" ";"
 .B }
 .fi
@@ -70,22 +71,16 @@ must broadcast advertisements with the Home Agent bit and Home Agent
 Information Option set on these interfaces.  This option is also
 used by multihomed Mobile Nodes to define which interfaces are used by it.
 
+Only option
 .B MnIfPreference
-sets the interface preference value for an interface in a multi-homed
-Mobile Node.  The most preferred intefaces have preference 1, the
-second most preferred have 2, etc.  A preference of zero means the
-interface will not be used.
+is used with Mobile IPv6.  It sets interface preference value for an
+interface, in a multi-homed mobile node.  Preference is relative only
+to other preference values, and may be a signed number.
 
-Default: 5
-
+.B IsRouter
+and
 .B IfType
-overrides the default node behavior for this interface. If a MN doesn't
-wish to use this inteface for mobility, or a node doesn't act as HA on
-this interface, the interface type should be set to CN.
-
-Default: same as
-.B NodeConfig
-
+are only used with NEMO.
 
 .TP
 .BR "UseMnHaIPsec " "boolean" ";"
@@ -127,35 +122,21 @@ nodes for which the same policy applies.
 has the following format:
 
 .TP
-.BR "IPsecPolicy " "type " "UseESP" "number number" ";"
+.BR "IPsecPolicy " "type " "UseESP UseAH UseIPComp;"
 
 Field 
 .B type 
 can be one of HomeRegBinding, Mh, MobPfxDisc, ICMP, any, TunnelMh,
-TunnelHomeTesting, or TunnelPayload.  The any option protects all
-transport mode communication between the MN and HA.  Currently only
-the ESP IPsec protocol is supported, but in the future AH and IPComp
-might also be available.  The two remaining numeric fields are the
-IPsec reqid values, the first one used for MN - HA, the second one for
-HA - MN communication.  If just one value is defined, the same reqid
-will be used in both directions.  If no reqid is given, reqid will not
-be used.
-
-If more that one IPsec transport mode or tunnel mode policy is defined
-between the MN and HA in each direction, reqid can be used to provide
-an unambiguous one-to-one mapping between IPsec policies and SAs.
-Otherwise the policies will just share a common SA.
+TunnelHomeTesting, or TunnelPayload.  At least one of the IPsec
+protocols must be specified.  The any option protects all transport
+mode communication between the MN and HA. Tunnel protection only
+allows exactly one protocol.  Set IPsec protocol X with the "UseX"
+flag.  Although not required, one can specify explicitly "NoX"
+(e.g. UseESP NoAH NoIPComp).
 
 .SH HOME AGENT SPECIFIC OPTIONS
 
 The following definitions are ignored unless the node is configured as a HA:
-
-.TP
-.BR "HaMaxBindingLife " "number" ";"
-
-Limits the maximum lifetime (in seconds) for Mobile Node home registrations.
-
-Default: 262140
 
 .TP
 .BR "SendMobPfxAdvs " "boolean" ";"
@@ -183,50 +164,9 @@ Sets a maximum interval (in seconds) for Mobile Prefix Advertisements.
 
 Default: 86400
 
-.TP
-.BR "BindingAclPolicy " "address " "allow | deny"
-
-Defines if a MN is allowed to register with the HA or not. The MN home address
-of the MN is given in the address field."
-
-.TP
-.BR "DefaultBindingAclPolicy allow | deny"
-
-Defines the default policy if no matching BindingAclPolicy entry is found for
-a MN.
-
-Default: allow
-
 .SH MOBILE NODE SPECIFIC OPTIONS
 
 The following definitions are ignored unless the node is configured as a MN:
-
-.TP
-.BR "MnMaxHaBindingLife " "number" ";"
-
-Limits the maximum lifetime (in seconds) for Mobile Node home registrations.
-
-Default: 262140
-
-.TP
-.BR "MnMaxCnBindingLife " "number" ";"
-
-Limits the maximum lifetime (in seconds) for Mobile Node Correspondent
-Node registrations.
-
-Default: 420
-
-.TP
-.BR "MnDiscardHaParamProb " "boolean" ";"
-
-Toggles if the Mobile Node should discard ICMPv6 Parameter Problem messages
-from its Home Agent.  As the ICMPv6 error messages won't normally be protected
-by IPsec, a malicious third party can quite easily impersonate the HA to the
-MN.  Having the MN accept these messages therefore leaves it open to Denial
-of Service attacks, even though its home registration signalling is protected
-by IPsec.
-
-Default: disabled
 
 .TP
 .BR "SendMobPfxSols " "boolean" ";"
@@ -243,17 +183,6 @@ Corresponent Nodes.
 Default: enabled
 
 .TP
-.BR "MnUseAllInterfaces enabled | disabled"
-
-Indicates if all interfaces should be used for mobility.  The preference
-of these interfaces is always 1.  Unless you use dynamically created and
-named network interfaces you should normally disable this option and use
-.B Interface
-options to explicitly list the used interfaces. 
-
-Default: disabled
-
-.TP
 .BR "UseCnBuAck " "boolean" ";"
 
 Indicates if the Acknowledge bit should be set in Binding Updates sent to
@@ -262,7 +191,7 @@ Corresponent Nodes.
 Default: disabled
 
 .TP
-.BR "MnRouterProbes " "number" ";"
+.BR "MnRouterProbesRA " "number" ";"
 
 Indicates how many times the MN should send Neighbor Unreachability
 Detection probes to its old router after receiving a Router
@@ -272,29 +201,25 @@ will move to the new router straight away.
 Default: 0
 
 .TP
-.BR "MnRouterProbeTimeout " "decimal" ";"
+.BR "MnRouterProbesLinkUp " "number" ";"
 
-Indicates how long (in seconds) the MN should wait for a reply during
-a access router Neighbor Unreachability Detection probe.  If set, it
-overrides any default Neighbor Solicitation Retransmit Timer value
-greater than MnRouterProbeTimeout.  For example, if the interface
-Retransmit Timer is 1 second, but MnRouterProbeTimeout is just 0.2
-seconds, the MN will only wait 0.2 seconds for a Neighbor Advertisement
-before proceeding with the handoff.
+Indicates how many times the MN should send Neighbor Unreachability
+Detection probes to its old router before initiating router discovery
+when the link goes up after being down.
 
 Default: 0
 
 .TP
-.BR "OptimisticHandoff  enabled | disabled"
+.BR "MnRouterProbeTimeout " "decimal" ";"
 
-When a Mobile Node sends a Binding Update to the Home Agent, no Route
-Optimized or reverse tunneled traffic is sent until a Binding
-Acknowledgement is received. When enabled, this option allows the
-Mobile Node to assume that the binding was successful right after the
-BU has been sent, and does not wait for a positive acknowledgement
-before using RO or reverse tunneling.
+Indicates how long (in seconds) the MN should wait for a reply during
+a access router Neighbor Unreachability Detection probe. If this
+parameter isn't set, the Retransmit Timer value for the last link is
+used. The Retransmit Timer is typically defined as one second. If the
+parameter is set, the MN will use the minimum of MnRouterProbeTimeout
+and Retransmit Timer, thus allowing faster handoffs.
 
-Default: disabled;
+Default: 0
 
 .TP
 .nf
@@ -355,11 +280,9 @@ matching this entry.
 .TP
 .BR "A Correspondent Node example:"
 
-.nf
 NodeConfig CN;
 
 DoRouteOptimizationCN enabled;
-.fi
 
 .TP
 .BR "A Home Agent example:"
@@ -386,7 +309,6 @@ IPsecPolicySet {
 .TP
 .BR "A Mobile Node example:"
 
-.nf
 NodeConfig MN;
 
 DoRouteOptimizationCN enabled;
@@ -395,17 +317,24 @@ DoRouteOptimizationMN enabled;
 
 UseCnBuAck enabled;
 
+.nf
+
 MnHomeLink "eth0" {
         HomeAgentAddress 3ffe:2620:6:1::1;
         HomeAddress 3ffe:2620:6:1::1234/64;
 
-        #			address			opt.
-        #MnRoPolicy	3ffe:2060:6:1::3	enabled;
-        #MnRoPolicy					disabled;
+        #               proto   type    code    route opt.
+        MnRoPolicy      ICMP    any     any     disabled;
+        MnRoPolicy      ICMP    129     0       enabled;
+        #               proto   dst     src     route opt.
+        MnRoPolicy      TCP     any     any     disabled;
+        MnRoPolicy      TCP     80      any     enabled;
 }
+.fi
 
 UseMnHaIPsec enabled;
 
+.nf
 IPsecPolicySet {
         HomeAgentAddress 3ffe:2620:6:1::1;
         HomeAddress 3ffe:2620:6:1::1234/64;

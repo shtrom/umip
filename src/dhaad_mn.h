@@ -1,4 +1,4 @@
-/* $Id: dhaad_mn.h 1.5 06/05/15 12:03:38+03:00 vnuorval@tcs.hut.fi $ */
+/* $Id: dhaad_mn.h 1.4 05/12/08 19:42:43+02:00 vnuorval@tcs.hut.fi $ */
 
 #ifndef __DHAAD_MN_H__
 #define __DHAAD_MN_H__ 1
@@ -21,7 +21,7 @@ void dhaad_stop(struct home_addr_info *hai);
 
 int dhaad_next_candidate(struct home_addr_info *hai);
 
-int dhaad_home_reg_failed(struct home_addr_info *hai);
+int dhaad_home_reg_failed(struct home_addr_info *hai, struct in6_addr *nack_ha);
 
 void dhaad_mn_init(void);
 void dhaad_mn_cleanup(void);

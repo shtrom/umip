@@ -1,0 +1,27 @@
+MIPL Mobile IPv6 for Linux project uses this directory layout for the
+project files.
+
+./		This directory
+docs/		Project documentation
+include/	External include files (for libraries)
+lib/		External libraries (e.g. libnetlink)
+libmissing/	Library of missing library functions
+extras/		Example config files, distribution scripts
+man/		Manual pages
+src/		Project code
+
+Project's root directory only contains these files:
+
+AUTHORS		Lists core developers and acks, edit when needed
+COPYING		GPL, do not edit
+INSTALL		Installation instructions, edit when needed
+NEWS		New release information, edit before a release
+README		General software description, edit if _really_ needed
+ChangeLog	Automatically generated, do not edit
+
+Makefile.am	Toplevel automake file, do not edit (unless you add dirs)
+configure.ac	Autoconf configuration, edit when needed (e.g. before rel)
+
+All other files in this directory are automatically generated and are
+_not_ under version control (so do not add them there).  You should
+not add any files in the root directory.

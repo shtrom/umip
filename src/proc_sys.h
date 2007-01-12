@@ -1,20 +1,26 @@
-/* $Id: proc_sys.h 1.3 06/01/03 19:42:47+02:00 vnuorval@tcs.hut.fi $ */
+/* $Id: proc_sys.h 1.3 05/12/26 01:19:12+09:00 aramoto@springbank.sharp.net $ */
 
 #ifndef __PROC_SYS_H__
 #define __PROC_SYS_H__ 1
 
-#define PROC_SYS_IP6_AUTOCONF "/proc/sys/net/ipv6/conf/%s/autoconf"
-#define PROC_SYS_IP6_ACCEPT_RA "/proc/sys/net/ipv6/conf/%s/accept_ra"
-#define PROC_SYS_IP6_RTR_SOLICITS "/proc/sys/net/ipv6/conf/%s/router_solicitations"
-#define PROC_SYS_IP6_RTR_SOLICIT_INTERVAL "/proc/sys/net/ipv6/conf/%s/router_solicitation_interval"
-#define PROC_SYS_IP6_LINKMTU "/proc/sys/net/ipv6/conf/%s/mtu"
-#define PROC_SYS_IP6_CURHLIM "/proc/sys/net/ipv6/conf/%s/hop_limit"
-#define PROC_SYS_IP6_APP_SOLICIT "/proc/sys/net/ipv6/neigh/%s/app_solicit"
-#define PROC_SYS_IP6_BASEREACHTIME_MS "/proc/sys/net/ipv6/neigh/%s/base_reachable_time_ms"
-#define PROC_SYS_IP6_RETRANSTIMER_MS "/proc/sys/net/ipv6/neigh/%s/retrans_time_ms"
+const char *conf_path;
+const char *neigh_path;
 
-int set_iface_proc_entry(const char *tmpl, const char *if_name, int val);
+const char *autoconf_file;
+const char *ra_defrtr_file;
+const char *ra_pinfo_file;
+const char *rs_file;
+const char *rs_ival_file;
+const char *app_ns_file;
 
-int get_iface_proc_entry(const char *tmpl, const char *if_name, int *val);
+const char *hoplimit_file;
+const char *mtu_file;
+const char *retransmit_file;
+
+int set_iface_proc_entry(const char *path, const char *if_name,
+			 const char *file, int val);
+
+int get_iface_proc_entry(const char *path, const char *if_name,
+			 const char *file, int *val);
 
 #endif

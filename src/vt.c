@@ -1,7 +1,5 @@
 /*
  * Copyright (C)2004,2005 USAGI/WIDE Project
- * Copyright (C)2005 Go-Core Project
- * Copyright (C)2005,2006 Helsinki University of Technology
  * 
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,7 +19,6 @@
  * Authors:
  *	Noriaki TAKAMIYA @USAGI
  *	Masahide NAKAMURA @USAGI
- *	Ville Nuorvala @HUT
  */
 
 /*
@@ -33,7 +30,11 @@
 #include <config.h>
 #endif
 
+#ifdef HAVE_LIBPTHREAD
 #include <pthread.h>
+#else
+#error "POSIX Thread Library required!"
+#endif
 #include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -48,7 +49,7 @@
 #include <sys/un.h>
 #include <netdb.h>
 #include <string.h>
-#include <netinet/ip6mh.h>
+#include <netinet-ip6mh.h>
 
 #include "list.h"
 #include "util.h"
@@ -56,7 +57,6 @@
 #include "conf.h"
 #include "vt.h"
 #include "bul.h"
-#include "retrout.h"
 #include "bcache.h"
 #include "prefix.h"
 #include "ha.h"
@@ -70,6 +70,24 @@
 #define VT_CMD_PROMPT		("mip6d> ")
 #define VT_CMD_HELP_STR		("help")
 #define VT_CMD_HELP_LINE_MAX	(60)
+
+#define VT_DEBUG_LEVEL 2
+
+#if VT_DEBUG_LEVEL >= 1
+#define VTDBG dbg
+#else
+#define VTDBG(...)
+#endif
+#if VT_DEBUG_LEVEL >= 2
+#define VTDBG2 dbg
+#else
+#define VTDBG2(...)
+#endif
+#if VT_DEBUG_LEVEL >= 3
+#define VTDBG3 dbg
+#else
+#define VTDBG3(...)
+#endif
 
 struct vt_server_entry {
 	struct list_head list;
@@ -94,10 +112,12 @@ static struct vt_handle *vt_connect_handle = NULL;
 
 static int vt_server_fini(void);
 static int vt_connect_close(struct vt_handle *vh);
+static int vt_connect_fini(struct vt_handle *vh);
 
 /* Find a handle which is able to be modified */
 static struct vt_handle *vt_handle_get(const struct vt_handle *vh)
 {
+	//assert(vh == vt_connect_handle);
 	return vt_connect_handle;
 }
 
@@ -112,44 +132,152 @@ static int vt_handle_full(void)
 static int vt_handle_add(struct vt_handle *vh)
 {
 	if (vt_connect_handle != NULL) {
+		VTDBG("VT connect handle exists\n");
 		return -EINVAL;
 	}
 	vt_connect_handle = vh;
 	return 0;
 }
 
-#define VTDECOR_B_START vh->vh_opt.fancy == VT_BOOL_TRUE ? "\033[1m" : ""
-#define VTDECOR_BU_START vh->vh_opt.fancy == VT_BOOL_TRUE ? "\033[1;4m" : ""
-#define VTDECOR_END vh->vh_opt.fancy == VT_BOOL_TRUE ? "\033[0m" : ""
+static ssize_t vt_write(int fd, const void *buf, size_t count)
+{
+	ssize_t nleft;
+	ssize_t nwritten;
+	const char *p;
 
-ssize_t fprintf_decor(int decor, const struct vt_handle *vh, 
-		      const char *fmt, ...)
+	p = buf;
+	nleft = count;
+	while (nleft > 0) {
+		if ((nwritten = write(fd, p, nleft)) <= 0) {
+			if (errno == EINTR)
+				nwritten = 0;
+			else {
+				VTDBG("write: %s\n", strerror(errno));
+				return -1;
+			}
+		}
+		nleft -= nwritten;
+		p += nwritten;
+	}
+	return count;
+}
+
+static ssize_t vt_null_write(int sock)
+{
+	char c = 0;
+
+	if (sock < 0) {
+		VTDBG2("VT not opened socket\n");
+		return -EBADFD;
+	}
+
+	return vt_write(sock, &c, 1);
+}
+
+static ssize_t vt_str_write(int sock, const char *str)
+{
+	size_t len;
+
+	if (sock < 0) {
+		VTDBG2("VT not opened socket\n");
+		return -EBADFD;
+	}
+
+	len = strlen(str);
+
+	return vt_write(sock, str, len);
+}
+
+ssize_t vt_printf(const struct vt_handle *vh, const char *fmt, ...)
 {
 	char buf[VT_REPLY_BUFLEN];
 	va_list ap;
+
+	if (vh == NULL) {
+		VTDBG2("VT null handle\n");
+		return -EINVAL;
+	}
 
 	va_start(ap, fmt);
 	vsprintf(buf, fmt, ap);
 	va_end(ap);
 
-	return fprintf(vh->vh_stream, "%s%s%s", 
-		       decor == VTDECOR_B ? VTDECOR_B_START :VTDECOR_BU_START, 
-		       buf, VTDECOR_END);
+	return vt_str_write(vh->vh_sock, buf);
 }
 
-static const char *yes = "yes";
-static const char *no = "no";
-
-static const char *bool_str(vt_bool_t b)
+ssize_t vt_printf_b(const struct vt_handle *vh, const char *fmt, ...)
 {
-	return b == VT_BOOL_TRUE ? yes : no;
+	char buf[VT_REPLY_BUFLEN];
+	va_list ap;
+	ssize_t ret;
+
+	if (vh == NULL) {
+		VTDBG2("VT null handle\n");
+		return -EINVAL;
+	}
+
+	va_start(ap, fmt);
+	vsprintf(buf, fmt, ap);
+	va_end(ap);
+
+	if (vh->vh_opt.fancy == VT_BOOL_TRUE)
+		vt_str_write(vh->vh_sock, "\033[1m");
+	ret = vt_str_write(vh->vh_sock, buf);
+	if (vh->vh_opt.fancy == VT_BOOL_TRUE)
+		vt_str_write(vh->vh_sock, "\033[0m");
+
+	return ret;
+}
+
+ssize_t vt_printf_bl(const struct vt_handle *vh, const char *fmt, ...)
+{
+	char buf[VT_REPLY_BUFLEN];
+	va_list ap;
+	ssize_t ret;
+
+	if (vh == NULL) {
+		VTDBG2("VT null handle\n");
+		return -EINVAL;
+	}
+
+	va_start(ap, fmt);
+	vsprintf(buf, fmt, ap);
+	va_end(ap);
+
+	if (vh->vh_opt.fancy == VT_BOOL_TRUE)
+		vt_str_write(vh->vh_sock, "\033[1;4m");
+	ret = vt_str_write(vh->vh_sock, buf);
+	if (vh->vh_opt.fancy == VT_BOOL_TRUE)
+		vt_str_write(vh->vh_sock, "\033[0m");
+
+	return ret;
+}
+
+static int vt_cmd_sys_bool_show(const struct vt_handle *vh, vt_bool_t b)
+{
+	int ret;
+
+	switch (b) {
+	case VT_BOOL_TRUE:
+		ret = vt_printf(vh, "yes\n");
+		break;
+	case VT_BOOL_FALSE:
+		ret = vt_printf(vh, "no\n");
+		break;
+	default:
+		ret = vt_printf(vh, "%d\n", b);
+		break;
+	}
+	if (ret < 0)
+		return ret;
+	return 0;
 }
 
 static int vt_cmd_sys_fancy_off(const struct vt_handle *vh, const char *str)
 {
 	struct vt_handle *sysvh = vt_handle_get(vh);
 	sysvh->vh_opt.fancy = VT_BOOL_FALSE;
-	fprintf(vh->vh_stream, "%s\n", bool_str(sysvh->vh_opt.fancy));
+	vt_cmd_sys_bool_show(vh, sysvh->vh_opt.fancy);
 	return 0;
 }
 
@@ -157,14 +285,14 @@ static int vt_cmd_sys_fancy_on(const struct vt_handle *vh, const char *str)
 {
 	struct vt_handle *sysvh = vt_handle_get(vh);
 	sysvh->vh_opt.fancy = VT_BOOL_TRUE;
-	fprintf(vh->vh_stream, "%s\n", bool_str(sysvh->vh_opt.fancy));
+	vt_cmd_sys_bool_show(vh, sysvh->vh_opt.fancy);
 	return 0;
 }
 
 static int vt_cmd_sys_fancy(const struct vt_handle *vh, const char *str)
 {
 	struct vt_handle *sysvh = vt_handle_get(vh);
-	fprintf(vh->vh_stream, "%s\n", bool_str(sysvh->vh_opt.fancy));
+	vt_cmd_sys_bool_show(vh, sysvh->vh_opt.fancy);
 	return 0;
 }
 
@@ -172,7 +300,7 @@ static int vt_cmd_sys_verbose_off(const struct vt_handle *vh, const char *str)
 {
 	struct vt_handle *sysvh = vt_handle_get(vh);
 	sysvh->vh_opt.verbose = VT_BOOL_FALSE;
-	fprintf(vh->vh_stream, "%s\n", bool_str(sysvh->vh_opt.verbose));
+	vt_cmd_sys_bool_show(vh, sysvh->vh_opt.verbose);
 	return 0;
 }
 
@@ -180,14 +308,14 @@ static int vt_cmd_sys_verbose_on(const struct vt_handle *vh, const char *str)
 {
 	struct vt_handle *sysvh = vt_handle_get(vh);
 	sysvh->vh_opt.verbose = VT_BOOL_TRUE;
-	fprintf(vh->vh_stream, "%s\n", bool_str(sysvh->vh_opt.verbose));
+	vt_cmd_sys_bool_show(vh, sysvh->vh_opt.verbose);
 	return 0;
 }
 
 static int vt_cmd_sys_verbose(const struct vt_handle *vh, const char *str)
 {
 	struct vt_handle *sysvh = vt_handle_get(vh);
-	fprintf(vh->vh_stream, "%s\n", bool_str(sysvh->vh_opt.verbose));
+	vt_cmd_sys_bool_show(vh, sysvh->vh_opt.verbose);
 	return 0;
 }
 
@@ -195,7 +323,7 @@ static int vt_cmd_sys_prompt_off(const struct vt_handle *vh, const char *str)
 {
 	struct vt_handle *sysvh = vt_handle_get(vh);
 	sysvh->vh_opt.prompt = VT_BOOL_FALSE;
-	fprintf(vh->vh_stream, "%s\n", bool_str(sysvh->vh_opt.prompt));
+	vt_cmd_sys_bool_show(vh, sysvh->vh_opt.prompt);
 	return 0;
 }
 
@@ -203,14 +331,54 @@ static int vt_cmd_sys_prompt_on(const struct vt_handle *vh, const char *str)
 {
 	struct vt_handle *sysvh = vt_handle_get(vh);
 	sysvh->vh_opt.prompt = VT_BOOL_TRUE;
-	fprintf(vh->vh_stream, "%s\n", bool_str(sysvh->vh_opt.prompt));
+	vt_cmd_sys_bool_show(vh, sysvh->vh_opt.prompt);
 	return 0;
 }
 
 static int vt_cmd_sys_prompt(const struct vt_handle *vh, const char *str)
 {
 	struct vt_handle *sysvh = vt_handle_get(vh);
-	fprintf(vh->vh_stream, "%s\n", bool_str(sysvh->vh_opt.prompt));
+	vt_cmd_sys_bool_show(vh, sysvh->vh_opt.prompt);
+	return 0;
+}
+
+/* for testing */
+#include <time.h>
+static int vt_cmd_sys_date(const struct vt_handle *vh, const char *str)
+{
+	struct timespec ts;
+	time_t t;
+	char strbuf[LINE_MAX];
+	int ret;
+
+	if (strlen(str) > 0) {
+		int ret = vt_printf(vh, "unknown args\n");
+		if (ret < 0)
+			return ret;
+		return 0;
+	}
+
+	memset(&ts, 0, sizeof(ts));
+	ret = clock_gettime(CLOCK_REALTIME, &ts);
+	if (ret != 0) {
+		VTDBG("clock_gettime: %s\n", strerror(errno));
+		return -errno;
+	}
+
+	t = (time_t)ts.tv_sec; /* XXX: fix it! */
+	if (t == 0) {
+		strcpy(strbuf, "(undefined)");
+	} else {
+		struct tm *tp = localtime(&t);
+
+		sprintf(strbuf, "%04d-%02d-%02d %02d:%02d:%02d",
+			tp->tm_year + 1900, tp->tm_mon + 1, tp->tm_mday,
+			tp->tm_hour, tp->tm_min, tp->tm_sec);
+	}
+
+	ret = vt_printf(vh, "%s\n", strbuf);
+	if (ret < 0)
+		return ret;
 	return 0;
 }
 
@@ -219,7 +387,7 @@ static int vt_cmd_sys_quit(const struct vt_handle *vh, const char *str)
 	struct vt_handle *sysvh = vt_handle_get(vh);
 
 	if (strlen(str) > 0) {
-		int ret = fprintf(vh->vh_stream, "unknown args\n");
+		int ret = vt_printf(vh, "unknown args\n");
 		if (ret < 0)
 			return ret;
 		return 0;
@@ -233,6 +401,11 @@ static struct vt_cmd_entry vt_cmd_quit = {
 	.cmd = "quit",
 	.cmd_alias = "exit",
 	.parser = vt_cmd_sys_quit,
+};
+
+static struct vt_cmd_entry vt_cmd_date = {
+	.cmd = "date",
+	.parser = vt_cmd_sys_date,
 };
 
 static struct vt_cmd_entry vt_cmd_prompt = {
@@ -290,40 +463,51 @@ static int vt_cmd_sys_init(void)
 {
 	int ret;
 
-	INIT_LIST_HEAD(&vt_cmd_root.list);
-	vt_cmd_root.parent = NULL;
-	INIT_LIST_HEAD(&vt_cmd_root.child_list);
-
+	vt_cmd_init(&vt_cmd_quit);
 	ret = vt_cmd_add_root(&vt_cmd_quit);
 	if (ret < 0)
 		return ret;
 
+	vt_cmd_init(&vt_cmd_date);
+	ret = vt_cmd_add_root(&vt_cmd_date);
+	if (ret < 0)
+		return ret;
+
+	vt_cmd_init(&vt_cmd_prompt);
 	ret = vt_cmd_add_root(&vt_cmd_prompt);
 	if (ret < 0)
 		return ret;
+	vt_cmd_init(&vt_cmd_prompt_on);
 	ret = vt_cmd_add(&vt_cmd_prompt, &vt_cmd_prompt_on);
 	if (ret < 0)
 		return ret;
+	vt_cmd_init(&vt_cmd_prompt_off);
 	ret = vt_cmd_add(&vt_cmd_prompt, &vt_cmd_prompt_off);
 	if (ret < 0)
 		return ret;
 
+	vt_cmd_init(&vt_cmd_verbose);
 	ret = vt_cmd_add_root(&vt_cmd_verbose);
 	if (ret < 0)
 		return ret;
+	vt_cmd_init(&vt_cmd_verbose_on);
 	ret = vt_cmd_add(&vt_cmd_verbose, &vt_cmd_verbose_on);
 	if (ret < 0)
 		return ret;
+	vt_cmd_init(&vt_cmd_verbose_off);
 	ret = vt_cmd_add(&vt_cmd_verbose, &vt_cmd_verbose_off);
 	if (ret < 0)
 		return ret;
 
+	vt_cmd_init(&vt_cmd_fancy);
 	ret = vt_cmd_add_root(&vt_cmd_fancy);
 	if (ret < 0)
 		return ret;
+	vt_cmd_init(&vt_cmd_fancy_on);
 	ret = vt_cmd_add(&vt_cmd_fancy, &vt_cmd_fancy_on);
 	if (ret < 0)
 		return ret;
+	vt_cmd_init(&vt_cmd_fancy_off);
 	ret = vt_cmd_add(&vt_cmd_fancy, &vt_cmd_fancy_off);
 	if (ret < 0)
 		return ret;
@@ -355,11 +539,11 @@ static int vt_cmd_dump_candidates(const struct vt_handle *vh,
 		/* check whether new-line is needed or not */
 		if (n > 0) {
 			if (llen + seplen + cmdlen >= line_max) {
-				ret = fprintf(vh->vh_stream, "\n");
+				ret = vt_printf(vh, "\n");
 				llen = 0;
 			} else {
 				/* add a separator */
-				ret = fprintf(vh->vh_stream, sep);
+				ret = vt_printf(vh, sep);
 				llen += seplen;
 			}
 			if (ret < 0)
@@ -367,14 +551,14 @@ static int vt_cmd_dump_candidates(const struct vt_handle *vh,
 		}
 		llen += cmdlen;
 
-		ret = fprintf(vh->vh_stream, e->cmd);
+		ret = vt_printf(vh, e->cmd);
 		if (ret < 0)
 			return ret;
 
 		n++;
 	}
 
-	ret = fprintf(vh->vh_stream, "\n");
+	ret = vt_printf(vh, "\n");
 	if (ret < 0)
 		return ret;
 
@@ -384,6 +568,10 @@ static int vt_cmd_dump_candidates(const struct vt_handle *vh,
 
 struct bul_vt_arg {
 	const struct vt_handle *vh;
+	int is_bul;
+	int is_hot;
+	int is_cot;
+	int is_ncn;
 };
 
 static int bul_vt_dump(void *data, void *arg)
@@ -391,111 +579,222 @@ static int bul_vt_dump(void *data, void *arg)
 	struct bulentry *bule = (struct bulentry *)data;
 	struct bul_vt_arg *bva = (struct bul_vt_arg *)arg;
 	const struct vt_handle *vh = bva->vh;
+	int is_reg = 0;
+	int is_rr = 0;
 	struct timespec ts_now;
 	int ts_now_broken = 0;
 
-	dump_bule(data, vh->vh_stream);
+	if ((bule->type == BUL_ENTRY && !bva->is_bul) ||
+	    (bule->type == HOT_ENTRY && !bva->is_hot) ||
+	    (bule->type == COT_ENTRY && !bva->is_cot) ||
+	    (bule->type == NON_MIP_CN_ENTRY && !bva->is_ncn))
+		return 0;
 
-	fprintf(vh->vh_stream, " ack %s", (bule->wait_ack) ? "wait" : "ready");
+	is_reg = (bule->type == BUL_ENTRY) && (bule->flags & IP6_MH_BU_HOME);
+	is_rr = (bule->type == HOT_ENTRY) || (bule->type == COT_ENTRY);
 
-	if (!(bule->flags & IP6_MH_BU_HOME)) {
-		fprintf(vh->vh_stream, " RR state %s",
-			  (bule->rr.state == RR_READY) ? "ready" :
-			  (bule->rr.state == RR_STARTED) ? "started" :
-			  (bule->rr.state == RR_H_EXPIRED) ?
-			  "home nonce expired" :
-			  (bule->rr.state == RR_C_EXPIRED) ?
-			  "care-of nonce expired" :
-			  (bule->rr.state == RR_C_EXPIRED) ?
-			  "care-of nonce expired" :
-			  (bule->rr.state == RR_C_EXPIRED) ? "expired" :
-			  (bule->rr.state == RR_C_EXPIRED) ? "none" : "?");
+	vt_printf_bl(vh, "%s %x:%x:%x:%x:%x:%x:%x:%x",
+		     (is_reg ? "ha" :
+		      (bule->type == NON_MIP_CN_ENTRY) ? "non-cn" : "cn"),
+		     NIP6ADDR(&bule->peer_addr));
+
+	switch (bule->type) {
+	case BUL_ENTRY:
+		vt_printf(vh, " ack %s", bule->wait_ack ? "wait" : "ready");
+		break;
+	case HOT_ENTRY:
+		vt_printf(vh, " hot %s", bule->rr.wait_hot ? "wait" : "ready");
+		break;
+	case COT_ENTRY:
+		vt_printf(vh, " cot %s", bule->rr.wait_cot ? "wait" : "ready");
+		break;
+	case NON_MIP_CN_ENTRY:
+		break;
+	default:
+		vt_printf(vh, " (unknown type %d)", bule->type);
+		break;
 	}
-	fprintf(vh->vh_stream, "\n");
 
-	if (vh->vh_opt.verbose == VT_BOOL_TRUE) {
-		char buf[IF_NAMESIZE + 1];
-		char *dev = if_indextoname(bule->if_coa, buf);
+	vt_printf(vh, "\n");
 
-		fprintf(vh->vh_stream, " dev ");
+	if (bule->type != NON_MIP_CN_ENTRY) {
+		vt_printf_b(vh, " coa %x:%x:%x:%x:%x:%x:%x:%x",
+			    NIP6ADDR(&bule->coa));
 
-		if (!dev || strlen(dev) == 0)
-			fprintf(vh->vh_stream, "(%d)", bule->if_coa);
-		else
-			fprintf(vh->vh_stream, "%s", dev);
+		if (vh->vh_opt.verbose == VT_BOOL_TRUE) {
+			char buf[IF_NAMESIZE + 1];
+			char *dev = if_indextoname(bule->if_coa, buf);
 
-		fprintf(vh->vh_stream, " last_coa %x:%x:%x:%x:%x:%x:%x:%x",
-			  NIP6ADDR(&bule->last_coa));
+			vt_printf(vh, " dev ");
 
-		fprintf(vh->vh_stream, "\n");
+			if (!dev || strlen(dev) == 0)
+				vt_printf(vh, "(%d)", bule->if_coa);
+			else
+				vt_printf(vh, "%s", dev);
+		}
 
-		if (!(bule->flags & IP6_MH_BU_HOME)) {
-			fprintf(vh->vh_stream, "care-of nonce index %u",
-				  bule->rr.co_ni);
+		if (!is_reg) {
+			if (vh->vh_opt.verbose == VT_BOOL_TRUE)
+				vt_printf(vh, " nonce %u", bule->rr.coa_nonce_ind);
+		}
 
-			fprintf(vh->vh_stream, "home nonce index %u",
-				  bule->rr.ho_ni);
+		if (!is_rr) {
+			int i;
+			uint16_t f = 0;
+			vt_printf(vh, " flags %c%c%c%c",
+				  ((bule->flags & IP6_MH_BU_ACK) ? 'A' : '-'),
+				  ((bule->flags & IP6_MH_BU_HOME) ? 'H' : '-'),
+				  ((bule->flags & IP6_MH_BU_LLOCAL) ? 'L' : '-'),
+				  ((bule->flags & IP6_MH_BU_KEYM) ? 'K' : '-'));
 
-			fprintf(vh->vh_stream, "\n");
+			for (i = 0; i < sizeof(bule->flags); i++) {
+				f = 1 << i;
+				if (bule->flags & f)
+					vt_printf(vh, "%c", 1);
+			}
+
+//			if (vh->vh_opt.verbose == VT_BOOL_TRUE)
+//				vt_printf(vh, "(%x)", bule->flags);
+		}
+		vt_printf(vh, "\n");
+	}
+
+	if (bule->type == BUL_ENTRY) {
+		if (vh->vh_opt.verbose == VT_BOOL_TRUE) {
+			vt_printf(vh, "   prev-coa %x:%x:%x:%x:%x:%x:%x:%x",
+				  NIP6ADDR(&bule->prev_coa));
+			vt_printf(vh, "\n");
 		}
 	}
+
+	if (bule->type != COT_ENTRY) {
+		if (bule->type == HOT_ENTRY ||
+		    vh->vh_opt.verbose == VT_BOOL_TRUE) {
+			vt_printf(vh, " hoa %x:%x:%x:%x:%x:%x:%x:%x",
+				  NIP6ADDR(&bule->hoa));
+
+			if (!is_reg) {
+				if (vh->vh_opt.verbose == VT_BOOL_TRUE)
+					vt_printf(vh, " nonce %u",
+						  bule->rr.home_nonce_ind);
+			}
+
+			vt_printf(vh, "\n");
+		}
+	}
+
 	if (clock_gettime(CLOCK_REALTIME, &ts_now) != 0)
 		ts_now_broken = 1;
 
-	fprintf(vh->vh_stream, " lifetime ");
+	vt_printf(vh, " lifetime ");
 	if (!ts_now_broken) {
 		if (tsafter(ts_now, bule->lastsent))
-			fprintf(vh->vh_stream, "(broken)");
+			vt_printf(vh, "(broken)");
 		else {
 			struct timespec ts;
 
 			tssub(ts_now, bule->lastsent, ts);
-			tssub(bule->lifetime, ts, ts);
-			fprintf(vh->vh_stream, "%ld", ts.tv_sec);
+			/* "ts" is now time how log it goes */
+			if (tsafter(bule->lifetime, ts)) {
+				tssub(ts, bule->lifetime, ts);
+				vt_printf(vh, "-%lu", ts.tv_sec);
+			} else {
+				tssub(bule->lifetime, ts, ts);
+				vt_printf(vh, "%lu", ts.tv_sec);
+			}
 		}
 	} else
-		fprintf(vh->vh_stream, "(error)");
+		vt_printf(vh, "(error)");
+	vt_printf(vh, " / %lu", bule->lifetime.tv_sec);
 
-	fprintf(vh->vh_stream, " / %ld", bule->lifetime.tv_sec);
+	if (!is_rr)
+		vt_printf(vh, " seq %u", bule->seq);
+  	vt_printf(vh, " resend %d", bule->consecutive_resends);
+	vt_printf(vh, " delay %u after %d", 
+		  bule->delay.tv_sec,
+		  bule->lastsent.tv_sec + bule->delay.tv_sec - ts_now.tv_sec);
+	if (tsisset(bule->rr.kgen_expires) && bule->type != COT_ENTRY )
+		vt_printf(vh, " homekey %d / %d",
+			  bule->rr.kgen_expires.tv_sec - ts_now.tv_sec,
+			  MAX_TOKEN_LIFETIME);
 
-	fprintf(vh->vh_stream, " seq %u", bule->seq);
-
-	fprintf(vh->vh_stream, " resend %d", bule->consecutive_resends);
-	fprintf(vh->vh_stream, " delay %ld(after %lds)", bule->delay.tv_sec,
-		  bule->lastsent.tv_sec +
-		  bule->delay.tv_sec - ts_now.tv_sec);
 	if (vh->vh_opt.verbose == VT_BOOL_TRUE) {
-		fprintf(vh->vh_stream, " expires ");
+		vt_printf(vh, " expires ");
 		if (tsisset(bule->expires)) {
 			if (!ts_now_broken) {
 				struct timespec ts;
-				tssub(bule->expires, ts_now, ts);
-				fprintf(vh->vh_stream, "%ld", ts.tv_sec);
-			} else
-				fprintf(vh->vh_stream, "(error)");
-		} else
-			fprintf(vh->vh_stream, "-");
-	}
-	fprintf(vh->vh_stream, "\n");
 
-	if ((bule->flags & IP6_MH_BU_HOME) && !ts_now_broken) {
-		struct timespec delay, lastsent;
+				if (tsafter(bule->expires, ts_now)) {
+					tssub(ts_now, bule->expires, ts);
+					vt_printf(vh, "-%lu", ts.tv_sec);
+				} else {
+					tssub(bule->expires, ts_now, ts);
+					vt_printf(vh, "%lu", ts.tv_sec);
+				}
+			} else
+				vt_printf(vh, "(error)");
+		} else
+			vt_printf(vh, "-");
+	}
+
+	vt_printf(vh, "\n");
+
+	if (is_reg && !is_rr && !ts_now_broken) {
+		struct timespec delay, lastsent, expires;
 		if (!mpd_poll_mps(&bule->hoa,
-				  &bule->peer_addr, &delay, &lastsent)) {
-			fprintf(vh->vh_stream, " mps ");
+				  &bule->peer_addr, &delay, &lastsent,
+				  &expires)) {
+			vt_printf(vh, " mps ");
 			if (tsafter(ts_now, lastsent))
-				fprintf(vh->vh_stream, "(broken)");
+				vt_printf(vh, "(broken)");
 			else {
 				struct timespec ts;
-				tssub(ts_now, lastsent, ts);
-				tssub(delay, ts, ts);
-				fprintf(vh->vh_stream, "%ld", ts.tv_sec);
+				if (tsisset(lastsent)) {
+					tssub(ts_now, lastsent, ts);
+					/* "ts" is now time how log it goes */
+					if (tsafter(delay, ts)) {
+						tssub(ts, delay, ts);
+						vt_printf(vh, "-%lu", ts.tv_sec);
+					} else {
+						tssub(delay, ts, ts);
+						vt_printf(vh, "%lu", ts.tv_sec);
+					}
+				} else {
+					/* The case we have never send any MPS... */
+					tssub(expires, ts_now, ts);
+					if (tsafter(delay, ts)) {
+						tssub(ts, delay, ts);
+						vt_printf(vh, "-%lu", ts.tv_sec);
+					} else {
+						vt_printf(vh, "%lu", ts.tv_sec);
+					}
+				}
+
 			}
-			fprintf(vh->vh_stream, " / %ld", delay.tv_sec);
+			vt_printf(vh, " / %lu", delay.tv_sec);
 		}
 	}
-	fprintf(vh->vh_stream, "\n");
-	fflush(vh->vh_stream);
+
+	if (!is_rr && vh->vh_opt.verbose == VT_BOOL_TRUE) {
+		vt_printf(vh, " kgen ");
+		if (tsisset(bule->rr.kgen_expires)) {
+			if (!ts_now_broken) {
+				struct timespec ts;
+
+				if (tsafter(bule->rr.kgen_expires, ts_now)) {
+					tssub(ts_now, bule->rr.kgen_expires, ts);
+					vt_printf(vh, "-%lu", ts.tv_sec);
+				} else {
+					tssub(bule->rr.kgen_expires, ts_now, ts);
+					vt_printf(vh, "%lu", ts.tv_sec);
+				}
+			} else
+				vt_printf(vh, "(error)");
+		} else
+			vt_printf(vh, "-");
+	}
+
+	vt_printf(vh, "\n");
 
 	return 0;
 }
@@ -503,10 +802,12 @@ static int bul_vt_dump(void *data, void *arg)
 static int bul_vt_cmd_bul(const struct vt_handle *vh, const char *str)
 {
 	struct bul_vt_arg bva;
+	memset(&bva, 0, sizeof(bva));
 	bva.vh = vh;
+	bva.is_bul = 1;
 
 	if (strlen(str) > 0) {
-		fprintf(vh->vh_stream, "unknown args\n");
+		vt_printf(vh, "unknown args\n");
 		return 0;
 	}
 	pthread_rwlock_rdlock(&mn_lock);
@@ -517,12 +818,34 @@ static int bul_vt_cmd_bul(const struct vt_handle *vh, const char *str)
 
 static int bul_vt_cmd_rr(const struct vt_handle *vh, const char *str)
 {
+	struct bul_vt_arg bva;
+	memset(&bva, 0, sizeof(bva));
+	bva.vh = vh;
+	bva.is_hot = 1;
+	bva.is_cot = 1;
+
 	if (strlen(str) > 0) {
-		fprintf(vh->vh_stream, "unknown args\n");
+		vt_printf(vh, "unknown args\n");
+		return 0;
+	}
+
+	bul_iterate(NULL, bul_vt_dump, &bva);
+	return 0;
+}
+
+static int bul_vt_cmd_ncn(const struct vt_handle *vh, const char *str)
+{
+	struct bul_vt_arg bva;
+	memset(&bva, 0, sizeof(bva));
+	bva.vh = vh;
+	bva.is_ncn = 1;
+
+	if (strlen(str) > 0) {
+		vt_printf(vh, "unknown args\n");
 		return 0;
 	}
 	pthread_rwlock_rdlock(&mn_lock);
-	rrl_dump(vh->vh_stream);
+	bul_iterate(NULL, bul_vt_dump, &bva);
 	pthread_rwlock_unlock(&mn_lock);
 	return 0;
 }
@@ -535,6 +858,12 @@ static struct vt_cmd_entry vt_cmd_bul = {
 static struct vt_cmd_entry vt_cmd_rr = {
 	.cmd = "rr",
 	.parser = bul_vt_cmd_rr,
+};
+
+static struct vt_cmd_entry vt_cmd_ncn = {
+	.cmd = "ncn",
+	.cmd_alias = "non-cn",
+	.parser = bul_vt_cmd_ncn,
 };
 
 struct bcache_vt_arg {
@@ -560,73 +889,73 @@ static int bcache_vt_dump(void *data, void *arg)
 
 	tsclear(ts_now);
 
-	fprintf_bl(vh, "hoa %x:%x:%x:%x:%x:%x:%x:%x",
-		   NIP6ADDR(&bce->peer_addr));
+	vt_printf_bl(vh, "hoa %x:%x:%x:%x:%x:%x:%x:%x",
+		     NIP6ADDR(&bce->peer_addr));
 
 	if (vh->vh_opt.verbose == VT_BOOL_TRUE)
-		fprintf(vh->vh_stream, " nonce %u", bce->nonce_hoa);
+		vt_printf(vh, " nonce %u", bce->nonce_hoa);
 
-	fprintf_b(vh, " status %s",
-		  (bce->type == BCE_HOMEREG) ? "registered" :
-		  (bce->type == BCE_CACHED) ? "cached" :
-		  (bce->type == BCE_NONCE_BLOCK) ? "nonce-block" :
-		  (bce->type == BCE_CACHE_DYING) ? "dying" :
-		  (bce->type == BCE_DAD) ? "dad" :
-		  "(unknown)");
+	vt_printf_b(vh, " status %s",
+		    (bce->type == BCE_HOMEREG) ? "registered" :
+		    (bce->type == BCE_CACHED) ? "cached" :
+		    (bce->type == BCE_NONCE_BLOCK) ? "nonce-block" :
+		    (bce->type == BCE_CACHE_DYING) ? "dying" :
+		    (bce->type == BCE_DAD) ? "dad" :
+		    "(unknown)");
 
-	fprintf(vh->vh_stream, "\n");
+	vt_printf(vh, "\n");
 
-	fprintf(vh->vh_stream, " coa %x:%x:%x:%x:%x:%x:%x:%x",
-		NIP6ADDR(&bce->coa));
+	vt_printf(vh, " coa %x:%x:%x:%x:%x:%x:%x:%x", NIP6ADDR(&bce->coa));
 
 	if (vh->vh_opt.verbose == VT_BOOL_TRUE)
-		fprintf(vh->vh_stream, " nonce %u", bce->nonce_coa);
+		vt_printf(vh, " nonce %u", bce->nonce_coa);
 
-	fprintf(vh->vh_stream, " flags %c%c%c%c",
-		((bce->flags & IP6_MH_BU_ACK) ? 'A' : '-'),
-		((bce->flags & IP6_MH_BU_HOME) ? 'H' : '-'),
-		((bce->flags & IP6_MH_BU_LLOCAL) ? 'L' : '-'),
-		((bce->flags & IP6_MH_BU_KEYM) ? 'K' : '-'));
+	vt_printf(vh, " flags %c%c%c%c",
+		  ((bce->flags & IP6_MH_BU_ACK) ? 'A' : '-'),
+		  ((bce->flags & IP6_MH_BU_HOME) ? 'H' : '-'),
+		  ((bce->flags & IP6_MH_BU_LLOCAL) ? 'L' : '-'),
+		  ((bce->flags & IP6_MH_BU_KEYM) ? 'K' : '-'));
+	if (vh->vh_opt.verbose == VT_BOOL_TRUE)
+		vt_printf(vh, "(%x)", bce->flags);
 
-	fprintf(vh->vh_stream, "\n");
+	vt_printf(vh, "\n");
 
-	fprintf(vh->vh_stream, " local %x:%x:%x:%x:%x:%x:%x:%x",
-		NIP6ADDR(&bce->our_addr));
+	vt_printf(vh, " local %x:%x:%x:%x:%x:%x:%x:%x", NIP6ADDR(&bce->our_addr));
 
 	if (vh->vh_opt.verbose == VT_BOOL_TRUE) {
 		char buf[IF_NAMESIZE + 1];
 		char *dev;
 
 		if (bce->tunnel) {
-			fprintf(vh->vh_stream, " tunnel ");
+			vt_printf(vh, " tunnel ");
 
 			dev = if_indextoname(bce->tunnel, buf);
 			if (!dev || strlen(dev) == 0)
-				fprintf(vh->vh_stream, "(%d)", bce->tunnel);
+				vt_printf(vh, "(%d)", bce->tunnel);
 			else
-				fprintf(vh->vh_stream, "%s", dev);
+				vt_printf(vh, "%s", dev);
 		}
 		if (bce->link) {
-			fprintf(vh->vh_stream, " link ");
+			vt_printf(vh, " link ");
 
 			dev = if_indextoname(bce->link, buf);
 			if (!dev || strlen(dev) == 0)
-				fprintf(vh->vh_stream, "(%d)", bce->link);
+				vt_printf(vh, "(%d)", bce->link);
 			else
-				fprintf(vh->vh_stream, "%s", dev);
+				vt_printf(vh, "%s", dev);
 		}
 	}
 
-	fprintf(vh->vh_stream, "\n");
+	vt_printf(vh, "\n");
 
-	fprintf(vh->vh_stream, " lifetime ");
+	vt_printf(vh, " lifetime ");
 	if (bce->type == BCE_DAD)
-		fprintf(vh->vh_stream, "-");
+		vt_printf(vh, "-");
 	else if (clock_gettime(CLOCK_REALTIME, &ts_now) != 0)
-		fprintf(vh->vh_stream, "(error)");
+		vt_printf(vh, "(error)");
 	else {
 		if (tsafter(ts_now, bce->add_time))
-			fprintf(vh->vh_stream, "(broken)");
+			vt_printf(vh, "(broken)");
 		else {
 			struct timespec ts;
 
@@ -634,29 +963,29 @@ static int bcache_vt_dump(void *data, void *arg)
 			/* "ts" is now time how log it alives */
 			if (tsafter(bce->lifetime, ts)) {
 				tssub(ts, bce->lifetime, ts);
-				fprintf(vh->vh_stream, "-%ld", ts.tv_sec);
+				vt_printf(vh, "-%lu", ts.tv_sec);
 			} else {
 				tssub(bce->lifetime, ts, ts);
-				fprintf(vh->vh_stream, "%ld", ts.tv_sec);
+				vt_printf(vh, "%lu", ts.tv_sec);
 			}
 		}
 	}
-	fprintf(vh->vh_stream, " / %ld", bce->lifetime.tv_sec);
+	vt_printf(vh, " / %lu", bce->lifetime.tv_sec);
 
-	fprintf(vh->vh_stream, " seq %u", bce->seqno);
+	vt_printf(vh, " seq %u", bce->seqno);
 
-	fprintf(vh->vh_stream, " unreach %d", bce->unreach);
+	vt_printf(vh, " unreach %d", bce->unreach);
 
 	if ((bce->flags & IP6_MH_BU_HOME) && tsisset(ts_now)) {
 		struct timespec delay, lastsent;
 		int retries = mpd_poll_mpa(&bce->our_addr, &bce->peer_addr,
 					   &delay, &lastsent);
 		if (retries >= 0) {
-			fprintf(vh->vh_stream, " mpa ");
+			vt_printf(vh, " mpa ");
 			if (!tsisset(lastsent))
-				fprintf(vh->vh_stream, "-");
+				vt_printf(vh, "-");
 			else if (tsafter(ts_now, lastsent))
-				fprintf(vh->vh_stream, "(broken)");
+				vt_printf(vh, "(broken)");
 			else {
 				struct timespec ts;
 
@@ -664,18 +993,18 @@ static int bcache_vt_dump(void *data, void *arg)
 				/* "ts" is now time how log it alives */
 				if (tsafter(delay, ts)) {
 					tssub(ts, delay, ts);
-					fprintf(vh->vh_stream, "-%ld", ts.tv_sec);
+					vt_printf(vh, "-%lu", ts.tv_sec);
 				} else {
 					tssub(delay, ts, ts);
-					fprintf(vh->vh_stream, "%ld", ts.tv_sec);
+					vt_printf(vh, "%lu", ts.tv_sec);
 				}
 			}
 		}
-		fprintf(vh->vh_stream, " / %ld", delay.tv_sec);
-		fprintf(vh->vh_stream, " retry %d", retries);
+		vt_printf(vh, " / %lu", delay.tv_sec);
+		vt_printf(vh, " retry %d", retries);
 	}
 
-	fprintf(vh->vh_stream, "\n");
+	vt_printf(vh, "\n");
 
 	return 0;
 }
@@ -687,7 +1016,7 @@ static int bcache_vt_cmd_bc(const struct vt_handle *vh, const char *str)
 	bva.is_nb = 0;
 
 	if (strlen(str) > 0) {
-		fprintf(vh->vh_stream, "unknown args\n");
+		vt_printf(vh, "unknown args\n");
 		return 0;
 	}
 
@@ -702,7 +1031,7 @@ static int bcache_vt_cmd_nonce(const struct vt_handle *vh, const char *str)
 	bva.is_nb = 1;
 
 	if (strlen(str) > 0) {
-		fprintf(vh->vh_stream, "unknown args\n");
+		vt_printf(vh, "unknown args\n");
 		return 0;
 	}
 
@@ -725,10 +1054,6 @@ int vt_cmd_add(struct vt_cmd_entry *parent, struct vt_cmd_entry *e)
 	int err = 0;
 	struct list_head *lp;
 
-	INIT_LIST_HEAD(&e->list);
-	e->parent = NULL;
-	INIT_LIST_HEAD(&e->child_list);
-
 	pthread_rwlock_wrlock(&vt_lock);
 
 	if (!parent || !e) {
@@ -736,14 +1061,19 @@ int vt_cmd_add(struct vt_cmd_entry *parent, struct vt_cmd_entry *e)
 		goto fin;
 	}
 	if (e == &vt_cmd_root) {
+		VTDBG("VT table failed: root must not be a child: \"%s\"\n",
+		      parent->cmd);
 		err = -EINVAL;
 		goto fin;
 	}
 	if (parent != &vt_cmd_root && parent->parent == NULL) {
+		VTDBG("VT table failed: parent is not on root: \"%s\"\n",
+		      parent->cmd);
 		err = -EINVAL;
 		goto fin;
 	}
 	if (e->parent != NULL) {
+		VTDBG("VT table failed: already added: \"%s\"\n", e->cmd);
 		err = -EINVAL;
 		goto fin;
 	}
@@ -775,9 +1105,30 @@ int vt_cmd_add_root(struct vt_cmd_entry *e)
 	return vt_cmd_add(&vt_cmd_root, e);
 }
 
+int vt_cmd_init(struct vt_cmd_entry *e)
+{
+	INIT_LIST_HEAD(&e->list);
+	e->parent = NULL;
+	INIT_LIST_HEAD(&e->child_list);
+	return 0;
+}
+
 static int vt_cmd_has_child(struct vt_cmd_entry *e)
 {
 	return !list_empty(&e->child_list);
+}
+
+static const char *vt_str_nonspace_skip(const char *str)
+{
+	int len = strlen(str);
+	int i = 0;
+
+	for (i = 0; i < len; i++) {
+		if (isspace(str[i]) != 0)
+			break;
+	}
+
+	return &str[i];
 }
 
 static const char *vt_str_space_skip(const char *str)
@@ -825,7 +1176,6 @@ static int vt_cmd_input(const struct vt_handle *vh, char *line, ssize_t len)
 	int ret;
 
 	pthread_rwlock_rdlock(&vt_lock);
-
 	p = line;
 
 	while (1) {
@@ -835,23 +1185,28 @@ static int vt_cmd_input(const struct vt_handle *vh, char *line, ssize_t len)
 
 		p = vt_str_space_skip(p);
 		/* command has no character */
-		if (strlen(p) == 0)
+		if (strlen(p) == 0) {
+			VTDBG3("VT cmd = (no char)\n");
 			goto fin;
+		}
 
 		list_for_each (lp, &ce->child_list) {
 			e = list_entry(lp, struct vt_cmd_entry, list);
 
 			if (vt_cmd_match(e, p) == 0)
 				continue;
+			VTDBG3("VT cmd = \"%s\"\n", e->cmd);
 
-			p_next = p + strlen(e->cmd);
+			//p_next = p + strlen(e->cmd);
+			p_next = vt_str_nonspace_skip(p);
 			p_next = vt_str_space_skip(p_next);
+			VTDBG3("VT p next = \"%s\"\n", p_next);
 
 			if (strlen(p_next) > 0 && vt_cmd_has_child(e))
 				break;
 
 			if (!e->parser) {
-				fprintf(vh->vh_stream, "do nothing\n");
+				vt_printf(vh, "do nothing\n");
 				goto fin;
 			}
 
@@ -859,7 +1214,8 @@ static int vt_cmd_input(const struct vt_handle *vh, char *line, ssize_t len)
 			ret = e->parser(vh, p_next);
 			pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
 			if (ret != 0) {
-				fprintf(vh->vh_stream, "command parse failed\n");
+				VTDBG3("command parse failed\n");
+				vt_printf(vh, "command parse failed\n");
 			}
 
 			goto fin;
@@ -873,7 +1229,7 @@ static int vt_cmd_input(const struct vt_handle *vh, char *line, ssize_t len)
 			vt_cmd_dump_candidates(vh, ce, VT_CMD_HELP_LINE_MAX);
 			goto fin;
 		} else {
-			fprintf(vh->vh_stream, "unknown command: \"%s\"\n", p);
+			vt_printf(vh, "unknown command: \"%s\"\n", p);
 			goto fin;
 		}
 	}
@@ -886,11 +1242,10 @@ static int vt_cmd_input(const struct vt_handle *vh, char *line, ssize_t len)
 
 	if (vh->vh_opt.prompt == VT_BOOL_TRUE) {
 		/* send prompt */
-		fprintf(vh->vh_stream, VT_CMD_PROMPT);
+		vt_printf(vh, VT_CMD_PROMPT);
 	}
 
-	fprintf(vh->vh_stream, "%c", 0);
-	fflush(vh->vh_stream);
+	vt_null_write(vh->vh_sock);
 
 	pthread_rwlock_unlock(&vt_lock);
 
@@ -906,23 +1261,64 @@ static int vt_cmd_input(const struct vt_handle *vh, char *line, ssize_t len)
 static int vt_connect_input(struct vt_handle *vh, void *data, ssize_t len)
 {
 	char *line = NULL;
+	int i;
+	int j;
 	int ret;
+
+	//assert(len != 0 && data != NULL);
 
 	line = (char *)malloc(len);
 	if (!line) {
+		VTDBG("malloc: %s\n", strerror(errno));
 		ret = -errno;
 		goto fin;
 	}
+	memset(line, '\0', len);
 	memcpy(line, data, len);
-	line[len - 1] = 0;
+#ifdef VTDBG3
+	{
+		int slen = len * 5;
+		char *s = (char *)malloc(slen);
+		if (s) {
+			memset(s, '\0', slen);
 
-	ret = vt_cmd_input(vh, line, len);
+			for (i = 0; i < len; i++) {
+				char buf[5];
+				char c = line[i];
+				if (isprint(c) == 0)
+					sprintf(buf, "[%d]", c);
+				else
+					sprintf(buf, "%c", c);
+				strcat(s, buf);
+			}
+			VTDBG3("line = \"%s\"\n", s);
+		}
+	}
+#endif
 
-	if (ret != 0)
-		goto fin;
+	for (i = 0; i < len; i++) {
+		for (j = i; j < len; j++) {
+			if (line[j] == ' ' || isspace(line[j]) == 0)
+				continue;
+			else {
+				line[j] = '\0';
+				break;
+			}
+		}
+
+		ret = vt_cmd_input(vh, &line[i], j - i);
+		if (ret != 0)
+			goto fin;
+
+		for (j = j + 1; j < len; j++) {
+			if (line[j] == ' ' || isspace(line[j]) == 0)
+				break;
+		}
+
+		i = j - 1;
+	}
 
 	free(line);
-
 	return 0;
 
  fin:
@@ -935,6 +1331,8 @@ static int vt_connect_input(struct vt_handle *vh, void *data, ssize_t len)
 
 static int vt_connect_recv(struct vt_handle *vh)
 {
+	VTDBG3("VT processing\n");
+
 	while (1) {
 		char buf[VT_PKT_BUFLEN];
 		struct msghdr msg;
@@ -951,29 +1349,35 @@ static int vt_connect_recv(struct vt_handle *vh)
 		msg.msg_controllen = 0;
 		msg.msg_flags = 0;
 
-		if (vh->vh_sock < 0)
+		if (vh->vh_sock < 0) {
+			VTDBG("VT not opened socket\n");
 			return -EBADFD;
+		}
 
 		ret = recvmsg(vh->vh_sock, &msg, 0);
 		if (ret < 0) {
 			if (errno == EINTR)
 				continue;
+			VTDBG("recvmsg: %s\n", strerror(errno));
 			return -1;
 		} else if (ret == 0) {
+			VTDBG("client disconnect\n");
 			goto disconnect;
 		}
 		len = ret;
 
 		ret = vt_connect_input(vh, buf, len);
-
 		if (ret != 0)
 			goto disconnect;
 
-		if (msg.msg_flags & MSG_TRUNC)
+		if (msg.msg_flags & MSG_TRUNC) {
+			VTDBG2("recvmsg: message truncated: datagram\n");
 			continue;
-
-		if (msg.msg_flags & MSG_CTRUNC)
+		}
+		if (msg.msg_flags & MSG_CTRUNC) {
+			VTDBG2("recvmsg: message truncated: ancillary data\n");
 			continue;
+		}
 
 		break;
 	}
@@ -991,6 +1395,7 @@ static int vt_connect_close(struct vt_handle *vh)
 		return 0;
 
 	close(vh->vh_sock);
+	VTDBG2("VT connect closed\n");
 
 	vh->vh_sock = -1;
 
@@ -999,6 +1404,8 @@ static int vt_connect_close(struct vt_handle *vh)
 
 static int vt_connect_fini(struct vt_handle *vh)
 {
+	//assert(vh == vt_connect_handle);
+
 	if (vh->vh_sock >= 0)
 		vt_connect_close(vh);
 
@@ -1015,20 +1422,23 @@ static int vt_connect_fini(struct vt_handle *vh)
 static int vt_connect_init(const struct vt_server_entry *vse)
 {
 	int sock;
-	FILE *stream;
 	struct vt_handle *vh = NULL;
 	int ret;
 
 	sock = accept(vse->vse_sock, NULL, NULL);
-	if (sock < 0)
+	if (sock < 0) {
+		VTDBG("accept: %s\n", strerror(errno));
 		goto error;
-
-	stream = fdopen(sock, "w");
+	}
+	VTDBG2("VT connect accepted\n");
 
 	if (vt_handle_full()) {
-		/* send error message */
-		ret = fprintf(stream, "Too many connections\n");
+		VTDBG("VT connect is too many, reject new one\n");
+
+		/* send error mesasge */
+		ret = vt_str_write(sock, "Too many connections\n");
 		if (ret < 0) {
+			VTDBG2("VT write failed for rejecting connection\n");
 			/* ignore error here*/
 		}
 		close(sock);
@@ -1037,20 +1447,20 @@ static int vt_connect_init(const struct vt_server_entry *vse)
 
 	vh = (struct vt_handle *)malloc(sizeof(*vh));
 	if (vh == NULL) {
+		VTDBG("malloc: %s\n", strerror(errno));
 		ret = -errno;
 
-		/* send error message */
-		if (fprintf(stream, "Server cannot make connection\n") < 0) {
+		/* send error mesasge */
+		if (vt_str_write(sock, "Server cannot make connection\n") < 0) {
+			VTDBG2("VT write failed for connection failure\n");
 			/* ignore error here*/
 		}
 		close(sock);
-		fclose(stream);
 		goto error;
 	}
-
 	memset(vh, 0, sizeof(*vh));
+
 	vh->vh_sock = sock;
-	vh->vh_stream = stream;
 
 	/* Apply default values to option per server */
 	switch (vse->vse_sa.sa_family) {
@@ -1068,15 +1478,15 @@ static int vt_connect_init(const struct vt_server_entry *vse)
 
 	ret = vt_handle_add(vh);
 	if (ret != 0) {
+		VTDBG("VT cannot add new handle\n");
 		goto error;
 	}
 
 	if (vh->vh_opt.prompt == VT_BOOL_TRUE) {
 		/* send prompt */
-		ret = fprintf(vh->vh_stream, VT_CMD_PROMPT);
+		ret = vt_printf(vh, VT_CMD_PROMPT);
 		if (ret < 0)
 			goto error;
-		fflush(vh->vh_stream);
 	}
 
 	return 0;
@@ -1088,10 +1498,8 @@ static int vt_connect_init(const struct vt_server_entry *vse)
 	return 0; /* ignore error here */
 }
 
-static void *vt_server_recv(void *arg)
+void *vt_server_recv(void *arg)
 {
-	pthread_dbg("thread started");
-
 	while (1) {
 		int ret;
 		int sock_max = 0;
@@ -1106,6 +1514,7 @@ static void *vt_server_recv(void *arg)
 
 			if (sock_max < e->vse_sock)
 				sock_max = e->vse_sock;
+			VTDBG3("VT select server sock = %d\n", e->vse_sock);
 		}
 		if (sock_max == 0)
 			break;
@@ -1114,14 +1523,21 @@ static void *vt_server_recv(void *arg)
 			FD_SET(vt_connect_handle->vh_sock, &fds);
 			if (sock_max < vt_connect_handle->vh_sock)
 				sock_max = vt_connect_handle->vh_sock;
+			VTDBG3("VT select connect sock = %d\n",
+			       vt_connect_handle->vh_sock);
 		}
+
+		VTDBG3("VT server selecting\n");
 
 		ret = select(sock_max+1, &fds, NULL, NULL, NULL); 
 		if (ret < 0) {
 			if (errno == EINTR)
 				continue;
+			VTDBG("select: %s\n", strerror(errno));
 			break;
 		}
+
+		VTDBG3("VT server select\n");
 
 		ret = 0;
 		list_for_each (lp, &vt_server_list) {
@@ -1129,6 +1545,8 @@ static void *vt_server_recv(void *arg)
 			e = list_entry(lp, struct vt_server_entry, list);
 
 			if (FD_ISSET(e->vse_sock, &fds)) {
+				VTDBG3("VT server select sock = %d\n",
+				       e->vse_sock);
 				ret = vt_connect_init(e);
 				if (ret != 0)
 					break;
@@ -1140,6 +1558,9 @@ static void *vt_server_recv(void *arg)
 		if (vt_connect_handle != NULL &&
 		    vt_connect_handle->vh_sock >= 0) {
 			if (FD_ISSET(vt_connect_handle->vh_sock, &fds)) {
+				VTDBG3("VT server select sock = %d\n",
+				       vt_connect_handle->vh_sock);
+
 				ret = vt_connect_recv(vt_connect_handle);
 				if (ret != 0)
 					vt_connect_fini(vt_connect_handle);
@@ -1147,11 +1568,12 @@ static void *vt_server_recv(void *arg)
 		}
 	}
 
+	VTDBG("VT server shutdown\n");
 	if (vt_connect_handle != NULL)
 		vt_connect_fini(vt_connect_handle);
 	vt_server_fini();
 
-	pthread_exit(NULL);
+	return NULL;
 }
 
 static int vt_server_clean(const struct sockaddr *sa, int salen)
@@ -1194,6 +1616,7 @@ static int vt_server_fini(void)
 		free(e);
 	}
 
+	VTDBG2("VT server closed\n");
 	return 0;
 }
 
@@ -1210,8 +1633,11 @@ static int vt_server_setsockopt(int sock, struct addrinfo *ai)
 
 		ret = setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
 				 &on, sizeof(on));
-		if (ret != 0)
+		if (ret != 0) {
+			VTDBG("setsockopt(SO_REUSEADDR): %s\n",
+			      strerror(errno));
 			return ret;
+		}
 	}
 	return 0;
 }
@@ -1225,9 +1651,10 @@ static int vt_server_init(const char *node, const char *service,
 	int n = 0;
 
 	ret = getaddrinfo(node, service, hints, &res);
-	if (ret != 0)
+	if (ret != 0) {
+		VTDBG("getaddrinfo: %s(%d)\n", gai_strerror(ret), ret);
 		goto error;
-
+	}
 	errno = 0;
 
 	for (ai = res; ai != NULL; ai = ai->ai_next) {
@@ -1246,18 +1673,21 @@ static int vt_server_init(const char *node, const char *service,
 
 		ret = bind(sock, ai->ai_addr, ai->ai_addrlen);
 		if (ret != 0) {
+			VTDBG("bind: %s\n", strerror(errno));
 			close(sock);
 			continue;
 		}
 
 		ret = listen(sock, VT_SERVER_BACKLOG);
 		if (ret != 0) {
+			VTDBG("listen: %s\n", strerror(errno));
 			close(sock);
 			continue;
 		}
 
 		e = (struct vt_server_entry *)malloc(sizeof(*e));
 		if (e == NULL) {
+			VTDBG("malloc: %s\n", strerror(errno));
 			ret = -errno;
 			close(sock);
 			goto error;
@@ -1269,10 +1699,23 @@ static int vt_server_init(const char *node, const char *service,
 
 		list_add(&e->list, &vt_server_list);
 
+#ifdef VTDBG2
+		{
+			char hbuf[256];
+			char sbuf[32];
+			if (getnameinfo(ai->ai_addr, ai->ai_addrlen,
+					hbuf, sizeof(hbuf), sbuf, sizeof(sbuf),
+					(NI_NUMERICHOST | NI_NUMERICSERV)) == 0)
+				VTDBG2("VT server listens %s[%s] OK\n", hbuf,
+				       sbuf);
+		}
+#endif
+
 		n ++;
 	}
 	if (n == 0) {
 		ret = -1;
+		VTDBG("VT no server sockets can open\n");
 		goto error;
 	}
 	errno = 0;
@@ -1282,6 +1725,7 @@ static int vt_server_init(const char *node, const char *service,
 
 	return 0;
  error:
+	VTDBG("VT server init NG\n");
 	if (res != NULL)
 		freeaddrinfo(res);
 	vt_server_fini();
@@ -1297,11 +1741,13 @@ int vt_start(const char *vthost, const char *vtservice)
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
+	//hints.ai_protocol = IPPROTO_TCP;
 	hints.ai_flags = AI_PASSIVE;
 
-	if (vt_server_init(vthost, vtservice, &hints) != 0)
+	if (vt_server_init(vthost, vtservice, &hints) != 0) {
+		VTDBG("VT init server failed\n");
 		return -1;
-
+	}
 	if (pthread_create(&vt_listener, NULL, vt_server_recv, NULL))
 		return -1;
 	return 0;
@@ -1311,11 +1757,18 @@ int vt_bul_init(void)
 {
 	int ret;
 
+	vt_cmd_init(&vt_cmd_bul);
 	ret = vt_cmd_add_root(&vt_cmd_bul);
 	if (ret < 0)
 		return ret;
 
+	vt_cmd_init(&vt_cmd_rr);
 	ret = vt_cmd_add_root(&vt_cmd_rr);
+	if (ret < 0)
+		return ret;
+
+	vt_cmd_init(&vt_cmd_ncn);
+	ret = vt_cmd_add_root(&vt_cmd_ncn);
 	if (ret < 0)
 		return ret;
 
@@ -1326,10 +1779,12 @@ int vt_bc_init(void)
 {
 	int ret;
 
+	vt_cmd_init(&vt_cmd_bc);
 	ret = vt_cmd_add_root(&vt_cmd_bc);
 	if (ret < 0)
 		return ret;
 
+	vt_cmd_init(&vt_cmd_nonce);
 	ret = vt_cmd_add_root(&vt_cmd_nonce);
 	if (ret < 0)
 		return ret;
@@ -1341,7 +1796,7 @@ int vt_init(void)
 {
 	if (pthread_rwlock_init(&vt_lock, NULL))
 		return -1;
-
+	vt_cmd_init(&vt_cmd_root);
 	return vt_cmd_sys_init();
 }
 
@@ -1356,6 +1811,6 @@ void vt_fini(void)
 	}
 	pthread_cancel(vt_listener);
 	pthread_join(vt_listener, NULL);
-
+	//vt_connect_fini(vt_connect_handle);
 	vt_server_fini();
 }

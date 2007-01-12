@@ -1,13 +1,11 @@
 /*
- * $Id: icmp6.c 1.42 06/05/06 15:15:47+03:00 anttit@tcs.hut.fi $
+ * $Id: icmp6.c 1.33 05/12/12 13:19:02+02:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
- * Authors: Antti Tuominen <anttit@tcs.hut.fi>
- *          Ville Nuorvala <vnuorval@tcs.hut.fi>
+ * Author: Antti Tuominen <anttit@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2004 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -27,20 +25,30 @@
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
+#ifdef HAVE_LIBPTHREAD
 #include <pthread.h>
+#else
+#error "POSIX Thread Library required!"
+#endif
 #include <sys/socket.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <syslog.h>
 #include <netinet/in.h>
 #include <netinet/ip6.h>
+#ifndef HAVE_MIP6_IP6_H
+#include <netinet-ip6.h>
+#endif
 #include <netinet/icmp6.h>
+#ifndef HAVE_MIP6_ICMP6_H
+#include <netinet-icmp6.h>
+#endif
 #include "icmp6.h"
 #include "util.h"
 #include "debug.h"
+#include "rfc3542.h"
 #include "conf.h"
 
 enum {
@@ -168,8 +176,6 @@ static void *icmp6_listen(void *arg)
 	ssize_t len;
 	struct icmp6_handler *h;
 
-	pthread_dbg("thread started");
-
 	while (1) {
 		pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
 		len = icmp6_recv(icmp6_sock.fd, msg, sizeof(msg),
@@ -192,7 +198,7 @@ static void *icmp6_listen(void *arg)
 			h->recv(ih, len, saddr, daddr, iif, hoplimit);
 		pthread_rwlock_unlock(&handler_lock);
 	}
-	pthread_exit(NULL);
+	return NULL;
 }
 
 int icmp6_init(void)
@@ -202,12 +208,8 @@ int icmp6_init(void)
 	int val;
 
 	icmp6_sock.fd = socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6);
-	if (icmp6_sock.fd < 0) {
-		syslog(LOG_ERR,
-		       "Unable to open ICMPv6 socket! "
-		       "Do you have root permissions?");
+	if (icmp6_sock.fd < 0)
 		return icmp6_sock.fd;
-	}
 	val = 1;
 	if (setsockopt(icmp6_sock.fd, IPPROTO_IPV6, IPV6_RECVPKTINFO, 
 		       &val, sizeof(val)) < 0)
@@ -353,7 +355,7 @@ int icmp6_send(int oif, uint8_t hoplimit,
 
 #define CMSG_BUF_LEN 128
 
-ssize_t icmp6_recv(int sockfd, unsigned char *msg, size_t msglen,
+ssize_t icmp6_recv(int sockfd, unsigned char *msg, socklen_t msglen,
 		   struct sockaddr_in6 *addr, struct in6_pktinfo *pkt_info,
 		   int *hoplimit)
 {

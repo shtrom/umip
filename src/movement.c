@@ -1,12 +1,11 @@
 /*
- * $Id: movement.c 1.172 06/05/19 01:51:45+03:00 vnuorval@tcs.hut.fi $
+ * $Id: movement.c 1.155 06/01/20 16:26:44+09:00 aramoto@springbank.sharp.net $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
  * Author: Ville Nuorvala <vnuorval@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2004 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -27,10 +26,17 @@
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
+#ifdef HAVE_LIBPTHREAD
 #include <pthread.h>
+#else
+#error "POSIX Thread Library required!"
+#endif
 #include <syslog.h>
 #include <errno.h>
 #include <netinet/icmp6.h>
+#ifndef HAVE_MIP6_ICMP6_H
+#include <netinet-icmp6.h>
+#endif
 #include <net/if.h>
 
 #include "debug.h"
@@ -66,33 +72,37 @@
 #define MDBG3(...)
 #endif /* MDBG3 */
 
-static LIST_HEAD(ifaces);
-static pthread_mutex_t iface_lock;
+LIST_HEAD(ifaces);
+pthread_mutex_t iface_lock;
 
 static pthread_t md_listener;
 
 static int conf_default_autoconf = 1;
-static int conf_default_ra = 1;
+static int conf_default_ra_defrtr = 1;
+static int conf_default_ra_pinfo = 1;
 static int conf_default_rs = 3;
 static int conf_default_rs_ival = 4;
+static int neigh_default_app_ns = 0;
 
-static int conf_autoconf = 1;
-static int conf_ra = 0;
-static int conf_rs = 0;
+int conf_autoconf = 1;
+int conf_ra_defrtr = 0;
+int conf_ra_pinfo = 0;
+int conf_rs = 0;
+int neigh_app_ns = 1;
 
-static unsigned int adv_ivals_md_trigger = 1;
-static unsigned int adv_ivals_dad_limit = 3;
+unsigned int adv_ivals_md_trigger = 1;
+unsigned int adv_ivals_dad_limit = 3;
 
-static int nud_expire_rtr = 1;
+int nud_expire_rtr = 1;
 
-static void __md_trigger_movement_event(int event_type, int data,
-					struct md_inet6_iface *iface,
-					struct md_coa *coa)
+void __md_trigger_movement_event(int event_type, int data,
+				 struct md_inet6_iface *iface,
+				 struct md_coa *coa)
 {
 	struct movement_event e;
 
 	memset(&e, 0, sizeof(struct movement_event));
-	e.md_strategy = (conf.MnRouterProbes > 0 ? 
+	e.md_strategy = (conf.MnRouterProbesRA > 0 ? 
 			 MD_STRATEGY_LAZY : MD_STRATEGY_EAGER);
 	e.event_type = event_type;
 	e.data = data;
@@ -120,7 +130,7 @@ void md_trigger_movement_event(int event_type, int data, int ifindex)
 	pthread_mutex_unlock(&iface_lock);
 }
 
-static inline void md_free_coa(struct md_coa *coa)
+static void md_free_coa(struct md_coa *coa)
 {
 	MDBG3("freeing CoA %x:%x:%x:%x:%x:%x:%x:%x on iface %d\n", 
 	      NIP6ADDR(&coa->addr), coa->ifindex);
@@ -128,25 +138,14 @@ static inline void md_free_coa(struct md_coa *coa)
 	free(coa);
 }
 
-static void md_flush_coa(struct md_coa *coa)
-{
-	if (!(coa->flags&IFA_F_HOMEADDRESS)) {
-		MDBG2("deleting CoA "
-		      "%x:%x:%x:%x:%x:%x:%x:%x on iface %d\n", 
-		      NIP6ADDR(&coa->addr), coa->ifindex);
-		addr_del(&coa->addr, coa->plen, coa->ifindex);
-	}
-	md_free_coa(coa);
-}
-
-static void md_flush_coa_list(struct list_head *coas)
+static void md_free_coa_list(struct list_head *coas)
 {
 	struct list_head *list, *n;
 	list_for_each_safe(list, n, coas) {
 		struct md_coa *coa;
 		coa = list_entry(list, struct md_coa, list);
-		md_flush_coa(coa);
-	}
+		md_free_coa(coa);
+	}	
 }
 
 static inline void md_free_router_prefix(struct prefix_list_entry *p)
@@ -168,30 +167,18 @@ static void md_prefix_rule_del(struct prefix_list_entry *p)
 
 static void __md_free_router(struct md_router *rtr)
 {
-	struct list_head *l, *n;
-	if (rtr->used) {
-		MDBG2("deleting default route via %x:%x:%x:%x:%x:%x:%x:%x\n", 
-		      NIP6ADDR(&rtr->lladdr));
+	struct list_head *list, *n;
 
-		route_del(rtr->ifindex, RT_TABLE_MAIN, 0,
-			  &in6addr_any, 0, &in6addr_any, 0, &rtr->lladdr);
-	}
-	list_for_each_safe(l, n, &rtr->prefixes) {
-		struct prefix_list_entry *p;
-		p = list_entry(l, struct prefix_list_entry, list);
-		if (rtr->used) {
-			md_prefix_rule_del(p);
-			MDBG2("deleting prefix route "
-			      "%x:%x:%x:%x:%x:%x:%x:%x/%d\n", 
-			      NIP6ADDR(&p->ple_prefix), p->ple_plen);
-			route_del(rtr->ifindex, RT_TABLE_MAIN, 0, &in6addr_any,
-				  0, &p->ple_prefix, p->ple_plen, NULL);
-		}
-		md_free_router_prefix(p);
-	}
 	list_del(&rtr->list);
+
 	MDBG3("freeing router %x:%x:%x:%x:%x:%x:%x:%x\n", 
 	      NIP6ADDR(&rtr->lladdr));
+
+	list_for_each_safe(list, n, &rtr->prefixes) {
+		struct prefix_list_entry *p;
+		p = list_entry(list, struct prefix_list_entry, list);
+		md_free_router_prefix(p);
+	}
 	free(rtr);
 }
 
@@ -201,7 +188,7 @@ static inline void md_free_router(struct md_router *rtr)
 	__md_free_router(rtr);
 }
 
-static void md_flush_router_list(struct list_head *routers)
+static void md_free_router_list(struct list_head *routers)
 {
 	struct list_head *list, *n;
 	list_for_each_safe(list, n, routers) {
@@ -215,9 +202,9 @@ static void md_free_inet6_iface(struct md_inet6_iface *iface)
 {
 	MDBG3("freeing iface %s (%d)\n", iface->name, iface->ifindex);
 	assert(list_empty(&iface->default_rtr));
-	md_flush_router_list(&iface->expired_rtrs);
+	md_free_router_list(&iface->expired_rtrs);
 	assert(list_empty(&iface->coas));
-	md_flush_coa_list(&iface->expired_coas);
+	md_free_coa_list(&iface->expired_coas);
 	free(iface);
 }
 
@@ -229,10 +216,37 @@ static void md_expire_coa(struct md_inet6_iface *iface, struct md_coa *coa)
 	list_add_tail(&coa->list, &iface->expired_coas);
 }
 
-static void md_reset_home_link(struct md_inet6_iface *i)
+static void md_delete_expired_routes(struct md_inet6_iface *iface)
 {
-	i->home_link = 0;
-	i->ll_dad_unsafe = 0;
+	struct list_head *rlist;
+
+	list_for_each(rlist, &iface->expired_rtrs) {
+		struct md_router *rtr;
+		struct list_head *plist;
+
+		rtr = list_entry(rlist, struct md_router, list);
+
+		if (!rtr->used)
+			continue;
+
+		MDBG2("deleting default route via %x:%x:%x:%x:%x:%x:%x:%x\n", 
+		      NIP6ADDR(&rtr->lladdr));
+
+		route_del(rtr->ifindex, RT_TABLE_MAIN, 0,
+			  &in6addr_any, 0, &in6addr_any, 0, &rtr->lladdr);
+		list_for_each(plist, &rtr->prefixes) {
+			struct prefix_list_entry *p;
+			p = list_entry(plist, struct prefix_list_entry, list);
+
+			md_prefix_rule_del(p);
+
+			MDBG2("deleting prefix route "
+			      "%x:%x:%x:%x:%x:%x:%x:%x/%d\n", 
+			      NIP6ADDR(&p->ple_prefix), p->ple_plen);
+			route_del(rtr->ifindex, RT_TABLE_MAIN, 0, &in6addr_any,
+				  0, &p->ple_prefix, p->ple_plen, NULL);
+		}
+	}
 }
 
 static void md_expire_router(struct md_inet6_iface *iface,
@@ -272,10 +286,23 @@ static void md_expire_router(struct md_inet6_iface *iface,
 					md_expire_coa(iface, coa);
 			}
 		}
-		if (new == NULL)
-			md_reset_home_link(iface);
 	}
 	list_add_tail(&old->list, &iface->expired_rtrs);
+}
+
+static void md_delete_expired_coas(struct md_inet6_iface *iface)
+{
+	struct list_head *list;
+	list_for_each(list, &iface->expired_coas) {
+		struct md_coa *coa = list_entry(list, struct md_coa, list);
+		if (!(coa->flags&IFA_F_HOMEADDRESS)) {
+			MDBG2("deleting CoA "
+			      "%x:%x:%x:%x:%x:%x:%x:%x on iface %s (%d)\n", 
+			      NIP6ADDR(&coa->addr), iface->name,
+			      iface->ifindex);
+			addr_del(&coa->addr, coa->plen, coa->ifindex);
+		}
+	}
 }
 
 static void md_block_rule_del(struct md_inet6_iface *iface)
@@ -287,12 +314,18 @@ static void md_block_rule_del(struct md_inet6_iface *iface)
 	iface->iface_flags &= ~MD_BLOCK_TRAFFIC;
 }
 
-static void md_flush_inet6_iface(struct md_inet6_iface *iface)
+static void md_expire_inet6_iface(struct md_inet6_iface *iface)
 {
 	struct md_router *rtr;
 	struct list_head *l, *n;
+
+	list_del(&iface->list);
 	del_task(&iface->tqe);
-	iface->router_solicits = 0;
+
+	MDBG2("expiring iface %s (%d)\n", iface->name, iface->ifindex);
+
+	if (iface->iface_flags & MD_BLOCK_TRAFFIC)
+		md_block_rule_del(iface);
 	list_for_each_safe(l, n, &iface->backup_rtrs) {
 		rtr = list_entry(l, struct md_router, list);
 		md_expire_router(iface, rtr, NULL);
@@ -300,41 +333,26 @@ static void md_flush_inet6_iface(struct md_inet6_iface *iface)
 	if ((rtr = md_get_first_router(&iface->default_rtr)) != NULL) {
 		md_expire_router(iface, rtr, NULL);
 	}
-	md_flush_router_list(&iface->expired_rtrs);
+	md_delete_expired_routes(iface);
 	list_for_each_safe(l, n, &iface->coas) {
 		struct md_coa *coa = list_entry(l, struct md_coa, list);
 		md_expire_coa(iface, coa);
 	}
-	md_flush_coa_list(&iface->expired_coas);
-}
-
-static void md_expire_inet6_iface(struct md_inet6_iface *iface)
-{
-	MDBG2("expiring iface %s (%d)\n", iface->name, iface->ifindex);
-	md_flush_inet6_iface(iface);
-	if (iface->iface_flags & MD_BLOCK_TRAFFIC)
-		md_block_rule_del(iface);
-	list_del(&iface->list);
+	md_delete_expired_coas(iface);
 	__md_trigger_movement_event(ME_IFACE_DOWN, 0, iface, NULL);
 }
 
 static void md_link_down(struct md_inet6_iface *iface)
 {
-	MDBG2("link down on iface %s (%d)\n", iface->name, iface->ifindex);
-	md_flush_inet6_iface(iface);
-	__md_trigger_movement_event(ME_LINK_DOWN, 0, iface, NULL);
-}
+	struct list_head *list, *n;
 
-static void
-md_init_coa(struct md_coa *coa, struct ifaddrmsg *ifa, struct rtattr **rta_tb)
-{
-	memset(coa, 0, sizeof(struct md_coa));
-	INIT_LIST_HEAD(&coa->list);
-	coa->flags = ifa->ifa_flags;
-	coa->plen = ifa->ifa_prefixlen;
-	coa->scope = ifa->ifa_scope;
-	coa->ifindex = ifa->ifa_index;
-	coa->addr = *(struct in6_addr *) RTA_DATA(rta_tb[IFA_ADDRESS]);
+	MDBG2("link down on iface %s (%d)\n", iface->name, iface->ifindex);
+
+	list_for_each_safe(list, n, &iface->coas) {
+		struct md_coa *coa = list_entry(list, struct md_coa, list);
+		md_expire_coa(iface, coa);
+	}
+	__md_trigger_movement_event(ME_LINK_DOWN, 0, iface, NULL);
 }
 
 static struct md_coa *md_create_coa(struct md_inet6_iface *iface,
@@ -343,9 +361,14 @@ static struct md_coa *md_create_coa(struct md_inet6_iface *iface,
 {
 	struct md_coa *coa = malloc(sizeof(struct md_coa));
 	if (coa != NULL) {
-		struct ifa_cacheinfo *ci;
-		md_init_coa(coa, ifa, rta_tb);
-		ci = RTA_DATA(rta_tb[IFA_CACHEINFO]);
+		struct ifa_cacheinfo *ci = RTA_DATA(rta_tb[IFA_CACHEINFO]);
+		memset(coa, 0, sizeof(struct md_coa));
+		INIT_LIST_HEAD(&coa->list);
+		coa->flags = ifa->ifa_flags;
+		coa->plen = ifa->ifa_prefixlen;
+		coa->scope = ifa->ifa_scope;
+		coa->ifindex = ifa->ifa_index;
+		coa->addr = *(struct in6_addr *) RTA_DATA(rta_tb[IFA_ADDRESS]);
 		clock_gettime(CLOCK_REALTIME, &coa->timestamp);
 		tssetsec(coa->valid_time, ci->ifa_valid);
 		tssetsec(coa->preferred_time, ci->ifa_prefered);
@@ -420,11 +443,14 @@ static int process_new_addr(struct ifaddrmsg *ifa, struct rtattr **rta_tb)
 	pthread_mutex_lock(&iface_lock);
 	if ((iface = md_get_inet6_iface(&ifaces, ifa->ifa_index)) != NULL) {
 		if (ifa->ifa_scope == RT_SCOPE_LINK) {
+			struct md_coa *coa;
 			iface->iface_flags &= ~MD_LINK_LOCAL_DAD;
-			__md_trigger_movement_event(ME_LINK_UP, 0, 
-						    iface, NULL);
-			if (iface->iface_flags & MD_BLOCK_TRAFFIC)
-				md_block_rule_del(iface);
+			if ((coa = md_get_coa(&iface->coas, NULL)) != NULL) {
+				__md_trigger_movement_event(ME_COA_NEW, 0,
+							    iface, coa);
+				if (iface->iface_flags & MD_BLOCK_TRAFFIC)
+					md_block_rule_del(iface);
+			}
 		} else if (ifa->ifa_scope == RT_SCOPE_UNIVERSE) {
 			res = update_coa(iface, ifa, rta_tb);
 		}
@@ -433,27 +459,11 @@ static int process_new_addr(struct ifaddrmsg *ifa, struct rtattr **rta_tb)
 	return res;
 }
 
-static void md_inet6_iface_init(struct md_inet6_iface *i, int ifindex)
-{
-	memset(i, 0, sizeof(struct md_inet6_iface));
-	i->ifindex = ifindex;
-	INIT_LIST_HEAD(&i->list);
-	INIT_LIST_HEAD(&i->default_rtr);
-	INIT_LIST_HEAD(&i->backup_rtrs);
-	INIT_LIST_HEAD(&i->expired_rtrs);
-	INIT_LIST_HEAD(&i->coas);
-	INIT_LIST_HEAD(&i->expired_coas);
-	INIT_LIST_HEAD(&i->tqe.list);
-}
-
 static int process_del_addr(struct ifaddrmsg *ifa, struct rtattr **rta_tb)
 {
 	struct in6_addr *addr = RTA_DATA(rta_tb[IFA_ADDRESS]);
 	struct md_inet6_iface *iface;
 	struct md_coa *coa;
-	struct md_inet6_iface iface_h;
-	struct md_coa coa_h;
-	
 	int res = 0;
 
 	MDBG3("deleted address %x:%x:%x:%x:%x:%x:%x:%x on iface %d\n", 
@@ -464,24 +474,13 @@ static int process_del_addr(struct ifaddrmsg *ifa, struct rtattr **rta_tb)
 		return 0;
 
 	pthread_mutex_lock(&iface_lock);
-	if ((iface = md_get_inet6_iface(&ifaces, ifa->ifa_index)) != NULL) {
-		coa = md_get_coa(&iface->coas, addr);
-		if (coa != NULL)
-			md_expire_coa(iface, coa);
-		else
-			coa = md_get_coa(&iface->expired_coas, addr);
-	} else {
-		md_inet6_iface_init(&iface_h, ifa->ifa_index);
-		iface = &iface_h;
-		coa = NULL;
-	}
-	if (coa == NULL) {
-		md_init_coa(&coa_h, ifa, rta_tb);
-		coa = &coa_h;
-	}
-	__md_trigger_movement_event(ME_COA_EXPIRED, 0, iface, coa);
-	if (coa != &coa_h)
+	if ((iface = md_get_inet6_iface(&ifaces, ifa->ifa_index)) != NULL &&
+	    ((coa = md_get_coa(&iface->coas, addr)) != NULL ||
+	     (coa = md_get_coa(&iface->expired_coas, addr)) != NULL)) {
+		md_expire_coa(iface, coa);
+		__md_trigger_movement_event(ME_COA_EXPIRED, 0, iface, coa);
 		md_free_coa(coa);
+	}
 	pthread_mutex_unlock(&iface_lock);
 	return res;
 }
@@ -518,11 +517,12 @@ static void __md_discover_router(struct md_inet6_iface *iface)
 	MDBG("discover link on iface %s (%d)\n", iface->name, iface->ifindex);
 
 	if (md_is_link_up(iface) && 
-	    iface->router_solicits++ <= iface->devconf[DEVCONF_RTR_SOLICITS]) {
+	    iface->router_solicits++ < iface->devconf[DEVCONF_RTR_SOLICITS]) {
 		struct timespec exp_in;
-		ndisc_send_rs(iface->ifindex, &in6addr_any,
-			      &in6addr_all_routers_mc);
-		tssetsec(exp_in, iface->devconf[DEVCONF_RTR_SOLICIT_INTERVAL]);
+		if( ndisc_send_rs(iface->ifindex, &in6addr_any, &in6addr_all_routers_mc) < 0)
+			iface->router_solicits--;
+
+		tssetsec(exp_in, iface->devconf[DEVCONF_RTR_SOLICIT_INTERVAL]/TIME_SEC_MSEC);
 		add_task_rel(&exp_in, &iface->tqe, md_discover_router);
 	}
 }
@@ -541,13 +541,40 @@ static void md_discover_router(struct tq_elem *tqe)
 static void md_check_expired_coas(struct md_inet6_iface *iface, 
 				  struct md_router *rtr);
 
-static void md_link_up(struct md_inet6_iface *iface)
+static int md_probe_router(struct md_router *rtr, int max_probes);
+
+static int md_link_up_probe(struct md_inet6_iface *iface, 
+			    struct md_router *rtr)
 {
-	MDBG2("link up on iface %s (%d)\n", iface->name, iface->ifindex);
-	__md_discover_router(iface);
+	del_task(&rtr->tqe);
+	if (!md_probe_router(rtr, conf.MnRouterProbesLinkUp)) {
+		md_expire_router(iface, rtr, NULL);
+		return 0;
+	}
+	return 1;
 }
 
-static void __md_new_link(struct md_inet6_iface *iface, int link_changed)
+static void md_link_up(struct md_inet6_iface *iface)
+{
+	struct md_router *rtr;
+	struct list_head *l, *n;
+	int probed = 0;
+
+	MDBG2("link up on iface %s (%d)\n", iface->name, iface->ifindex);
+
+	list_for_each_safe(l, n, &iface->backup_rtrs) {
+		rtr = list_entry(l, struct md_router, list);
+		probed |= md_link_up_probe(iface, rtr);
+	}
+	if ((rtr = md_get_first_router(&iface->default_rtr)) != NULL) {
+		md_check_expired_coas(iface, rtr);
+		probed |= md_link_up_probe(iface, rtr);
+	}
+	if (!probed)
+		__md_discover_router(iface);
+}
+
+static void __md_new_link(struct md_inet6_iface *iface, int dad)
 {
 	assert(!list_empty(&iface->default_rtr));
 
@@ -556,21 +583,23 @@ static void __md_new_link(struct md_inet6_iface *iface, int link_changed)
 
 	MDBG2("new link on iface %s (%d)\n", iface->name, iface->ifindex);
 
-	if (link_changed) {
+	if (dad) {
 		struct list_head *l, *n;
-		if (!iface->ll_dad_unsafe) {
-			iface->iface_flags |= MD_LINK_LOCAL_DAD;
-			addr_do(&iface->lladdr, 64, iface->ifindex, NULL,
-				mn_lladdr_dad);
-		}
+		iface->iface_flags |= MD_LINK_LOCAL_DAD;
+		addr_do(&iface->lladdr, 64, iface->ifindex, NULL,
+			mn_lladdr_dad);
 		list_for_each_safe(l, n, &iface->backup_rtrs) {
 			struct md_router *rtr;
 			rtr = list_entry(l, struct md_router, list);
 			md_expire_router(iface, rtr, NULL);
 		}		
 	}
-	md_flush_router_list(&iface->expired_rtrs);
-	md_flush_coa_list(&iface->expired_coas);
+
+	md_delete_expired_routes(iface);
+	md_free_router_list(&iface->expired_rtrs);
+
+	md_delete_expired_coas(iface);
+	md_free_coa_list(&iface->expired_coas);
 }
 
 static inline int md_set_linklocal(struct in6_addr *lladdr, 
@@ -607,7 +636,9 @@ md_create_inet6_iface(struct ifinfomsg *ifi, struct rtattr **rta_tb)
 	struct md_inet6_iface *iface;
 	
 	if ((iface = malloc(sizeof(struct md_inet6_iface))) != NULL) {
-		md_inet6_iface_init(iface, ifi->ifi_index);
+		memset(iface, 0, sizeof(struct md_inet6_iface));
+		INIT_LIST_HEAD(&iface->list);
+		iface->ifindex = ifi->ifi_index;
 		if (rta_tb[IFLA_IFNAME])
 			strncpy(iface->name, RTA_DATA(rta_tb[IFLA_IFNAME]), 
 				IF_NAMESIZE - 1);
@@ -624,11 +655,11 @@ md_create_inet6_iface(struct ifinfomsg *ifi, struct rtattr **rta_tb)
 			struct rtattr *inet6_tb[IFLA_INET6_MAX+1];
 
 			memset(inet6_tb, 0, sizeof(inet6_tb));
-		
+
 			parse_rtattr(inet6_tb, IFLA_INET6_MAX, 
 				     RTA_DATA(rta_tb[IFLA_PROTINFO]),
 				     rta_tb[IFLA_PROTINFO]->rta_len);
-		
+
 			if (inet6_tb[IFLA_INET6_CONF]) {
 				memcpy(iface->devconf, 
 				       RTA_DATA(inet6_tb[IFLA_INET6_CONF]),
@@ -638,7 +669,15 @@ md_create_inet6_iface(struct ifinfomsg *ifi, struct rtattr **rta_tb)
 		if (iface->devconf[DEVCONF_RTR_SOLICITS] == 0)
 			iface->devconf[DEVCONF_RTR_SOLICITS] = conf_default_rs;
 		if (iface->devconf[DEVCONF_RTR_SOLICIT_INTERVAL] == 0)
-			iface->devconf[DEVCONF_RTR_SOLICIT_INTERVAL] = conf_default_rs_ival;
+			iface->devconf[DEVCONF_RTR_SOLICIT_INTERVAL] = conf_default_rs_ival*TIME_SEC_MSEC;
+
+		INIT_LIST_HEAD(&iface->default_rtr);
+		INIT_LIST_HEAD(&iface->backup_rtrs);
+		INIT_LIST_HEAD(&iface->expired_rtrs);
+		INIT_LIST_HEAD(&iface->coas);
+		INIT_LIST_HEAD(&iface->expired_coas);
+		INIT_LIST_HEAD(&iface->tqe.list);
+
 		MDBG3("creating iface %s (%d)\n", iface->name, iface->ifindex);
 	}
 	return iface;
@@ -646,11 +685,15 @@ md_create_inet6_iface(struct ifinfomsg *ifi, struct rtattr **rta_tb)
 
 static void iface_proc_entries_init(struct md_inet6_iface *iface)
 {
-	set_iface_proc_entry(PROC_SYS_IP6_AUTOCONF, iface->name,
+	set_iface_proc_entry(conf_path, iface->name, autoconf_file,
 			     conf_autoconf);
-	set_iface_proc_entry(PROC_SYS_IP6_ACCEPT_RA, iface->name, conf_ra);
-	set_iface_proc_entry(PROC_SYS_IP6_RTR_SOLICITS, iface->name, conf_rs);
-	tssetmsec(iface->reachable, DEFAULT_REACHABLE_TIME);
+	set_iface_proc_entry(conf_path, iface->name, ra_defrtr_file, conf_ra_defrtr);
+	set_iface_proc_entry(conf_path, iface->name, ra_pinfo_file, conf_ra_pinfo);
+	set_iface_proc_entry(conf_path, iface->name, rs_file, conf_rs);
+	get_iface_proc_entry(neigh_path, iface->name, app_ns_file,
+			     &iface->app_solicit);
+	set_iface_proc_entry(neigh_path, iface->name, app_ns_file,
+			     neigh_app_ns);
 	tssetmsec(iface->retransmit, DEFAULT_RETRANSMIT_TIMER);
 }
 
@@ -664,8 +707,8 @@ static int process_new_inet6_iface(struct ifinfomsg *ifi,
 {
 	struct md_inet6_iface *iface;
 	if ((iface = md_get_inet6_iface(&ifaces, ifi->ifi_index)) == NULL) {
-		unsigned int pref;
-		if ((pref = conf.pmgr.accept_inet6_iface(ifi->ifi_index)) &&
+		int pref = 0;
+		if (conf.pmgr.accept_inet6_iface(ifi->ifi_index, &pref) &&
 		    (iface = md_create_inet6_iface(ifi, rta_tb)) != NULL) {
 			MDBG2("adding iface %s (%d)\n",
 			      iface->name, iface->ifindex);
@@ -730,10 +773,14 @@ static int process_new_link(struct ifinfomsg *ifi, struct rtattr **rta_tb)
 			md_link_up(iface);
 		else 
 			md_link_down(iface);
-	}
+	}else
+		return -1;
+
 	return 0;
 }
 
+static int process_nlmsg(struct sockaddr_nl *who,
+			 struct nlmsghdr *n, void *arg);
 
 static int process_link(struct nlmsghdr *n, void *arg)
 {
@@ -758,9 +805,13 @@ static int process_link(struct nlmsghdr *n, void *arg)
 		     n->nlmsg_len - NLMSG_LENGTH(sizeof(*ifi)));
 	pthread_mutex_lock(&iface_lock);
 	if (ifi->ifi_family == AF_UNSPEC) {
-		if (n->nlmsg_type == RTM_NEWLINK)
-			process_new_link(ifi, rta_tb);
-		else if (n->nlmsg_type == RTM_DELLINK)
+		if (n->nlmsg_type == RTM_NEWLINK){
+			if(process_new_link(ifi, rta_tb) < 0){
+				pthread_mutex_unlock(&iface_lock);
+				inet6_ifaces_iterate(process_nlmsg, NULL);
+				return 0;
+			}
+		}else if (n->nlmsg_type == RTM_DELLINK)
 			process_del_inet6_iface(ifi, rta_tb);
 	} else
 		process_inet6_iface(n, ifi, rta_tb);
@@ -780,10 +831,45 @@ static int process_fail_neigh(struct ndmsg *ndm, struct rtattr **rta_tb)
 	    (iface = md_get_inet6_iface(&ifaces, ndm->ndm_ifindex)) != NULL &&
 	    (rtr = md_get_first_router(&iface->default_rtr)) != NULL) {
 		struct in6_addr *addr = RTA_DATA(rta_tb[NDA_DST]);
-		if (rtr_addr_chk(rtr, addr) || 
-		    IN6_ARE_ADDR_EQUAL(&rtr->lladdr, addr)) {
+		if (rtr->neighbor_solicits == 0 && 
+		    (rtr_addr_chk(rtr, addr) || 
+		     IN6_ARE_ADDR_EQUAL(&rtr->lladdr, addr))) {
 			md_router_timeout(rtr);
 		}
+	}
+	return 0;
+}
+
+static int
+md_update_backup_routers_hwa(struct md_inet6_iface *iface, struct in6_addr *new, uint8_t *hwa, int hwalen);
+
+static int process_chk_neigh(struct ndmsg *ndm, struct rtattr **rta_tb)
+{
+	struct md_inet6_iface *iface;
+	struct md_router *rtr;
+	struct in6_addr *addr = RTA_DATA(rta_tb[NDA_DST]);
+	uint8_t hwa[16];
+	int    hwalen;
+
+	if (nud_expire_rtr && 
+	    (iface = md_get_inet6_iface(&ifaces, ndm->ndm_ifindex)) != NULL &&
+	    (rtr = md_get_first_router(&iface->default_rtr)) != NULL) {
+		if(!rta_tb[NDA_LLADDR] || !(hwalen = (RTA_PAYLOAD(rta_tb[NDA_LLADDR]))))
+			return 0;
+
+		memcpy(hwa, (uint8_t *)RTA_DATA(rta_tb[NDA_LLADDR]), hwalen);
+
+		if (rtr->neighbor_solicits == 0 && (rtr_addr_chk(rtr, addr) || 
+		IN6_ARE_ADDR_EQUAL(&rtr->lladdr, addr))) {
+			if(!rtr->hwalen){
+				memcpy(&rtr->hwa, hwa, hwalen);
+				rtr->hwalen = hwalen;
+
+			}else if(memcmp(&rtr->hwa, hwa, hwalen))
+				md_router_timeout(rtr);
+
+		}else
+			md_update_backup_routers_hwa(iface, addr, hwa, hwalen);
 	}
 	return 0;
 }
@@ -798,15 +884,20 @@ static int process_neigh(struct nlmsghdr *n, void *arg)
 
 	ndm = NLMSG_DATA(n);
 
-	if (ndm->ndm_family != AF_INET6 || !(ndm->ndm_state & NUD_FAILED))
+	if (ndm->ndm_family != AF_INET6)
 		return 0;
 
 	memset(rta_tb, 0, sizeof(rta_tb));
 	parse_rtattr(rta_tb, NDA_MAX, NDA_RTA(ndm),
 		     n->nlmsg_len - NLMSG_LENGTH(sizeof(*ndm)));
 
+	if (ndm->ndm_state & NUD_FAILED){
+		process_fail_neigh(ndm, rta_tb);
+		return 0;
+	}
+
 	pthread_mutex_lock(&iface_lock);
-	process_fail_neigh(ndm, rta_tb);
+	process_chk_neigh(ndm, rta_tb);
 	pthread_mutex_unlock(&iface_lock);
 
 	return 0;
@@ -861,24 +952,7 @@ md_create_router_prefix(struct md_router *rtr,
 	return p;
 }
 
-static void md_check_home_link(struct md_inet6_iface *i, struct md_router *rtr)
-{
-	struct list_head *l;
-	int home_link = 0;
-	int ll_dad_unsafe = 0;
-	list_for_each(l, &conf.home_addrs) {
-		struct home_addr_info *hai;
-		hai = list_entry(l, struct home_addr_info, list);
-		if (mn_is_at_home(&rtr->prefixes,
-				  &hai->home_prefix,
-				  hai->home_plen)) {
-			home_link = 1;
-			ll_dad_unsafe |= hai->lladdr_comp;
-		}
-	}
-	i->home_link = home_link;
-	i->ll_dad_unsafe = ll_dad_unsafe;
-}
+static struct in6_addr linklocal_prefix = { { { 0xfe,0x80,0,0,0,0,0,0,0,0,0,0,0,0,0,0 } } };
 
 static struct md_router *md_create_router(struct md_inet6_iface *iface, 
 					  const struct in6_addr *saddr, 
@@ -893,8 +967,9 @@ static struct md_router *md_create_router(struct md_inet6_iface *iface,
 
 	memset(new, 0, sizeof(struct md_router));
 	clock_gettime(CLOCK_REALTIME, &new->timestamp);
+	INIT_LIST_HEAD(&new->list);
+	INIT_LIST_HEAD(&new->tqe.list);
 	INIT_LIST_HEAD(&new->prefixes);
-
 	while (optlen > 1) {
 		int olen = opt[1] << 3;
 
@@ -903,7 +978,6 @@ static struct md_router *md_create_router(struct md_inet6_iface *iface,
 		switch (opt[0]) {
 			struct nd_opt_prefix_info *pinfo;
 			struct prefix_list_entry *p;
-			struct nd_opt_mtu *mtu;
 			struct nd_opt_adv_interval *r;
 
 		case ND_OPT_SOURCE_LINKADDR:
@@ -918,7 +992,6 @@ static struct md_router *md_create_router(struct md_inet6_iface *iface,
 		case ND_OPT_PREFIX_INFORMATION:
 			if (olen < sizeof(struct nd_opt_prefix_info))
 				goto free_rtr;
-
 			pinfo = (struct nd_opt_prefix_info *)opt;
 			/* internal representation host byte order */
 			pinfo->nd_opt_pi_valid_time = 
@@ -926,19 +999,14 @@ static struct md_router *md_create_router(struct md_inet6_iface *iface,
 			pinfo->nd_opt_pi_preferred_time =
 				ntohl(pinfo->nd_opt_pi_preferred_time);
 
-			if (pinfo->nd_opt_pi_prefix_len > 128 ||
+			if (pinfo->nd_opt_pi_prefix_len != 64 ||
 			    !(p = md_create_router_prefix(new, pinfo)))
 				goto free_rtr;
 
-			list_add_tail(&p->list, &new->prefixes);
-			break;
-
-		case ND_OPT_MTU:
-			if (olen < sizeof(struct nd_opt_mtu))
+		   	if (!ipv6_pfx_cmp(&pinfo->nd_opt_pi_prefix, &linklocal_prefix, pinfo->nd_opt_pi_prefix_len))
 				goto free_rtr;
 
-			mtu = (struct nd_opt_mtu *)opt;
-			new->mtu = ntohl(mtu->nd_opt_mtu_mtu);
+			list_add_tail(&p->list, &new->prefixes);
 			break;
 
 		case ND_OPT_RTR_ADV_INTERVAL:
@@ -956,13 +1024,10 @@ static struct md_router *md_create_router(struct md_inet6_iface *iface,
 	if (new->prefix_cnt == 0)
 		goto free_rtr;
 	
-	INIT_LIST_HEAD(&new->list);
-	INIT_LIST_HEAD(&new->tqe.list);
 	new->iface = iface;
 	new->hoplimit = ra->nd_ra_curhoplimit;
 	new->ra_flags = ra->nd_ra_flags_reserved;
 	tssetsec(new->rtr_lifetime, ntohs(ra->nd_ra_router_lifetime));
-	tssetmsec(new->reachable, ntohl(ra->nd_ra_reachable));
 	tssetmsec(new->retransmit, ntohl(ra->nd_ra_retransmit));
 
 	if (tsisset(new->adv_ival)) {
@@ -1059,10 +1124,12 @@ static struct in6_addr *md_get_rtr_addr(struct md_router *rtr)
 }
 
 static void md_router_timeout_probe(struct tq_elem *tqe);
-
-static void md_probe_router(struct md_router *rtr)
+static int md_probe_router(struct md_router *rtr, int max_probes)
 {
-	if (md_is_link_up(rtr->iface)) {
+	int probed = 0;
+
+	if (md_is_link_up(rtr->iface) &&
+	    rtr->neighbor_solicits++ < max_probes) {
 		struct in6_addr *rtr_addr = md_get_rtr_addr(rtr);
 		struct timespec expires;
 
@@ -1071,23 +1138,30 @@ static void md_probe_router(struct md_router *rtr)
 		      NIP6ADDR(&rtr->lladdr), rtr->iface->name,
 		      rtr->iface->ifindex);
 
-		rtr->probed = 1;
+		rtr->max_neighbor_solicits = max_probes;
 		rtr->solicited_addr = *rtr_addr;
 
-		neigh_add(rtr->ifindex, NUD_PROBE, NTF_ROUTER,
+		neigh_add(rtr->ifindex, NUD_REACHABLE, NTF_ROUTER,
 			  rtr_addr, rtr->hwalen > 0 ? rtr->hwa : NULL,
 			  rtr->hwalen, 1);
 
+		ndisc_send_ns(rtr->ifindex, &rtr->iface->lladdr,
+			      rtr_addr, rtr_addr);
+
 		clock_gettime(CLOCK_REALTIME, &rtr->timestamp);
-		tssetmsec(rtr->lifetime,
-			  tstomsec(rtr->iface->retransmit) *
-			  conf.MnRouterProbes);
 		if (tsisset(conf.MnRouterProbeTimeout_ts) &&
-		    tsbefore(rtr->lifetime, conf.MnRouterProbeTimeout_ts))
+		    tsbefore(rtr->iface->retransmit,
+			     conf.MnRouterProbeTimeout_ts)) {
 			rtr->lifetime = conf.MnRouterProbeTimeout_ts;
+		} else {
+			rtr->lifetime = rtr->iface->retransmit;
+		}
 		tsadd(rtr->lifetime, rtr->timestamp, expires);
+
 		add_task_abs(&expires, &rtr->tqe, md_router_timeout_probe);
+		probed = 1;
 	}
+	return probed;
 }
 
 static void md_update_backup_router_stats(struct md_router *rtr,
@@ -1142,10 +1216,10 @@ static void md_router_timeout(struct md_router *rtr)
 	      NIP6ADDR(&rtr->lladdr), iface->name,
 	      iface->ifindex);
 
-	clock_gettime(CLOCK_REALTIME, &rtr->timestamp);
+	if(rtr->used)neigh_del(rtr->ifindex, &rtr->solicited_addr);
+	if(rtr->used)neigh_del(rtr->ifindex, &rtr->lladdr);
 
-	if (rtr->probed)
-		neigh_del(rtr->ifindex, &rtr->solicited_addr);
+	clock_gettime(CLOCK_REALTIME, &rtr->timestamp);
 
 	if (rtr->used) {
 		if (list_empty(&iface->backup_rtrs) ||
@@ -1164,14 +1238,13 @@ static void md_router_timeout_probe(struct tq_elem *tqe)
 	pthread_mutex_lock(&iface_lock);
 	if (!task_interrupted()) {
 		struct md_router *rtr = tq_data(tqe, struct md_router, tqe);
-		if (rtr->probed)
+		if (!md_probe_router(rtr, rtr->max_neighbor_solicits)) 
 			md_router_timeout(rtr);
-		else
-			md_probe_router(rtr);
 	}
 	pthread_mutex_unlock(&iface_lock);
 }
 
+static int update_static_hoa_at_home(struct prefix_list_entry *p, struct md_router *rtr);
 static void md_update_router_stats(struct md_router *rtr)
 {
 	struct list_head *list;
@@ -1179,11 +1252,7 @@ static void md_update_router_stats(struct md_router *rtr)
 	MDBG2("adding default route via %x:%x:%x:%x:%x:%x:%x:%x\n", 
 	      NIP6ADDR(&rtr->lladdr));
 
-	neigh_add(rtr->ifindex, NUD_STALE, NTF_ROUTER,
-		  &rtr->lladdr, rtr->hwa, rtr->hwalen, 1);
-
-	route_add(rtr->ifindex, RT_TABLE_MAIN, RTPROT_RA,
-		  RTM_F_DEFAULT|RTM_F_ADDRCONF, 1024,
+	route_add(rtr->ifindex, RT_TABLE_MAIN, 1024,
 		  &in6addr_any, 0, &in6addr_any, 0, &rtr->lladdr);
 	
 	list_for_each(list, &rtr->prefixes) {
@@ -1191,7 +1260,8 @@ static void md_update_router_stats(struct md_router *rtr)
 		p = list_entry(list, struct prefix_list_entry, list);
 		/* pass prefix to kernel if it was included in the latest RA */
 		if (!tsbefore(rtr->timestamp, p->timestamp) &&
-		    p->ple_prefd_time <= p->ple_valid_time) {
+		    p->ple_prefd_time <= p->ple_valid_time &&
+		    p->ple_flags & ND_OPT_PI_FLAG_AUTO){ 
 			MDBG2("adding prefix %x:%x:%x:%x:%x:%x:%x:%x/%d\n", 
 			      NIP6ADDR(&p->ple_prefix), p->ple_plen);
 			prefix_add(rtr->ifindex, &p->pinfo);
@@ -1200,39 +1270,16 @@ static void md_update_router_stats(struct md_router *rtr)
 				neigh_add(rtr->ifindex, NUD_STALE,
 					  NTF_ROUTER, &p->ple_prefix,
 					  rtr->hwa, rtr->hwalen, 1);
+
+			update_static_hoa_at_home(p, rtr);
 		}
 	}
 	if (rtr->hoplimit != 0) {
-		set_iface_proc_entry(PROC_SYS_IP6_CURHLIM,
-				     rtr->iface->name, rtr->hoplimit);
+		set_iface_proc_entry(conf_path, rtr->iface->name,
+				     hoplimit_file, rtr->hoplimit);
 	} else {
-		set_iface_proc_entry(PROC_SYS_IP6_CURHLIM,
-				     rtr->iface->name, DEFAULT_HOP_LIMIT);
-	}
-	if (rtr->mtu >= IP6_MIN_MTU)
-		set_iface_proc_entry(PROC_SYS_IP6_LINKMTU,
-				     rtr->iface->name, rtr->mtu);
-	if (tsisset(rtr->reachable)) {
-		set_iface_proc_entry(PROC_SYS_IP6_BASEREACHTIME_MS,
-				     rtr->iface->name, 
-				     tstomsec(rtr->reachable));
-		rtr->iface->reachable = rtr->reachable;
-	} else {
-		set_iface_proc_entry(PROC_SYS_IP6_BASEREACHTIME_MS,
-				     rtr->iface->name, 
-				     DEFAULT_REACHABLE_TIME);
-		tssetmsec(rtr->iface->reachable, DEFAULT_REACHABLE_TIME);
-	}
-	if (tsisset(rtr->retransmit)) {
-		set_iface_proc_entry(PROC_SYS_IP6_RETRANSTIMER_MS,
-				     rtr->iface->name, 
-				     tstomsec(rtr->retransmit));
-		rtr->iface->retransmit = rtr->retransmit;
-	} else {
-		set_iface_proc_entry(PROC_SYS_IP6_RETRANSTIMER_MS,
-				     rtr->iface->name, 
-				     DEFAULT_RETRANSMIT_TIMER);
-		tssetmsec(rtr->iface->retransmit, DEFAULT_RETRANSMIT_TIMER);
+		set_iface_proc_entry(conf_path, rtr->iface->name,
+				     hoplimit_file, DEFAULT_HOP_LIMIT);
 	}
 }
 
@@ -1245,26 +1292,32 @@ static void md_prefix_rule_add(struct prefix_list_entry *p)
 		 &in6addr_any, 0);
 }
 
-static void md_update_router(struct md_router *new, struct md_router *old)
+static struct md_router *md_update_router(struct md_router *new, 
+					  struct md_router *old,
+					  struct list_head *rtr_list)
 {
 	struct list_head *lnew, *lold, *n;
+	int update = 1;
+	uint32_t stored;
 
 	MDBG2("updating router %x:%x:%x:%x:%x:%x:%x:%x on iface %s (%d)\n", 
 	      NIP6ADDR(&old->lladdr), old->iface->name, old->iface->ifindex);
 
 	if (tsisset(old->lifetime))
 		del_task(&old->tqe);
+	list_del(&old->list);
 
 	old->timestamp = new->timestamp;
 	old->adv_ival = new->adv_ival;
 	old->rtr_lifetime = new->rtr_lifetime;
 	old->hoplimit = new->hoplimit;
 	old->ra_flags = new->ra_flags;
-	old->reachable = new->reachable;
 	old->retransmit = new->retransmit;
-	old->mtu = new->mtu;
-	old->lifetime = new->lifetime;
+	old->neighbor_solicits = new->neighbor_solicits;
+	old->solicited_addr = new->solicited_addr;
 
+	old->lifetime = new->lifetime;
+	
 	list_for_each_safe(lnew, n, &new->prefixes) {
 		struct prefix_list_entry *pnew;
 
@@ -1289,6 +1342,23 @@ static void md_update_router(struct md_router *new, struct md_router *old)
 						 &pold->ple_prefix,
 						 pnew->ple_plen))
 					continue;
+
+				stored = pold->timestamp.tv_sec + pold->ple_valid_time 
+								- pnew->timestamp.tv_sec;
+
+				if( pnew->ple_valid_time > stored || 
+						pnew->ple_valid_time > 7200 ){ 
+					update = 1;
+				}else if( stored < 7200 ){
+					update = 0;
+					break;
+				}else{
+					update = 1;
+					pnew->ple_valid_time = 7200;
+					if(pnew->ple_valid_time < pnew->ple_prefd_time)
+						pnew->ple_prefd_time = pnew->ple_valid_time;
+				}
+
 				pold->timestamp = pnew->timestamp;
 				pold->ple_flags = pnew->ple_flags;
 				pold->ple_valid_time = pnew->ple_valid_time;
@@ -1298,13 +1368,15 @@ static void md_update_router(struct md_router *new, struct md_router *old)
 		}
 	}
 	__md_free_router(new);
-	if (old->used)
+	list_add(&old->list, rtr_list);
+	if (old->used && update)
 		md_update_router_stats(old);
 	if (tsisset(old->lifetime)) {
 		struct timespec expires;
 		tsadd(old->lifetime, old->timestamp, expires);
 		add_task_abs(&expires, &old->tqe, md_router_timeout_probe);
 	}
+	return old;
 }
 
 static int md_block_rule_add(struct md_inet6_iface *iface)
@@ -1322,13 +1394,38 @@ static int md_block_rule_add(struct md_inet6_iface *iface)
 			&in6addr_any, 0, &in6addr_any, 0);
 }
 
-static void md_add_default_router(struct md_inet6_iface *iface,
-				  struct md_router *rtr)
+static int update_static_hoa_at_home(struct prefix_list_entry *p, struct md_router *new)
 {
-	assert(list_empty(&iface->default_rtr));
-	assert(rtr->used);
-	list_add(&rtr->list, &iface->default_rtr);
-	md_check_home_link(iface, rtr);
+	struct list_head *l;
+	list_for_each(l, &conf.home_addrs) {
+		struct home_addr_info *hai;
+		struct in6_addr lladdr;
+		hai = list_entry(l, struct home_addr_info, list);
+		if(mn_is_at_home(&new->prefixes, &hai->home_prefix, p->ple_plen)){
+			ipv6_addr_llocal(&hai->hoa.addr, &lladdr);
+			if (!IN6_ARE_ADDR_EQUAL(&lladdr, &new->iface->lladdr)) {
+				addr_add(&hai->hoa.addr, RT_SCOPE_UNIVERSE, 
+					p->ple_plen, IFA_F_HOMEADDRESS, new->ifindex, 
+					p->ple_prefd_time,p->ple_valid_time);
+			}
+		}
+		return 0;
+	}
+	return 1;
+}
+
+static int is_lladdr_dad_safe(struct md_router *new)
+{
+	struct list_head *l;
+	list_for_each(l, &conf.home_addrs) {
+		struct home_addr_info *hai;
+		hai = list_entry(l, struct home_addr_info, list);
+		if (hai->lladdr_comp &&
+		    mn_is_at_home(&new->prefixes,
+				  &hai->home_prefix, hai->home_plen))
+			return 0;
+	}
+	return 1;
 }
 
 static void md_change_default_router(struct md_inet6_iface *iface,
@@ -1337,7 +1434,7 @@ static void md_change_default_router(struct md_inet6_iface *iface,
 {
 	struct timespec expires;
 	struct list_head *l;
-	int link_changed = 1;
+	int new_link = 1;
 	if (!tsisset(new->lifetime)) {
 		__md_free_router(new);
 		return;
@@ -1353,7 +1450,7 @@ static void md_change_default_router(struct md_inet6_iface *iface,
 
 		if (old && prefix_list_find(&old->prefixes, 
 					    &p->ple_prefix, p->ple_plen)) {
-			link_changed = 0;
+			new_link = 0;
 			new_prefix = 0;
 		}
 		if (new_prefix)
@@ -1367,8 +1464,8 @@ static void md_change_default_router(struct md_inet6_iface *iface,
 		md_block_rule_add(iface);
 	}
 	new->used = 1;
-	md_add_default_router(iface, new);
-	__md_new_link(iface, link_changed);
+	list_add(&new->list, &iface->default_rtr);
+	__md_new_link(iface, new_link && is_lladdr_dad_safe(new));
 
 	md_update_router_stats(new);
 	tsadd(new->lifetime, new->timestamp, expires);
@@ -1434,9 +1531,7 @@ md_check_expired_routers(struct md_inet6_iface *iface, struct md_router *new)
 			MDBG2("router %x:%x:%x:%x:%x:%x:%x:%x still usable\n", 
 			      NIP6ADDR(&old->lladdr));
 
-			md_update_router(new, old);
-			list_del(&old->list);
-			md_add_default_router(iface, old);
+			md_update_router(new, old, &iface->default_rtr);
 			md_check_expired_coas(iface, old);
 			__md_new_link(iface, 0);
 			if (!list_empty(&iface->coas) &&
@@ -1451,6 +1546,25 @@ md_check_expired_routers(struct md_inet6_iface *iface, struct md_router *new)
 }
 
 static int
+md_update_backup_routers_hwa(struct md_inet6_iface *iface, struct in6_addr *new, uint8_t *hwa, int hwalen)
+{
+	struct list_head *list, *n;
+	
+	list_for_each_safe(list, n, &iface->backup_rtrs) {
+		struct md_router *old;
+		old = list_entry(list, struct md_router, list);
+		if (!IN6_ARE_ADDR_EQUAL(new, &old->lladdr)) {
+			if(old->hwalen && memcmp(&old->hwa, hwa, hwalen))
+				memcpy(&old->hwa, hwa, hwalen);
+			if (!tsisset(old->lifetime)) {
+				md_expire_router(iface, old, NULL);
+			}
+			return 1;
+		}
+	}
+	return 0;
+}
+static int
 md_check_backup_routers(struct md_inet6_iface *iface, struct md_router *new)
 {
 	struct list_head *list, *n;
@@ -1459,7 +1573,7 @@ md_check_backup_routers(struct md_inet6_iface *iface, struct md_router *new)
 		struct md_router *old;
 		old = list_entry(list, struct md_router, list);
 		if (!md_router_cmp(new, old)) {
-			md_update_router(new, old);
+			md_update_router(new, old, &iface->backup_rtrs);
 			if (!tsisset(old->lifetime)) {
 				md_expire_router(iface, old, NULL);
 			}
@@ -1498,12 +1612,15 @@ md_check_default_router(struct md_inet6_iface *iface, struct md_router *new)
 
 	if ((old = md_get_first_router(&iface->default_rtr)) != NULL) {
 		if (!md_router_cmp(new, old)) {
-			md_update_router(new, old);
+			md_update_router(new, old, &iface->default_rtr);
 			if (!tsisset(old->lifetime)) {
-				md_expire_router(iface, old, NULL);
-				__md_discover_router(iface);
-				__md_trigger_movement_event(ME_RTR_EXPIRED, 0,
-							    iface, NULL);
+				if(md_change_to_backup_router(iface, old)){
+					md_expire_router(iface, old, NULL);
+//					__md_discover_router(iface);
+					__md_trigger_movement_event(ME_RTR_EXPIRED, 0,
+							    	iface, NULL);
+				}
+
 			} else {
 				__md_new_link(iface, 0);
 				__md_trigger_movement_event(ME_RTR_UPDATED, 0,
@@ -1511,8 +1628,13 @@ md_check_default_router(struct md_inet6_iface *iface, struct md_router *new)
 			}
 			return;
 		} 
-		if (conf.MnRouterProbes > 0) {
-			md_probe_router(old);
+
+		old->neighbor_solicits = 0;
+		if (prefix_list_cmp(&new->prefixes, &old->prefixes)){
+			md_add_backup_router(iface, new);
+			return;
+		}
+		if (md_probe_router(old, conf.MnRouterProbesRA)) {
 			md_add_backup_router(iface, new);
 			return;
 		}
@@ -1520,9 +1642,12 @@ md_check_default_router(struct md_inet6_iface *iface, struct md_router *new)
 	md_change_default_router(iface, new, old);
 }
 
-static void md_recv_na(const struct icmp6_hdr *ih, ssize_t len,
+static void md_recv_na(const struct icmp6_hdr *ih,
+		       const ssize_t len,
 		       const struct in6_addr *saddr,
-		       const struct in6_addr *daddr, int iif, int hoplimit)
+		       const struct in6_addr *daddr,
+		       const int iif,
+		       const int hoplimit)
 {
 	struct nd_neighbor_advert *na = (struct nd_neighbor_advert *)ih;
 	int optlen;
@@ -1542,7 +1667,7 @@ static void md_recv_na(const struct icmp6_hdr *ih, ssize_t len,
 
 	if ((iface = md_get_inet6_iface(&ifaces, iif)) == NULL ||
 	    (rtr = md_get_first_router(&iface->default_rtr)) == NULL ||
-	    rtr->probed == 0 || rtr->hwalen < 0 ||
+	    rtr->neighbor_solicits == 0 || rtr->hwalen < 0 ||
 	    !IN6_ARE_ADDR_EQUAL(&rtr->solicited_addr, &na->nd_na_target)) {
 		goto out;
 	}
@@ -1576,9 +1701,9 @@ static void md_recv_na(const struct icmp6_hdr *ih, ssize_t len,
 		clock_gettime(CLOCK_REALTIME, &rtr->timestamp);
 		if (tsisset(rtr->lifetime))
 			del_task(&rtr->tqe);
-		rtr->lifetime = rtr->iface->reachable;
-		rtr->solicited_addr = in6addr_any;
-		rtr->probed = 0;
+		rtr->neighbor_solicits = 0;
+		memset(&rtr->solicited_addr, 0, sizeof(struct in6_addr));
+
 		tsadd(rtr->lifetime, rtr->timestamp, expires);
 		add_task_abs(&expires, &rtr->tqe, md_router_timeout_probe);
 		if (!list_empty(&iface->coas) &&
@@ -1588,6 +1713,7 @@ static void md_recv_na(const struct icmp6_hdr *ih, ssize_t len,
 	} else {
 		if (tsisset(rtr->lifetime))
 			del_task(&rtr->tqe);
+		rtr->neighbor_solicits = conf.MnRouterProbesRA;
 		md_router_timeout(rtr);
 	}
 out:
@@ -1598,9 +1724,12 @@ static struct icmp6_handler md_na_handler = {
 	.recv = md_recv_na,
 };
 
-static void md_recv_ra(const struct icmp6_hdr *ih, ssize_t len,
+static void md_recv_ra(const struct icmp6_hdr *ih,
+		       const ssize_t len,
 		       const struct in6_addr *saddr,
-		       const struct in6_addr *daddr, int iif, int hoplimit)
+		       const struct in6_addr *daddr,
+		       const int iif,
+		       const int hoplimit)
 {
 	struct nd_router_advert *ra = (struct nd_router_advert *)ih;
 	struct md_inet6_iface *iface;
@@ -1609,8 +1738,11 @@ static void md_recv_ra(const struct icmp6_hdr *ih, ssize_t len,
 	/* validity checks */
 	if (hoplimit < 255 || !IN6_IS_ADDR_LINKLOCAL(saddr) ||
 	    ih->icmp6_code != 0 || len < sizeof(struct nd_router_advert) ||
-	    !conf.pmgr.accept_ra(iif, saddr, daddr, ra))
+	    !conf.pmgr.accept_ra(iif, saddr, daddr, ra)){
+		iface = md_get_inet6_iface(&ifaces, iif);
+		__md_discover_router(iface);
 		return;
+	}
 
 	MDBG2("received RA from %x:%x:%x:%x:%x:%x:%x:%x on iface %d\n", 
 	      NIP6ADDR(saddr), iif);
@@ -1619,8 +1751,10 @@ static void md_recv_ra(const struct icmp6_hdr *ih, ssize_t len,
 	if ((iface = md_get_inet6_iface(&ifaces, iif)) != NULL &&
 	    (new = md_create_router(iface, saddr, ra, len)) != NULL) {
 		if (!md_check_expired_routers(iface, new) &&
-		    !md_check_backup_routers(iface, new))
+		    !md_check_backup_routers(iface, new)){
 			md_check_default_router(iface, new);
+		
+		}
 	}
 	pthread_mutex_unlock(&iface_lock);
 }
@@ -1631,27 +1765,39 @@ static struct icmp6_handler md_ra_handler = {
 
 struct rtnl_handle md_rth;
 
-static void *md_nl_listen(void *arg)
+void *md_nl_listen(void *arg)
 {
-	pthread_dbg("thread started");
 	rtnl_ext_listen(&md_rth, process_nlmsg, NULL);
-	pthread_exit(NULL);
+	return NULL;
 }
 
-static void iface_default_proc_entries_init(void)
+void iface_default_proc_entries_init(void)
 {
-	get_iface_proc_entry(PROC_SYS_IP6_AUTOCONF,
-			     "default", &conf_default_autoconf);
-	get_iface_proc_entry(PROC_SYS_IP6_ACCEPT_RA,
-			     "default", &conf_default_ra);
-	get_iface_proc_entry(PROC_SYS_IP6_RTR_SOLICITS,
-			     "default", &conf_default_rs);
-	get_iface_proc_entry(PROC_SYS_IP6_RTR_SOLICIT_INTERVAL,
-			     "default", &conf_default_rs_ival);
+	int proc_conf_rs = 0;
+	int proc_conf_rs_ival = 0;
 
-	set_iface_proc_entry(PROC_SYS_IP6_AUTOCONF, "default", conf_autoconf);
-	set_iface_proc_entry(PROC_SYS_IP6_ACCEPT_RA, "default", conf_ra);
-	set_iface_proc_entry(PROC_SYS_IP6_RTR_SOLICITS, "default", conf_rs);
+	get_iface_proc_entry(conf_path, "default", autoconf_file, 
+			     &conf_default_autoconf);
+	get_iface_proc_entry(conf_path, "default", ra_defrtr_file,
+			     &conf_default_ra_defrtr);
+	get_iface_proc_entry(conf_path, "default", ra_pinfo_file,
+			     &conf_default_ra_pinfo);
+	get_iface_proc_entry(conf_path, "default", rs_file, 
+			     &proc_conf_rs);
+	if(proc_conf_rs)conf_default_rs = proc_conf_rs;
+	get_iface_proc_entry(conf_path, "default", rs_ival_file, 
+			     &proc_conf_rs_ival);
+	if(proc_conf_rs_ival)conf_default_rs_ival = proc_conf_rs_ival;
+	get_iface_proc_entry(neigh_path, "default", app_ns_file,
+			     &neigh_default_app_ns);
+
+	set_iface_proc_entry(conf_path, "default", autoconf_file, 
+			     conf_autoconf);
+	set_iface_proc_entry(conf_path, "default", ra_defrtr_file, conf_ra_defrtr);
+	set_iface_proc_entry(conf_path, "default", ra_pinfo_file, conf_ra_pinfo);
+	set_iface_proc_entry(conf_path, "default", rs_file, conf_rs);
+	set_iface_proc_entry(neigh_path, "default", app_ns_file,
+			     neigh_app_ns);
 }
 
 int md_init(void)
@@ -1692,52 +1838,55 @@ int md_init(void)
 		dbg("%d %s\n", __LINE__, strerror(errno));  
 		return -1;
 	}
-	iface_default_proc_entries_init();
-	return 0;
-}
 
-int md_start(void)
-{
 	icmp6_handler_reg(ND_NEIGHBOR_ADVERT, &md_na_handler);
 	icmp6_handler_reg(ND_ROUTER_ADVERT, &md_ra_handler);
+
 	if (pthread_create(&md_listener, NULL, md_nl_listen, NULL))
 		return -1;
 	inet6_ifaces_iterate(process_nlmsg, NULL);
 	return 0;
 }
 
-void md_stop(void)
-{
-	rtnl_close(&md_rth);
-	icmp6_handler_dereg(ND_ROUTER_ADVERT, &md_ra_handler);
-	icmp6_handler_dereg(ND_NEIGHBOR_ADVERT, &md_na_handler);
-	pthread_cancel(md_listener);
-	pthread_join(md_listener, NULL);
-}
-
 static void iface_default_proc_entries_cleanup(void)
 {
-	set_iface_proc_entry(PROC_SYS_IP6_AUTOCONF,
-			     "default", conf_default_autoconf);
-	set_iface_proc_entry(PROC_SYS_IP6_ACCEPT_RA,
-			     "default", conf_default_ra);
-	set_iface_proc_entry(PROC_SYS_IP6_RTR_SOLICITS,
-			     "default", conf_default_rs);
+	set_iface_proc_entry(conf_path, "default", autoconf_file, 
+			     conf_default_autoconf);
+	set_iface_proc_entry(conf_path, "default", ra_defrtr_file,
+			     conf_default_ra_defrtr);
+	set_iface_proc_entry(conf_path, "default", ra_pinfo_file,
+			     conf_default_ra_pinfo);
+	set_iface_proc_entry(conf_path, "default", rs_file, 
+			     conf_default_rs);
+	set_iface_proc_entry(neigh_path, "default", app_ns_file,
+			     neigh_default_app_ns);
 }
 
 static void iface_proc_entries_cleanup(struct md_inet6_iface *iface)
 {
-	set_iface_proc_entry(PROC_SYS_IP6_AUTOCONF, iface->name,
+	set_iface_proc_entry(conf_path, iface->name, autoconf_file,
 			     iface->devconf[DEVCONF_AUTOCONF]);
-	set_iface_proc_entry(PROC_SYS_IP6_ACCEPT_RA, iface->name,
-			     iface->devconf[DEVCONF_ACCEPT_RA]);
-	set_iface_proc_entry(PROC_SYS_IP6_RTR_SOLICITS, iface->name, 
+	set_iface_proc_entry(conf_path, iface->name, ra_defrtr_file, 
+			     iface->devconf[DEVCONF_ACCEPT_RA_DEFRTR]);
+	set_iface_proc_entry(conf_path, iface->name, ra_pinfo_file, 
+			     iface->devconf[DEVCONF_ACCEPT_RA_PINFO]);
+	set_iface_proc_entry(conf_path, iface->name, rs_file,
 			     iface->devconf[DEVCONF_RTR_SOLICITS]);
+	set_iface_proc_entry(neigh_path, iface->name, app_ns_file,
+			     iface->app_solicit);
 }
 
 void md_cleanup(void)
 {
 	struct list_head *l, *n;
+
+	rtnl_close(&md_rth);
+
+	icmp6_handler_dereg(ND_ROUTER_ADVERT, &md_ra_handler);
+	icmp6_handler_dereg(ND_NEIGHBOR_ADVERT, &md_na_handler);
+
+	pthread_cancel(md_listener);
+	pthread_join(md_listener, NULL);
 
 	pthread_mutex_lock(&iface_lock);
 	iface_default_proc_entries_cleanup();
@@ -1753,3 +1902,18 @@ void md_cleanup(void)
 	pthread_mutex_unlock(&iface_lock);
 	return;
 }
+
+int md_check_link_up(int ifindex)
+{
+	struct md_inet6_iface *iface;
+	int ret = 0;
+	pthread_mutex_lock(&iface_lock);
+	if ((iface = md_get_inet6_iface(&ifaces, ifindex)) != NULL) {
+		ret = md_is_link_up(iface);
+		pthread_mutex_unlock(&iface_lock);
+		return ret;
+	}
+	pthread_mutex_unlock(&iface_lock);
+	return ret;
+}
+

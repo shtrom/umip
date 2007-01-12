@@ -1,13 +1,11 @@
 /*
- * $Id: gram.y 1.88 06/05/12 11:48:36+03:00 vnuorval@tcs.hut.fi $
+ * $Id: gram.y 1.69 06/01/10 00:07:47+09:00 nakam@linux-ipv6.org $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
- * Authors: Antti Tuominen <anttit@tcs.hut.fi>
- *          Ville Nuorvala <vnuorval@tcs.hut.fi>
+ * Author: Antti Tuominen <anttit@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2004 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -30,13 +28,21 @@
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
+#ifdef HAVE_LIBPTHREAD
 #include <pthread.h>
+#else
+#error "POSIX Thread Library required!"
+#endif
 #include <netinet/in.h>
 #include <net/if.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
+#ifdef HAVE_NETINET_IP6MH_H
 #include <netinet/ip6mh.h>
+#else
+#include <netinet-ip6mh.h>
+#endif
 #include "mipv6.h"
 #include "ha.h"
 #include "mn.h"
@@ -48,8 +54,12 @@
 #include "ipsec.h"
 #include "rtnl.h"
 
+#ifndef IPPROTO_SCTP
+#define IPPROTO_SCTP   132
+#endif
+
 struct net_iface ni = {
-	.mip6_if_entity = MIP6_ENTITY_NO,
+	.mip6_if_entity = -1,
 	.mn_if_preference = POL_MN_IF_DEF_PREFERENCE,
 };
 	
@@ -71,12 +81,12 @@ struct ipsec_policy_set ipsec_ps = {
 extern int lineno;
 extern char *yytext;
 
-static void yyerror(char *s) {
+void yyerror(char *s) {
 	fprintf(stderr, "Error in configuration file %s\n", conf.config_file);
 	fprintf(stderr, "line %d: %s at '%s'\n", lineno, s, yytext);
 }
 
-static void uerror(const char *fmt, ...) {
+void uerror(const char *fmt, ...) {
 	char s[1024];
 	va_list args;
 
@@ -92,9 +102,8 @@ static void uerror(const char *fmt, ...) {
 %union {
 	char *string;
 	struct in6_addr addr;
-	char bool;
-	unsigned int num;
-	unsigned int numpair[2];
+	int bool;
+	int num;
 	double dec;
 }
 
@@ -103,7 +112,6 @@ static void uerror(const char *fmt, ...) {
 %token <bool>	BOOL
 %token <num>	NUMBER
 %token <dec>	DECIMAL
-%token <numpair>	NUMPAIR;
 
 %token		MIP6ENTITY
 %token		DEBUGLEVEL
@@ -114,10 +122,9 @@ static void uerror(const char *fmt, ...) {
 %token		INITIALBINDACKTIMEOUTFIRSTREG
 %token		INITIALBINDACKTIMEOUTREREG
 %token		LINKNAME
-%token		HAMAXBINDINGLIFE
-%token		MNMAXHABINDINGLIFE
-%token		MNMAXCNBINDINGLIFE
+%token		MAXBINDINGLIFE
 %token		MAXMOBPFXADVINTERVAL
+%token		MINDELAYBETWEENRAS
 %token		MINMOBPFXADVINTERVAL
 %token		MNHOMELINK
 %token		HAHOMELINK
@@ -128,9 +135,12 @@ static void uerror(const char *fmt, ...) {
 %token		IPSECPOLICYSET
 %token		IPSECPOLICY
 %token		IPSECTYPE
-%token		USEALTCOA
-%token		USEESP
+%token		NOAH
 %token		USEAH
+%token		USEALTCOA
+%token		NOESP
+%token		USEESP
+%token		NOIPCOMP
 %token		USEIPCOMP
 %token		BLOCK
 %token		USEMNHAIPSEC
@@ -158,12 +168,12 @@ static void uerror(const char *fmt, ...) {
 %token		INTERFACE
 %token		IFNAME
 %token		IFTYPE
+%token		ISROUTER
 %token		MNIFPREFERENCE
 %token		MNUSEALLINTERFACES
-%token		MNROUTERPROBES
+%token		MNROUTERPROBESRA
+%token		MNROUTERPROBESLINKUP
 %token		MNROUTERPROBETIMEOUT
-%token		MNDISCARDHAPARAMPROB
-%token		OPTIMISTICHANDOFF
 
 %token		INV_TOKEN
 
@@ -171,7 +181,7 @@ static void uerror(const char *fmt, ...) {
 %type <num>	ipsectypeval
 %type <num>	ipsecproto
 %type <num>	ipsecprotos
-%type <numpair>	ipsecreqid
+%type <num>	ipsecreqid
 
 %type <addr>	mnropolicyaddr
 %type <bool>	dorouteopt
@@ -179,6 +189,8 @@ static void uerror(const char *fmt, ...) {
 %type <num>	prefixlen
 %type <num>	mip6entity
 %type <bool>	xfrmaction
+%type <num>	unumber
+%type <dec>	udecimal
 
 %%
 
@@ -211,13 +223,17 @@ topdef		: MIP6ENTITY mip6entity ';'
 		{
 			conf.SendMobPfxAdvs = $2;
 		}
-		| MAXMOBPFXADVINTERVAL NUMBER ';'
+		| MAXMOBPFXADVINTERVAL unumber ';'
 		{
 			conf.MaxMobPfxAdvInterval = $2;
 		}
-		| MINMOBPFXADVINTERVAL NUMBER ';'
+		| MINMOBPFXADVINTERVAL unumber ';'
 		{
 			conf.MinMobPfxAdvInterval = $2;
+		}
+		| MINDELAYBETWEENRAS udecimal ';'
+		{
+			tssetdsec(conf.MinDelayBetweenRAs_ts, $2);
 		}
 		| DOROUTEOPTIMIZATIONCN BOOL ';'
 		{
@@ -227,38 +243,19 @@ topdef		: MIP6ENTITY mip6entity ';'
 		{
 			conf.DoRouteOptimizationMN = $2;
 		}
-		| HAMAXBINDINGLIFE NUMBER ';'
+		| MAXBINDINGLIFE unumber ';'
 		{
 			if ($2 > MAX_BINDING_LIFETIME) {
-				uerror("max allowed binding lifetime is %d", 
-				       MAX_BINDING_LIFETIME);
+				uerror("invalid max binding lifetime");
 				return -1;
 			}
-			conf.HaMaxBindingLife = $2;
+			conf.MaxBindingLife = $2;
 		}
-		| MNMAXHABINDINGLIFE NUMBER ';'
-		{
-			if ($2 > MAX_BINDING_LIFETIME) {
-				uerror("max allowed binding lifetime is %d", 
-				       MAX_BINDING_LIFETIME);
-				return -1;
-			}
-			conf.MnMaxHaBindingLife = $2;
-		}
-		| MNMAXCNBINDINGLIFE NUMBER ';'
-		{
-			if ($2 > MAX_RR_BINDING_LIFETIME) {
-				uerror("max allowed binding lifetime is %d", 
-				       MAX_RR_BINDING_LIFETIME);
-				return -1;
-			}
-			conf.MnMaxCnBindingLife = $2;
-		}
-		| INITIALBINDACKTIMEOUTFIRSTREG DECIMAL ';'
+		| INITIALBINDACKTIMEOUTFIRSTREG udecimal ';'
 		{
 			tssetdsec(conf.InitialBindackTimeoutFirstReg_ts, $2);
 		}
-		| INITIALBINDACKTIMEOUTREREG DECIMAL ';'
+		| INITIALBINDACKTIMEOUTREREG udecimal ';'
 		{
 			tssetdsec(conf.InitialBindackTimeoutReReg_ts, $2);
 		}
@@ -283,29 +280,25 @@ topdef		: MIP6ENTITY mip6entity ';'
 		}
 		| USECNBUACK BOOL ';' 
 		{
-			conf.CnBuAck = $2 ? IP6_MH_BU_ACK : 0;
+			conf.UseCnBuAck = $2;
 		}
 		| IPSECPOLICYSET '{' ipsecpolicyset '}'
 		| MNUSEALLINTERFACES BOOL ';' 
 		{
-			conf.MnUseAllInterfaces = $2 ? POL_MN_IF_DEF_PREFERENCE : 0;
+			conf.MnUseAllInterfaces = $2;
 		}
-		| MNROUTERPROBES NUMBER ';' 
+		| MNROUTERPROBESRA unumber ';' 
 		{
-			conf.MnRouterProbes = $2;
+			conf.MnRouterProbesRA = $2;
 		}
-		| MNROUTERPROBETIMEOUT DECIMAL ';' 
+		| MNROUTERPROBESLINKUP unumber ';' 
+		{
+			conf.MnRouterProbesLinkUp = $2;
+		}
+		| MNROUTERPROBETIMEOUT udecimal ';' 
 		{
 			if ($2 > 0)
 				tssetdsec(conf.MnRouterProbeTimeout_ts, $2);
-		}
-		| MNDISCARDHAPARAMPROB BOOL ';' 
-		{
-			conf.MnDiscardHaParamProb = $2;
-		}
-		| OPTIMISTICHANDOFF BOOL ';' 
-		{
-			conf.OptimisticHandoff = $2;
 		}
 		;
 
@@ -317,6 +310,9 @@ mip6entity	: MIP6CN { $$ = MIP6_ENTITY_CN;	}
 ifacedef	: QSTRING ifacesub
 		{
 			struct net_iface *nni;
+			if (ni.mip6_if_entity == -1)
+				ni.mip6_if_entity = conf.mip6_entity;
+
 			strncpy(ni.name, $1, IF_NAMESIZE - 1);
 			ni.ifindex = if_nametoindex($1);
 			free($1);
@@ -329,13 +325,15 @@ ifacedef	: QSTRING ifacesub
 				uerror("out of memory");
 				return -1;
 			}
+
+
 			memcpy(nni, &ni, sizeof(struct net_iface));
 			list_add_tail(&nni->list, &conf.net_ifaces);
-			if (is_if_ha(nni))
-				homeagent_if_init(nni->ifindex);
+			if (ni.mip6_if_entity == MIP6_ENTITY_HA && ni.ifindex)
+				homeagent_if_init(ni.ifindex);
 
 			memset(&ni, 0, sizeof(struct net_iface));
-			ni.mip6_if_entity = MIP6_ENTITY_NO;
+			ni.mip6_if_entity = -1;
 			ni.mn_if_preference = POL_MN_IF_DEF_PREFERENCE;
 		}
 		;
@@ -352,6 +350,10 @@ ifaceopt	: IFTYPE mip6entity ';'
 		{
 			ni.mip6_if_entity = $2;
 		} 
+		| ISROUTER BOOL ';'
+		{
+			ni.is_rtr = $2;
+		}
 		| MNIFPREFERENCE NUMBER ';'
 		{
 			ni.mn_if_preference = $2;
@@ -478,7 +480,7 @@ ipsecpolicydefs	: ipsecpolicydef
 		| ipsecpolicydefs ipsecpolicydef
 		;
 
-ipsecpolicydef	: ipsectype ipsecprotos ipsecreqid xfrmaction ';'
+ipsecpolicydef	: ipsectype ipsecprotos ipsecreqid ipsecreqid xfrmaction ';'
 		{
 			struct list_head *lp;
 
@@ -507,29 +509,29 @@ ipsecpolicydef	: ipsectype ipsecprotos ipsecreqid xfrmaction ';'
 				e->ha_addr = ipsec_ps.ha;
 				e->mn_addr = hai->hoa.addr;
 				e->type = $1;
-#ifndef MULTIPROTO_MIGRATE
-				if ($2 != IPSEC_PROTO_ESP) {
-					uerror("only UseESP is allowed");
-					return -1;
+				if ($2 & 1)
+					e->use_esp = 1;
+	 			if ($2 & 2)
+					e->use_ah = 1;
+				if ($2 & 4)
+					e->use_ipcomp = 1;
+				if ($3 == -1 && $4 == -1) {
+					e->reqid_toha = 0;
+					e->reqid_tomn = 0;
+				} else if ($3 == -1) {
+					e->reqid_toha = $4;
+					e->reqid_tomn = $4;
+				} else if ($4 == -1) {
+					e->reqid_toha = $3;
+					e->reqid_tomn = $3;
+				} else {
+					e->reqid_toha = $3;
+					e->reqid_tomn = $4;
 				}
-#endif
-				e->ipsec_protos = $2;
-				e->reqid_toha = $3[0];
-				e->reqid_tomn = $3[1];
-				e->action = $4;
+				e->action = $5;
 
-				if (ipsec_policy_entry_check(&e->ha_addr,
-							     &e->mn_addr,
-							     e->type)) {
-					uerror("overlapping IPsec policies "
-					       "found for "
-					       "HA %x:%x:%x:%x:%x:%x:%x:%x "
-					       "MN %x:%x:%x:%x:%x:%x:%x:%x "
-					       "pair\n",
-					       NIP6ADDR(&e->ha_addr),
-					       NIP6ADDR(&e->mn_addr));
-					return -1;
-				}
+				/* XXX: Todo: validation required not to add
+				 * duplicated entry. */
 				list_add_tail(&e->list, &conf.ipsec_policies);
 			}
 		}
@@ -554,22 +556,24 @@ ipsecprotos	:
 			return -1;
 		}
 		| ipsecproto { $$ = $1; }
-		| ipsecproto ipsecproto { $$ = $1 | $2; }
-		| ipsecproto ipsecproto ipsecproto { $$ = $1 | $2 | $3; }
+		| ipsecproto ipsecproto { $$ = $1 + $2; }
+		| ipsecproto ipsecproto ipsecproto { $$ = $1 + $2 + $3; }
 		;
 
-ipsecproto	: USEESP { $$ = IPSEC_PROTO_ESP; }
-		| USEAH { $$ = IPSEC_PROTO_AH; } 
-		| USEIPCOMP { $$ = IPSEC_PROTO_IPCOMP; } 
+ipsecproto	: USEESP { $$ = 1; }
+		| NOESP { $$ = 0; }
+		| USEAH { $$ = 2; }
+		| NOAH { $$ = 0; }
+		| USEIPCOMP { $$ = 4; }
+		| NOIPCOMP { $$ = 0; }
 		;
 
-ipsecreqid	: { $$[0] = $$[1] = 0; }
-		| NUMBER { $$[0] = $$[1] = $1; } 
-		| NUMBER NUMBER { $$[0] = $1; $$[1] = $2; } 
+ipsecreqid	: { $$ = -1; }
+		| unumber { $$ = $1; }
 		;
 
 xfrmaction	: { $$ = XFRM_POLICY_ALLOW; }
- 		| BOOL { $$ = $1 ? XFRM_POLICY_ALLOW : XFRM_POLICY_BLOCK; }
+		| BOOL { $$ = $1 ? XFRM_POLICY_ALLOW : XFRM_POLICY_BLOCK; }
 		;
 
 mnropolicy	: mnropolicyaddr dorouteopt
@@ -620,7 +624,7 @@ bindaclpolval	: BOOL
 			else
 				$$ = IP6_MH_BAS_PROHIBIT;
 		}
-		| NUMBER { $$ = $1; }
+		| unumber { $$ = $1; }
 		;
 
 bindaclpolicy	: ADDR bindaclpolval
@@ -638,10 +642,30 @@ bindaclpolicy	: ADDR bindaclpolval
 		}
 		;
 
-prefixlen	: NUMBER 
+prefixlen	: unumber 
 		{
 			if ($1 > 128) {
 				uerror("invalid prefix length %d", $1);
+				return -1;
+			}
+			$$ = $1;
+		}
+		;
+
+unumber	 	: NUMBER 
+		{
+			if ($1 < 0) {
+				uerror("negative value %d not valid", $1);
+				return -1;
+			}
+			$$ = $1;
+		}
+		;
+
+udecimal	: DECIMAL 
+		{
+			if ($1 < 0) {
+				uerror("negative value %d not valid", $1);
 				return -1;
 			}
 			$$ = $1;

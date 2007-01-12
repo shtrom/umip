@@ -1,13 +1,13 @@
 /*
- * $Id: ndisc.c 1.56 06/05/06 15:15:47+03:00 anttit@tcs.hut.fi $
+ * $Id: ndisc.c 1.50 06/01/08 16:00:03+09:00 aramoto@springbank.sharp.net $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
  * 
- * Authors: Antti Tuominen <anttit@tcs.hut.fi>
- *          Ville Nuorvala <vnuorval@tcs.hut.fi>
+ * Authors: 
+ *  Antti Tuominen <anttit@tcs.hut.fi>
+ *  Ville Nuorvala <vnuorval@tcs.hut.fi>
  *
- * Copyright 2003-2005 Go-Core Project
- * Copyright 2003-2006 Helsinki University of Technology
+ * Copyright 2003-2004 GO-Core Project
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
  * it and/or modify it under the terms of the GNU General Public
@@ -28,15 +28,24 @@
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
+#ifdef HAVE_LIBPTHREAD
 #include <pthread.h>
+#else
+#error "POSIX Thread Library required!"
+#endif
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <errno.h>
 #include <net/if.h>
 #include <net/if_arp.h>
 #include <netinet/ip6.h>
-#include <netinet/ip6mh.h>
 #include <libnetlink.h>
+
+#ifdef HAVE_NETINET_IP6MH_H
+#include <netinet/ip6mh.h>
+#else
+#include <netinet-ip6mh.h>
+#endif
 
 #include "debug.h"
 #include "icmp6.h"
@@ -44,6 +53,7 @@
 #include "util.h"
 #include "ndisc.h"
 #include "rtnl.h"
+#include "rfc3542.h"
 
 static int neigh_mod(int nl_flags, int cmd, int ifindex,
 		     uint16_t state, uint8_t flags, struct in6_addr *dst,
@@ -106,7 +116,7 @@ int proxy_nd_start(int ifindex, struct in6_addr *target,
 {
 	struct in6_addr lladdr;
 	int err;
-	int nd_flags = 0;
+	int nd_flags = 0; /* To do: introduction of 'R' bit from BU */
 
 	err = pneigh_add(ifindex, nd_flags, target);
 
