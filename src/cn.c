@@ -295,13 +295,14 @@ void cn_recv_bu(const struct ip6_mh *mh, ssize_t len,
 			goto send_nack;
 		}
 	}
-	status = conf.pmgr.discard_binding(out.dst, out.bind_coa,
-					   out.src, bu, len);
 
+	status = conf.DoRouteOptimizationCN ? IP6_MH_BAS_ACCEPTED
+                                            : IP6_MH_BAS_PROHIBIT;
 	if (status >= IP6_MH_BAS_UNSPECIFIED) {
 		pkey = key;
 		goto send_nack;
 	}
+
 	if (tsisset(lft)) {
 		pkey = key;
 		if (!bce) {

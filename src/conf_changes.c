@@ -655,7 +655,7 @@ void conf_apply_changes(struct mip6_config *cur, struct mip6_config *new)
 						rem_prefix_list_entry);
 
 
-	/* (DoRouteOptimizationCN) DoRouteOptimizationCN: Update the value, even if it s not used... */
+	/* (DoRouteOptimizationCN) DoRouteOptimizationCN: Update the value in config */
 	if (new->DoRouteOptimizationCN != cur->DoRouteOptimizationCN)
 	{
 		dbg("New DoRouteOptimizationCN: %s\n", new->DoRouteOptimizationCN ? "enabled" : "disabled");

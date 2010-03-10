@@ -52,10 +52,14 @@ Change on reloading: Partial support. Cannot detach from tty afterwards.
 .BR "DoRouteOptimizationCN " "boolean" ";"
 
 Indicates if a node should participate in route optimization with a
-Mobile Node.
+Mobile Node, i.e. if it should accept a binding proposed by a peer.
+The value is global and applies to all received binding. There is at
+the moment no option available to define more specific policies based
+on proposed binding.
 
-This option is currently ignored. When the daemon is running, the peer
-always answers RO requests from other MNs.
+Default: enabled.
+
+Change on reloading: supported but does not affect existing bindings.
 
 .TP
 .BR "NonVolatileBindingCache " "boolean" ";"
