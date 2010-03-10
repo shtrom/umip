@@ -20,6 +20,14 @@ Indication of supported dynamic changes on SIGHUP is also provided.
 
 The file contains the following common definitions:
 .TP
+.BR "include " """<pattern>"""
+
+Includes content from other files. Wildcards are supported.
+
+Example: include "/etc/mip6d.conf.d/*.conf"
+
+
+.TP
 .BR "NodeConfig " "CN | HA | MN" ";"
 
 Indicates if the daemon should run in Correspondent Node, Home Agent or

@@ -33,6 +33,8 @@
 
 %{
 #include <arpa/inet.h>
+#include <glob.h>
+#include <string.h>
 #include "gram.h"
 
 #define YY_NO_INPUT 1
@@ -41,6 +43,22 @@ int lineno = 1;
 
 static int yywrap(void) { return 1; }
 void yyerror(char *s);
+
+#define MAX_NESTED_CONF_FILES	5
+
+struct nested_conffiles_t{
+	YY_BUFFER_STATE parent_level_state;
+	glob_t filelist;
+	int current_file;
+} nested_conffiles[MAX_NESTED_CONF_FILES];
+
+int current_nested_level = 0;
+
+int globerrfct(const char *epath, int eerrno)
+{
+	fprintf(stderr, "Failed to scan %s: %s\n", epath, strerror(eerrno));
+	return 1;
+}
 
 %}
 
@@ -51,6 +69,8 @@ void yyerror(char *s);
 %option noyyget_debug noyyset_debug
 %option noyyget_leng
 %option noyyget_text
+
+%x in_include
 
 ws		[ \t]+
 comment		#.*
@@ -67,6 +87,112 @@ addr		({addr1}|{addr2}|{addr3}|"::")
 true		(enabled|allow|true)
 false		(disabled|deny|block|false)
 %%
+
+include		BEGIN(in_include);
+<in_include>{
+{ws}		;/* skip whitespaces */
+{qstring}	{ /* Name of the file to include. This is directly sent to glob. */
+			int globerror=0;
+			char * buf = strdup(yytext+1);
+			if (buf[yyleng-2] != '"')
+			{
+				fprintf(stderr, "Unterminated string: %s\n", yytext);
+				return INV_TOKEN;
+			}
+			buf[yyleng-2] = '\0';
+
+			if (current_nested_level >= MAX_NESTED_CONF_FILES)
+			{
+				fprintf(stderr, "Too many recursion levels in configuration files includes\n");
+				exit(1);
+			}
+
+			/* glob the include */
+			globerror = glob(buf, GLOB_ERR, globerrfct, &nested_conffiles[current_nested_level].filelist);
+
+			if (globerror == GLOB_NOSPACE)
+			{
+				fprintf(stderr, "Not enough memory to parse include directive.\n");
+				return INV_TOKEN;
+			}
+			if (globerror == GLOB_ABORTED)
+			{
+				fprintf(stderr, "An error was encountered in include directive.\n");
+				return INV_TOKEN;
+			}
+			if (globerror == GLOB_NOMATCH)
+			{
+				globfree(&nested_conffiles[current_nested_level].filelist);
+				goto nomatch;
+			}
+			if (globerror)
+			{
+				fprintf(stderr, "Unexpected error in glob (%d).\n", globerror);
+				return INV_TOKEN;
+			}
+
+			/* We have a list of files to include. */
+
+			/* save the current buffer for returning when this include has been parsed */
+			nested_conffiles[current_nested_level].parent_level_state = YY_CURRENT_BUFFER;
+
+			/* Start with the first match */
+			nested_conffiles[current_nested_level].current_file = 0;
+
+			yyin = fopen( nested_conffiles[current_nested_level].filelist.gl_pathv[0], "r" );
+
+			if ( ! yyin )
+			{
+				perror(nested_conffiles[current_nested_level].filelist.gl_pathv[0]);
+				return INV_TOKEN;
+			}
+
+			yy_switch_to_buffer(yy_create_buffer( yyin, YY_BUF_SIZE ));
+
+			/* In case of recursive includes */
+			current_nested_level++;
+
+nomatch:
+			BEGIN(INITIAL);
+		}
+}
+<<EOF>>		{
+			if (current_nested_level == 0)
+			{
+				/* We are at the end of parsing */
+				yyterminate();
+			}
+
+			/* Otherwise we are doing an include statement */
+			--current_nested_level;
+			yy_delete_buffer(YY_CURRENT_BUFFER);
+
+			/* Go to next file, if any */
+			nested_conffiles[current_nested_level].current_file++;
+			if ( nested_conffiles[current_nested_level].filelist.gl_pathv[nested_conffiles[current_nested_level].current_file] == NULL )
+			{
+				/* We have finished with this list of includes */
+				globfree(&nested_conffiles[current_nested_level].filelist);
+				yy_switch_to_buffer(nested_conffiles[current_nested_level].parent_level_state);
+			}
+			else
+			{
+				/* Proceed to next included file */
+				yyin = fopen( nested_conffiles[current_nested_level].filelist.gl_pathv[nested_conffiles[current_nested_level].current_file], "r" );
+
+				if ( ! yyin )
+				{
+					perror(nested_conffiles[current_nested_level].filelist.gl_pathv[nested_conffiles[current_nested_level].current_file]);
+					return INV_TOKEN;
+				}
+
+				yy_switch_to_buffer(yy_create_buffer( yyin, YY_BUF_SIZE ));
+
+				/* In case of recursive includes */
+				current_nested_level++;
+			}
+
+		}
 
 {ws}		;
 {comment}	;
