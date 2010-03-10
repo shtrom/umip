@@ -2211,6 +2211,12 @@ static int mn_make_ho_verdict(const struct movement_event *me,
 		assert(!list_empty(&me->iface->default_rtr));
 	case ME_LINK_UP:
 		assert(me->iface != NULL);
+
+		/* See comment below for ME_COA_NEW */
+		if (conf.UseMnHaIPsec &&
+		    conf.KeyMngMobCapability &&
+		    hai->home_reg_status == HOME_REG_UNCERTAIN)
+			return MN_HO_IGNORE;
 		break;
 	case ME_RTR_BACK:
 	case ME_RTR_UPDATED:
@@ -2233,6 +2239,16 @@ static int mn_make_ho_verdict(const struct movement_event *me,
 		assert(me->iface != NULL);
 		assert(me->coa != NULL);
 		assert(me->iface->ifindex == me->coa->ifindex);
+
+		/* During first registration, when dynamic keying is used, it
+		 * is a bad idea to change our mind and select another CoA.
+		 * This leads to desync between local IKE daemon and remote
+		 * one. We must wait for the completion (or failure) of the
+		 * first registration. */
+		if (conf.UseMnHaIPsec &&
+		    conf.KeyMngMobCapability &&
+		    hai->home_reg_status == HOME_REG_UNCERTAIN)
+			return MN_HO_IGNORE;
 		break;
 	case ME_COA_EXPIRED:
 		assert(me->iface != NULL);
