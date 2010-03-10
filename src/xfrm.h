@@ -102,6 +102,9 @@ int xfrm_ipsec_policy_mod(struct xfrm_userpolicy_info *sp,
 			  int num_tmpl,
 			  int cmd);
 
+int xfrm_ipsec_tnl_state_acquire(struct xfrm_userpolicy_info *sp,
+				 struct xfrm_user_tmpl *tmpl);
+
 static inline int pre_bu_bul_update(struct bulentry *bule)
 {
 	return xfrm_pre_bu_add_bule(bule);

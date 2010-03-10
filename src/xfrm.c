@@ -428,10 +428,11 @@ static int xfrm_mip_policy_add(const struct xfrm_selector *sel,
 			       action, priority, tmpls, num_tmpl);
 }
 
-static int xfrm_policy_del(uint8_t type, const struct xfrm_selector *sel, int dir)
+static int xfrm_policy_get_or_del(uint8_t type, const struct xfrm_selector *sel,
+				  int dir, struct nlmsghdr *rn, int delete)
 {
-	uint8_t buf[NLMSG_SPACE(sizeof(struct xfrm_userpolicy_id))
-		    + RTA_SPACE(sizeof(struct xfrm_userpolicy_type))];
+	uint8_t buf[NLMSG_SPACE(sizeof(struct xfrm_userpolicy_id)) +
+		    RTA_SPACE(sizeof(struct xfrm_userpolicy_type))];
 	struct nlmsghdr *n;
 	struct xfrm_userpolicy_id *pol_id;
 	struct xfrm_userpolicy_type ptype;
@@ -441,7 +442,7 @@ static int xfrm_policy_del(uint8_t type, const struct xfrm_selector *sel, int di
 	n = (struct nlmsghdr *)buf;
 	n->nlmsg_len = NLMSG_LENGTH(sizeof(struct xfrm_userpolicy_id));
 	n->nlmsg_flags = NLM_F_REQUEST;
-	n->nlmsg_type = XFRM_MSG_DELPOLICY;
+	n->nlmsg_type = delete ? XFRM_MSG_DELPOLICY : XFRM_MSG_GETPOLICY;
 
 	pol_id = NLMSG_DATA(n);
 	memcpy(&pol_id->sel, sel, sizeof(struct xfrm_selector));
@@ -451,19 +452,100 @@ static int xfrm_policy_del(uint8_t type, const struct xfrm_selector *sel, int di
 	ptype.type = type;
 	addattr_l(n, sizeof(buf), XFRMA_POLICY_TYPE, &ptype, sizeof(ptype));
 
-	if ((err = rtnl_xfrm_do(n, NULL)) < 0)
-		xfrm_policy_id_dump("Failed to del policy:\n", pol_id, &ptype);
+	if ((err = rtnl_xfrm_do(n, rn)) < 0)
+		xfrm_policy_id_dump("Failed to act on policy:\n", pol_id, &ptype);
 	return err;
+}
+
+static int xfrm_ipsec_policy_get(const struct xfrm_selector *sel, int dir,
+				 struct nlmsghdr *rn)
+{
+	return xfrm_policy_get_or_del(XFRM_POLICY_TYPE_MAIN, sel, dir, rn, 0);
 }
 
 static int xfrm_ipsec_policy_del(const struct xfrm_selector *sel, int dir)
 {
-	return xfrm_policy_del(XFRM_POLICY_TYPE_MAIN, sel, dir);
+	return xfrm_policy_get_or_del(XFRM_POLICY_TYPE_MAIN, sel, dir, NULL, 1);
 }
 
 static int xfrm_mip_policy_del(const struct xfrm_selector *sel, int dir)
 {
-	return xfrm_policy_del(XFRM_POLICY_TYPE_SUB, sel, dir);
+	return xfrm_policy_get_or_del(XFRM_POLICY_TYPE_SUB, sel, dir, NULL, 1);
+}
+
+/* Performs a SPD lookup for a given selector (main IPsec policy type).
+ * If the lookup succeed, 0 is rerturned and the SP index value is passed
+ * using last parameter of the function. -1 is returned on error, in which
+ * case, last parameter is left unmodified */
+static int _get_policy_index(struct xfrm_selector *sel,
+			     int dir, uint32_t *index)
+{
+	int len;
+	struct xfrm_userpolicy_info *xpinfo = NULL;
+	uint8_t resbuf[1024];
+	struct nlmsghdr *rn = (struct nlmsghdr *)resbuf;
+
+	memset(resbuf, 0, sizeof(resbuf));
+
+	if (xfrm_ipsec_policy_get(sel, dir, rn) < 0 ||
+	    rn->nlmsg_type != XFRM_MSG_NEWPOLICY)
+		return -1;
+
+	len = rn->nlmsg_len;
+	xpinfo = NLMSG_DATA(rn);
+	len -= NLMSG_SPACE(sizeof(*xpinfo));
+
+	if (len < 0)
+		return -1;
+
+	*index = xpinfo->index;
+	return 0;
+}
+
+/* Send an ACQUIRE from userland to have the kernel ask the IKE daemon
+ * to negotiate the SA for passed *tunnel* mode SP. */
+int xfrm_ipsec_tnl_state_acquire(struct xfrm_userpolicy_info *sp,
+				 struct xfrm_user_tmpl *tmpl)
+{
+	uint8_t buf[NLMSG_SPACE(sizeof(struct xfrm_user_acquire)) +
+		    RTA_SPACE(sizeof(struct xfrm_user_tmpl))]; /* 1 tmpl */
+	struct xfrm_user_acquire *ua;
+	struct nlmsghdr *nlh;
+	uint32_t idx;
+
+	if (_get_policy_index(&sp->sel, XFRM_POLICY_OUT, &idx) < 0) {
+		dbg("Unable to get policy index\n");
+		return -1;
+	}
+
+	memset(buf, 0, sizeof(buf));
+	nlh = (struct nlmsghdr *)buf;
+
+	nlh->nlmsg_len = NLMSG_LENGTH(sizeof(struct xfrm_user_acquire));
+	nlh->nlmsg_flags = NLM_F_REQUEST;
+	nlh->nlmsg_type = XFRM_MSG_ACQUIRE;
+
+	ua = NLMSG_DATA(nlh);
+
+	memcpy(&ua->id, &tmpl->id, sizeof(ua->id));
+	memcpy(&ua->saddr, &tmpl->saddr, sizeof(ua->saddr));
+	memcpy(&ua->sel, &sp->sel, sizeof(ua->sel));
+	memcpy(&ua->policy, sp, sizeof(*sp));
+	ua->policy.index = idx;
+	ua->aalgos = tmpl->aalgos;
+	ua->ealgos = tmpl->ealgos;
+	ua->calgos = tmpl->calgos;
+	ua->seq = 0;
+
+	addattr_l(nlh, sizeof(buf), XFRMA_TMPL, tmpl,
+		  sizeof(struct xfrm_user_tmpl));
+
+	if (rtnl_xfrm_do(nlh, NULL) < 0) {
+		dbg("Failed to issue XFRM ACQUIRE\n");
+		return -1;
+	}
+
+	return 0;
 }
 
 static int xfrm_state_add(const struct xfrm_selector *sel,

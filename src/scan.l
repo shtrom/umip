@@ -240,6 +240,7 @@ UseAH				{ return USEAH; }
 UseIPComp			{ return USEIPCOMP; }
 UseMnHaIPsec			{ return USEMNHAIPSEC; }
 KeyMngMobCapability		{ return KEYMNGMOBCAPABILITY; }
+TunnelPayloadForceSANego	{ return TUNNELPAYLOADFORCESANEGO; }
 HomeRegBinding			{ return HOMEREGBINDING; }
 Mh				{ return MH; }
 MobPfxDisc			{ return MOBPFXDISC; }

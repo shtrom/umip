@@ -26,6 +26,7 @@ struct mip6_config {
 
 	/* IPsec options */
 	char KeyMngMobCapability;
+	char TunnelPayloadForceSANego;
 	char UseMnHaIPsec;
 	struct list_head ipsec_policies;
 

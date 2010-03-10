@@ -1202,10 +1202,18 @@ static void mn_recv_ba(const struct ip6_mh *mh, ssize_t len,
 				mpd_trigger_mps(&bule->hoa, &bule->peer_addr);
 		}
 
-		/* If BA was for home registration & succesful 
-		 *  Send RO BUs to CNs for this home address.
-		 */
+		/* If this is our first registration (HOME_REG_UNCERTAIN), now that
+		 * our BU has been accepted by the HA, ask for IKE negotiation of
+		 * IPsec SA protecting tunneled payload if requested by user. */
+		if (hai->home_reg_status == HOME_REG_UNCERTAIN && conf.UseMnHaIPsec &&
+		    conf.KeyMngMobCapability && conf.TunnelPayloadForceSANego)
+			mn_ipsec_tnl_force_acquire(&bule->home->ha_addr,
+						   &bule->hoa, bule);
+
 		hai->home_reg_status = HOME_REG_VALID;
+
+		/* If BA was for home registration & succesful
+		 *  Send RO BUs to CNs for this home address */
 		bul_iterate(&hai->bul, mn_rr_start_handoff, NULL);
 
 		/* IP6_MH_BA_KEYM  */

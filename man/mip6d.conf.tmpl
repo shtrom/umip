@@ -190,6 +190,36 @@ Default: disabled
 Change on reloading: supported.
 
 .TP
+.BR "TunnelPayloadForceSANego " "boolean" ";"
+
+If IPsec policy set mandates protection of tunneled data (i.e. contains
+.B IPsecPolicy TunnelPayload UseESP;
+) and dynamic keying with MIPv6-aware IKE is used (i.e.
+.B KeyMngMobCapability
+is enabled), the IPsec tunnel is usually neogiated by the MN when it has
+traffic to send.
+
+This implies that the MN is not reachable on its HoA via its IPsec
+protected tunnel (for a MR, this also prevents communication with its
+internal networks) until that negotiation has been performed. If no traffic
+is sent, this may never occur.
+
+.B TunnelPayloadForceSANego
+forces the negotiation of the IPsec SA protecting tunneled data with the
+Home Agent.
+
+
+Note that the option is enabled by default but is only meaningful when
+both KeyMngMobCapability and IPsec protection of tunneled data are also
+enabled. Also note that the negotiation of the SA is (at the moment) only
+requested after the first registration (i.e. reception of the first valid
+BA from our Home Agent). This specific behavior might change in the future.
+
+Default: enabled
+
+Change on reloading: supported.
+
+.TP
 .nf
 .BR "IPsecPolicySet {"
 .BR "	HomeAgentAddress " "address" ";"

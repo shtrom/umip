@@ -152,6 +152,7 @@ static void uerror(const char *fmt, ...) {
 %token		BLOCK
 %token		USEMNHAIPSEC
 %token		KEYMNGMOBCAPABILITY
+%token		TUNNELPAYLOADFORCESANEGO
 %token		HOMEREGBINDING
 %token		MH
 %token		MOBPFXDISC
@@ -297,6 +298,10 @@ topdef		: MIP6ENTITY mip6entity ';'
 		| KEYMNGMOBCAPABILITY BOOL  ';'
 		{
 			conf_parsed->KeyMngMobCapability = $2;
+		}
+		| TUNNELPAYLOADFORCESANEGO BOOL  ';'
+		{
+			conf_parsed->TunnelPayloadForceSANego = $2;
 		}
 		| USEMOVEMENTMODULE movemodule ';'
 		| USEPOLICYMODULE policymodule ';'

@@ -131,6 +131,10 @@ int mn_ipsec_tnl_pol_del(const struct in6_addr *haaddr,
 
 int mn_ipsec_larval_sa(void);
 
+int mn_ipsec_tnl_force_acquire(const struct in6_addr *haaddr,
+			       const struct in6_addr *hoa,
+			       void *arg);
+
 extern int ipsec_policy_dump_config(const struct in6_addr *haaddr,
 				    const struct in6_addr *hoa,
 				    struct ipsec_policy_entry *e, void *arg);

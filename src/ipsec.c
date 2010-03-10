@@ -1395,6 +1395,67 @@ static int _mn_tnl_pol_mod(const struct in6_addr *haaddr,
 	return err;
 }
 
+/* Force negotiation of tunnel mode SA protecting data traffic between
+ * the MN and its HA */
+int _mn_tnl_force_acq(const struct in6_addr *haaddr,
+		      const struct in6_addr *hoa,
+		      struct ipsec_policy_entry *e,
+		      void *arg)
+{
+	struct bulentry *bule = (struct bulentry *)arg;
+	struct xfrm_userpolicy_info sp;
+	struct xfrm_user_tmpl tmpl;
+	u_int16_t ipsec_proto;
+	int ifindex, err = 0;
+
+	assert(haaddr);
+	assert(hoa);
+	assert(e);
+	assert(arg);
+
+	/* XXX At some point we may need to extend it to other
+	 * protected tunnel modes --arno */
+	switch (e->type) {
+	case IPSEC_POLICY_TYPE_TUNNELPAYLOAD:
+		break;
+	default:
+		goto end;
+	}
+
+	/* XXX Limitation: Single IPsec proto can only be applied */
+	if (ipsec_use_esp(e))
+		ipsec_proto = IPPROTO_ESP;
+	else if (ipsec_use_ah(e))
+		ipsec_proto = IPPROTO_AH;
+	else if (ipsec_use_ipcomp(e))
+		ipsec_proto = IPPROTO_COMP;
+	else {
+		dbg("invalid ipsec proto\n");
+		goto end;
+	}
+
+	ifindex = bule->home->if_tunnel;
+
+	_set_sp(&sp, e, XFRM_POLICY_OUT, &in6addr_any, 0, hoa, 0,
+		ifindex, MIP6_ENTITY_MN);
+	_set_tmpl(&tmpl, AF_INET6, ipsec_proto, XFRM_MODE_TUNNEL,
+		  haaddr, &bule->coa, e->reqid_toha);
+
+	if (xfrm_ipsec_tnl_state_acquire(&sp, &tmpl) < 0) {
+		dbg("Sending userland ACQUIRE failed.\n");
+		err = -1;
+	}
+
+ end:
+	return err;
+}
+
+int mn_ipsec_tnl_force_acquire(const struct in6_addr *haaddr,
+			 const struct in6_addr *hoa, void *arg)
+{
+	return ipsec_policy_apply(haaddr, hoa, _mn_tnl_force_acq, arg);
+}
+
 /*
  *   Add SP entry (for MN)
  *

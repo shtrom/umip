@@ -447,6 +447,12 @@ void conf_apply_changes(struct mip6_config *cur, struct mip6_config *new)
 		cur->KeyMngMobCapability = new->KeyMngMobCapability;
 	}
 
+	/* (TunnelPayloadForceSANego) TunnelPayloadForceSANego: update the value in config */
+	if (new->TunnelPayloadForceSANego != cur->TunnelPayloadForceSANego)
+	{
+		dbg("New TunnelPayloadForceSANego: %s\n", new->TunnelPayloadForceSANego ? "enabled" : "disabled");
+		cur->TunnelPayloadForceSANego = new->TunnelPayloadForceSANego;
+	}
 
 	/* (UseMnHaIPsec) UseMnHaIPsec: No change allowed. */
 	if (new->UseMnHaIPsec != cur->UseMnHaIPsec)
