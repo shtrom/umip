@@ -896,7 +896,11 @@ static void mn_send_home_bu(struct home_addr_info *hai)
 		bule->do_send_bu = 1;
 		mn_send_bu_msg(bule);
 		bul_update_timer(bule);
-		if (conf.OptimisticHandoff)
+
+		/* OptimisticHandoff behavior is not enforced when coming
+		 * back home, for security reasons. */
+		if ((type_movement != MIP6_TYPE_MOVEMENT_FL2HL) &&
+		    conf.OptimisticHandoff)
 			post_ba_bul_update(bule);
 	}
 	/* Before bul_iterate, tunnel modification should be done. */
@@ -1067,7 +1071,10 @@ static void mn_process_ha_ba(struct ip6_mh_binding_ack *ba,
 			mn_send_bu_msg(bule);
 			bule->delay = conf.InitialBindackTimeoutReReg_ts;
 			bul_update_timer(bule);
-			if (conf.OptimisticHandoff)
+
+			/* OptimisticHandoff behavior is not enforced when coming
+			 * back home, for security reasons. */
+			if ((bule->lifetime.tv_sec != 0) && conf.OptimisticHandoff)
 				post_ba_bul_update(bule);
 			goto out;
 		}
@@ -1101,7 +1108,14 @@ static void mn_process_ha_ba(struct ip6_mh_binding_ack *ba,
 	br_adv = ba_lifetime;
 	tsadd(bule->lastsent, ba_lifetime, bule->hard_expire);
 
-	if (!conf.OptimisticHandoff)
+	/* post_ba_bul_update() need to be called when receiving
+	 * de-registration BA even if OptimisticHandoff is enabled.
+	 * For security reasons, OptimistifHandoff behavior is not
+	 * enforced when comming back home. Also note that this
+	 * optimistic behavior does not make much sense from a
+	 * performance standpoint when coming back home: RTT is 0.
+	 * --arno. */
+	if (!conf.OptimisticHandoff || !tsisset(ba_lifetime))
 		post_ba_bul_update(bule);
 
 	if (bule->flags & IP6_MH_BU_MR &&
