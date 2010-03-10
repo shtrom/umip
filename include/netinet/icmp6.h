@@ -1,9 +1,10 @@
 #ifndef _NETINET__ICMP6_H
 #define _NETINET__ICMP6_H 1
 
-#include_next <netinet/icmp6.h>
-
 #include <config.h>
+
+#include <netinet/packed_icmp6.h>
+
 /*
  *   ICMP message types and definitions for Mobile IPv6 are defined in
  *   <netinet/icmp6.h>
