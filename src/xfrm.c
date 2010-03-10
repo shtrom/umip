@@ -2741,7 +2741,7 @@ int xfrm_move_hoa(struct home_addr_info *hai, int oldif)
 	int if_index = hai->hoa.iif;
 
 	XDBG("[DSMIP BUG] This function should be temporarily disabled\n");
-	assert(0);
+	// assert(0);
 
 #ifdef __DSMIP_DEBUG__
 	XDBG("home link block status : %x on %d, current is %d\n",
