@@ -219,6 +219,7 @@ DoRouteOptimizationMN		{ return DOROUTEOPTIMIZATIONMN; }
 HomeAddress			{ return HOMEADDRESS; }
 HomeAgentAddress		{ return HOMEAGENTADDRESS; }
 HomeAgentV4Address		{ return HOMEAGENTADDRESS4; }
+HomeAgentName			{ return HOMEAGENTNAME; }
 InitialBindackTimeoutFirstReg	{ return INITIALBINDACKTIMEOUTFIRSTREG; }
 InitialBindackTimeoutReReg	{ return INITIALBINDACKTIMEOUTREREG; }
 InitialSolicitTimer		{ return INITIALSOLICITTIMER; }

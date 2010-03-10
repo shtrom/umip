@@ -37,6 +37,9 @@
 #include <string.h>
 #include <stdarg.h>
 #include <netinet/ip6mh.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
 #include "mipv6.h"
 #include "ha.h"
 #include "mn.h"
@@ -134,6 +137,7 @@ static void uerror(const char *fmt, ...) {
 %token		HOMEADDRESS
 %token		HOMEAGENTADDRESS
 %token		HOMEAGENTADDRESS4
+%token		HOMEAGENTNAME
 %token		INITIALBINDACKTIMEOUTFIRSTREG
 %token		INITIALBINDACKTIMEOUTREREG
 %token		INITIALSOLICITTIMER
@@ -508,11 +512,55 @@ linkdefs	: linkdef
 
 linkdef		: HOMEAGENTADDRESS ADDR ';'
 		{
+			/* If both HomeAgentAddress and HomeAgentName are specified, the Name is ignored */
 			memcpy(&hai.ha_addr, &$2, sizeof(struct in6_addr));
 		}
 		| HOMEAGENTADDRESS4 ADDR4 ';'
 		{
+			/* If both HomeAgentV4Address and HomeAgentName are specified, the Name is ignored */
 			memcpy(&hai.ha_addr4, &$2, sizeof(struct in_addr));
+		}
+		| HOMEAGENTNAME QSTRING ';'
+		{
+			struct addrinfo *res=NULL, *ad=NULL;
+			int ret=0;
+			struct sockaddr_in6 * sin6;
+			struct sockaddr_in  * sin4;
+
+			ret = getaddrinfo($2, NULL, NULL, &res);
+			if (ret != 0) {
+				uerror("Error resolving %s: %s", $2, gai_strerror(ret));
+				return -1;
+			}
+
+			for (ad=res; ad != NULL; ad = ad->ai_next) {
+				switch (ad->ai_family) {
+					case PF_INET6:
+						if (IN6_IS_ADDR_UNSPECIFIED(&hai.ha_addr)) {
+							if (ad->ai_addrlen != sizeof(struct sockaddr_in6)) {
+								uerror("Internal error in getaddrinfo");
+								return -1;
+							}
+							sin6 = (struct sockaddr_in6 *)ad->ai_addr;
+							memcpy(&hai.ha_addr, &sin6->sin6_addr, sizeof(struct in6_addr));
+						}
+						break;
+
+					case PF_INET:
+						if (IN4_IS_ADDR_UNSPECIFIED(&hai.ha_addr4)) {
+							if (ad->ai_addrlen != sizeof(struct sockaddr_in)) {
+								uerror("Internal error in getaddrinfo");
+								return -1;
+							}
+							sin4 = (struct sockaddr_in *)ad->ai_addr;
+							memcpy(&hai.ha_addr4, &sin4->sin_addr, sizeof(struct in_addr));
+						}
+						break;
+
+				}
+			}
+
+			freeaddrinfo(res);
 		}
 		| HOMEADDRESS homeaddress ';'
 		| USEALTCOA BOOL ';'
@@ -575,6 +623,48 @@ ipsechaaddrdef	: HOMEAGENTADDRESS ADDR ';'
 		| HOMEAGENTADDRESS4 ADDR4 ';'
 		{
 			ipsec_ps.ha4 = $2;
+		}
+		| HOMEAGENTNAME QSTRING ';'
+		{
+			struct addrinfo *res=NULL, *ad=NULL;
+			int ret=0;
+			struct sockaddr_in6 * sin6;
+			struct sockaddr_in  * sin4;
+
+			ret = getaddrinfo($2, NULL, NULL, &res);
+			if (ret != 0) {
+				uerror("Error resolving %s: %s", $2, gai_strerror(ret));
+				return -1;
+			}
+
+			for (ad=res; ad != NULL; ad = ad->ai_next) {
+				switch (ad->ai_family) {
+					case PF_INET6:
+						if (IN6_IS_ADDR_UNSPECIFIED(&ipsec_ps.ha)) {
+							if (ad->ai_addrlen != sizeof(struct sockaddr_in6)) {
+								uerror("Internal error in getaddrinfo");
+								return -1;
+							}
+							sin6 = (struct sockaddr_in6 *)ad->ai_addr;
+							memcpy(&ipsec_ps.ha, &sin6->sin6_addr, sizeof(struct in6_addr));
+						}
+						break;
+
+					case PF_INET:
+						if (IN4_IS_ADDR_UNSPECIFIED(&ipsec_ps.ha4)) {
+							if (ad->ai_addrlen != sizeof(struct sockaddr_in)) {
+								uerror("Internal error in getaddrinfo");
+								return -1;
+							}
+							sin4 = (struct sockaddr_in *)ad->ai_addr;
+							memcpy(&ipsec_ps.ha4, &sin4->sin_addr, sizeof(struct in_addr));
+						}
+						break;
+
+				}
+			}
+
+			freeaddrinfo(res);
 		}
 		;
 
