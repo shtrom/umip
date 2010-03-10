@@ -108,6 +108,8 @@ void dump_bule(void *bule, void *os)
 		fprintf(out, "IP6_MH_BU_KEYM ");
 	if (e->flags & IP6_MH_BU_MR)
 		fprintf(out, "IP6_MH_BU_MR");
+	if (e->flags & IP6_MH_BU_TLV)
+		fprintf(out, "IP6_MH_BU_TLV");
 
 	fprintf(out, "\n");
 	fflush(out);

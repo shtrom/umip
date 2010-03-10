@@ -35,6 +35,9 @@
 #include <netinet/icmp6.h>
 #include <netinet/ip6mh.h>
 #include <netinet/ip6.h>
+#include <linux/udp.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 
 #include "mipv6.h"
 #include "debug.h"
@@ -445,6 +448,40 @@ static struct mh_handler cn_bu_handler =
 	.recv = cn_recv_bu,
 };
 
+void dsmip_cn_listen_udpencap()
+{
+	/* DSMIPv6: opening a socket for UDP encapsulated packets */
+	int fd;
+	int option = UDP_ENCAP_IP_VANILLA;
+	struct sockaddr_in addr;
+
+	fd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (fd < 0)
+	{
+		perror("socket");
+		fprintf(stderr, "UDP encap. reception will be disabled\n");
+		return;
+	}
+
+	memset(&addr, 0, sizeof(addr));
+	addr.sin_port = htons(DSMIP_UDP_DPORT);
+	addr.sin_addr.s_addr = INADDR_ANY;
+	if (bind(fd, (struct sockaddr *) &addr, sizeof(addr)))
+	{
+		perror("bind");
+		fprintf(stderr, "UDP encap. reception will be disabled\n");
+		return;
+	}
+
+	if (setsockopt(fd, IPPROTO_UDP, UDP_ENCAP,
+				&option, sizeof(option)) != 0)
+	{
+		perror("setsockopt");
+		fprintf(stderr, "UDP encap. reception will be disabled\n");
+		return;
+	}
+}
+
 int cn_init(void)
 {
 	int ret;
@@ -458,6 +495,7 @@ int cn_init(void)
 	mh_handler_reg(IP6_MH_TYPE_HOTI, &cn_hoti_handler);
 	mh_handler_reg(IP6_MH_TYPE_COTI, &cn_coti_handler);
 	mh_handler_reg(IP6_MH_TYPE_BU, &cn_bu_handler);
+	dsmip_cn_listen_udpencap();
 
 	return 0;
 }

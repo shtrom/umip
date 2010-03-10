@@ -612,7 +612,11 @@ static int home_tnl_del(int old_if, int new_if, struct home_tnl_ops_parm *p)
 	/* delete HoA route */
 	route_del(old_if, RT6_TABLE_MAIN,
 		  IP6_RT_PRIO_MIP6_FWD, NULL, 0, peer_addr, 128, NULL);
-
+	if (old_coa && IN6_IS_ADDR_V4MAPPED(old_coa)) {
+		route_del(old_if, RT6_TABLE_MAIN,
+			IP6_RT_PRIO_MIP6_FWD,
+			NULL, 0, old_coa, 128, NULL);
+	}
 	/* delete MNP routes */
 	nemo_ha_del_mnp_routes(&p->bce->mob_net_prefixes,
 			       &p->mob_net_prefixes, old_if, 1);
@@ -654,6 +658,15 @@ static int home_tnl_add(int old_if, int new_if, struct home_tnl_ops_parm *p)
 		      NULL, 0, peer_addr, 128, NULL) < 0) {
 		p->ba_status = IP6_MH_BAS_INSUFFICIENT;
 		goto err;
+	}
+	/* DSMIPv6: add v4 CoA route */
+	if (coa && IN6_IS_ADDR_V4MAPPED(coa)) {
+		if (route_add(new_if, RT6_TABLE_MAIN,
+			      RTPROT_MIP, 0, IP6_RT_PRIO_MIP6_FWD,
+				NULL, 0, coa, 128, NULL) < 0) {
+			p->ba_status = IP6_MH_BAS_INSUFFICIENT;
+			goto err;
+		}
 	}
 	/* add SP entry */
 	if (conf.UseMnHaIPsec) {
@@ -865,6 +878,9 @@ static void *ha_recv_bu_worker(void *varg)
 	uint16_t bu_flags, seqno;
 	uint8_t ba_flags;
 	struct home_tnl_ops_parm p;
+	/* TODO : get addr from config file or hai list */
+	struct in6_addr *tnl_addr;
+	int tunnel_if_index = 0;
 
 	pthread_dbg("thread started");
 restart:
@@ -930,6 +946,37 @@ restart:
 			/* else get rid of it */
 			bcache_delete(out.src, out.dst);
 		}
+		if (out.bind_coa && (bu_flags & IP6_MH_BU_UDP)) {
+			if (!IN6_IS_ADDR_V4MAPPED(out.bind_coa)) {
+				/* No UDP encapsulation for MN in IPv6-enabled link */
+				status = IP6_MH_BAS_NO_UDP_ENCAP;
+				goto send_nack;
+			} else {
+				/* XXX Force UDP encapsulation not yet supported */
+				status = IP6_MH_BAS_NO_UDP_ENCAP;
+				goto send_nack;
+			}
+		}
+		if (bce && IN6_IS_ADDR_V4MAPPED(&bce->coa)
+		    && out.bind_coa && !IN6_IS_ADDR_V4MAPPED(out.bind_coa)) {
+			if (route_add(bce->link, RT6_TABLE_MIP6,
+					RTPROT_MIP, 0, IP6_RT_PRIO_MIP6_OUT,
+			     		&bce->our_addr, 128, &bce->peer_addr, 128,
+			     	 	NULL) < 0) {
+				status = IP6_MH_BAS_INSUFFICIENT;
+				goto send_nack;
+			}
+		}
+		if (bce && !IN6_IS_ADDR_V4MAPPED(&bce->coa)
+		    && out.bind_coa && IN6_IS_ADDR_V4MAPPED(out.bind_coa)) {
+			if (route_del(bce->link, RT6_TABLE_MIP6,
+					IP6_RT_PRIO_MIP6_OUT,
+			     		&bce->our_addr, 128, &bce->peer_addr, 128,
+			     	 	NULL) < 0) {
+				status = IP6_MH_BAS_INSUFFICIENT;
+				goto send_nack;
+			}
+		}
 	} else if (!tsisset(lft)) {
 		status = IP6_MH_BAS_NOT_HA;
 		goto send_nack;
@@ -945,6 +992,11 @@ restart:
 			goto send_nack;
 		}
 		status = IP6_MH_BAS_ACCEPTED;
+	}
+	if (out.bind_coa && (bu_flags & IP6_MH_BU_UDP)) {
+		/* XXX Force UDP encapsulation not yet supported */
+		status = IP6_MH_BAS_NO_UDP_ENCAP;
+		goto send_nack;
 	}
 	status = conf.pmgr.discard_binding(out.dst, out.bind_coa,
 					   out.src, arg->bu, arg->len);
@@ -1021,8 +1073,13 @@ restart:
 	bce->flags = bu_flags;
 	bce->lifetime = lft;
 	if (new) {
-		if (tunnel_add(out.src, out.bind_coa, 0,
-			       home_tnl_ops, &p) < 0) {
+		if (out.bind_coa && IN6_IS_ADDR_V4MAPPED(out.bind_coa))
+		        tnl_addr = &conf.HaAddr4Mapped;
+		else
+			tnl_addr = out.src;
+
+		if ((tunnel_if_index = tunnel_add(tnl_addr, out.bind_coa, 0,
+			       home_tnl_ops, &p)) < 0) {
 			if (p.ba_status >= IP6_MH_BAS_UNSPECIFIED)
 				status = p.ba_status;
 			else
@@ -1034,12 +1091,14 @@ restart:
 
 		bce->cleanup = home_cleanup;
 
-		if (route_add(bce->link, RT6_TABLE_MIP6,
-			      RTPROT_MIP, 0, IP6_RT_PRIO_MIP6_OUT,
-			      &bce->our_addr, 128, &bce->peer_addr, 128,
-			      NULL) < 0) {
-			status = IP6_MH_BAS_INSUFFICIENT;
-			goto send_nack;
+		if (out.bind_coa && !IN6_IS_ADDR_V4MAPPED(out.bind_coa)) {
+			if (route_add(bce->link, RT6_TABLE_MIP6,
+						RTPROT_MIP, 0, IP6_RT_PRIO_MIP6_OUT,
+						&bce->our_addr, 128, &bce->peer_addr, 128,
+						NULL) < 0) {
+				status = IP6_MH_BAS_INSUFFICIENT;
+				goto send_nack;
+			}
 		}
 
 		if (proxy_nd_start(bce->link, out.dst, out.src,
@@ -1052,8 +1111,14 @@ restart:
 	} else {
 		bce->old_coa = bce->coa;
 		bce->coa = *out.bind_coa;
-		if (tunnel_mod(bce->tunnel, out.src, out.bind_coa, 0,
-			       home_tnl_ops, &p) < 0) {
+
+		if (out.bind_coa && IN6_IS_ADDR_V4MAPPED(out.bind_coa))
+		        tnl_addr = &conf.HaAddr4Mapped;
+		else
+			tnl_addr = out.src;
+
+		if ((tunnel_if_index = tunnel_mod(bce->tunnel, tnl_addr, out.bind_coa, 0,
+			       home_tnl_ops, &p)) < 0) {
 			if (p.ba_status >= IP6_MH_BAS_UNSPECIFIED)
 				status = p.ba_status;
 			else
@@ -1094,6 +1159,14 @@ restart:
 		}
 	}
 
+	if (bu_flags & IP6_MH_BU_TLV) {
+		/* XXX No support for TLV-format UDP encapsulation yet */
+		cdbg("MN (%x:%x:%x:%x:%x:%x:%x:%x) asked for TLV-format UDP encap,"
+				" but we don't offer support yet.\n", NIP6ADDR(out.src));
+		bce->flags &= ~IP6_MH_BU_TLV;
+		ba_flags &= ~IP6_MH_BA_TLV;
+	}
+
 	if (ba_flags & IP6_MH_BA_KEYM) {
 		/* FUTURE */
 		/* Move the peer endpoint of the key management
@@ -1112,8 +1185,13 @@ restart:
  	if (status < IP6_MH_BAS_UNSPECIFIED && bu_flags & IP6_MH_BU_MR)
  		ba_flags |= IP6_MH_BA_MR;
 
-	if (!(arg->flags & HA_BU_F_SKIP_BA))
-		mh_send_ba(&out, status, ba_flags, seqno, &lft, NULL, iif);
+	if (!(arg->flags & HA_BU_F_SKIP_BA)) {
+		if (IN6_IS_ADDR_V4MAPPED(out.bind_coa))
+			mh_send_ba(&out, status, ba_flags, seqno, &lft, NULL, tunnel_if_index);
+		else
+			mh_send_ba(&out, status, ba_flags, seqno, &lft, NULL, iif);
+	}
+
 	if (new && tsisset(lft))
 		mpd_start_mpa(&bce->our_addr, &bce->peer_addr);
 out:
@@ -1138,8 +1216,14 @@ send_nack:
 		bcache_release_entry(bce);
 		bcache_delete(out.src, out.dst);
 	}
-	if (!(arg->flags & HA_BU_F_SKIP_BA))
-		mh_send_ba_err(&out, status, 0, seqno, NULL, iif);
+
+	if (!(arg->flags & HA_BU_F_SKIP_BA)) {
+		if (IN6_IS_ADDR_V4MAPPED(out.bind_coa))
+			mh_send_ba_err(&out, status, 0, seqno, NULL, tunnel_if_index);
+		else
+			mh_send_ba_err(&out, status, 0, seqno, NULL, iif);
+	}
+
 	goto out;
 }
 

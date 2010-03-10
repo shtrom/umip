@@ -394,6 +394,19 @@ Default: allow
 
 Change on reloading: Partial support. Only affects new bindings.
 
+.TP
+.BR "HaAcceptDsmip6  enabled | disabled"
+
+Feel the true power of mobility.
+
+Default: disabled;
+
+.TP
+.BR "HomeAgentV4Address " "IPv4_address" ";"
+
+IPv4_address is the IPv4 address used on the Home Agent. It has to
+be defined when using DSMIPv6.
+
 .SH MOBILE NODE SPECIFIC OPTIONS
 
 The following definitions are ignored unless the node is configured as a MN:
@@ -523,10 +536,18 @@ Default: disabled;
 Change on reloading: Supported.
 
 .TP
+.BR "MnUseDsmip6  enabled | disabled"
+
+Feel the true power of mobility.
+
+Default: disabled;
+
+.TP
 .nf
 .BR "MnHomeLink " "name " "{"
 .BR "	HomeAddress " "address/length MNP list" ";"
 .BR "	HomeAgentAddress " "address" ";"
+.BR "	HomeAgentV4Address " "IPv4_address" ";"
 .BR "	MnRoPolicy ..."
 .BR "	..."
 .BR "}"
@@ -564,6 +585,15 @@ Address is the IPv6 address of the Mobile Node's Home Agent. DHAAD is used
 if it is the unspecified address ::.
 
 Default: ::
+
+.TP
+.BR "HomeAgentV4Address " "IPv4_address" ";"
+
+IPv4_address is the IPv4 address of the Mobile Node's Home Agent. It has to
+be defined when using DSMIPv6. DHAAD is used if it is the unspecified address
+0.0.0.0.
+
+Default: 0.0.0.0
 
 .TP
 .BR "IsMobRtr enabled | disabled"

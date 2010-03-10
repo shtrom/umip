@@ -20,6 +20,9 @@
 #define PREFIX_ADV_RETRIES        3   /* retransmissions */
 #define PREFIX_ADV_TIMEOUT        3   /* seconds */
 
+/* DSMIPv6 UDP encapsulation port */
+#define DSMIP_UDP_DPORT		  666 /* TBA by IANA */
+
 /* Constants below have no explicit names in the spec. */
 
 #define MAX_BINDING_LIFETIME     (0xffff << 2) /* seconds */

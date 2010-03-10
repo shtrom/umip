@@ -41,8 +41,10 @@
 
 #include "debug.h"
 #include "rtnl.h"
+#include "conf.h"
+#include "movement.h"
 
-#define RT_DEBUG_LEVEL 0
+#define RT_DEBUG_LEVEL 1
 
 #if RT_DEBUG_LEVEL >= 1
 #define RTDBG dbg
@@ -91,6 +93,9 @@ int addr_do(const struct in6_addr *addr, int plen, int ifindex, void *arg,
 	memset(rbuf, 0, sizeof(rbuf));
 	rn = (struct nlmsghdr *)rbuf;
 	err = rtnl_route_do(sn, rn);
+#ifdef __DSMIP_DEBUG__
+	printf("route_do returns %d\n", err);
+#endif
 	if (err < 0) {
 		rn = sn;
 		ifa = NLMSG_DATA(rn);
@@ -100,6 +105,9 @@ int addr_do(const struct in6_addr *addr, int plen, int ifindex, void *arg,
 		if (rn->nlmsg_type != RTM_NEWADDR ||
 		    rn->nlmsg_len < NLMSG_LENGTH(sizeof(*ifa)) ||
 		    ifa->ifa_family != AF_INET6) {
+#ifdef __DSMIP_DEBUG__
+		  printf("EINVAL\n");
+#endif
 			return -EINVAL;
 		}
 	}
@@ -112,6 +120,9 @@ int addr_do(const struct in6_addr *addr, int plen, int ifindex, void *arg,
 
 	if (!rta_tb[IFA_ADDRESS] ||
 	    !IN6_ARE_ADDR_EQUAL(RTA_DATA(rta_tb[IFA_ADDRESS]), addr)) {
+#ifdef __DSMIP_DEBUG__
+	  printf("INVAL2\n");
+#endif
 		return -EINVAL;
 	}
 	if (do_callback)
@@ -163,6 +174,73 @@ int addr_add(const struct in6_addr *addr, uint8_t plen,
 {
 	return addr_mod(RTM_NEWADDR, NLM_F_CREATE|NLM_F_REPLACE,
 			addr, plen, flags, scope, ifindex, prefered, valid);
+}
+
+// RK TODO: this does not work yet
+int addr4_del(const struct in_addr *addr, uint8_t plen4, int ifindex)
+{
+	struct request {
+		struct nlmsghdr msg;
+		struct ifaddrmsg ifa;
+		char payload[256];
+	} req;
+
+	unsigned char brd_v4_coa[4];
+	uint32_t netmask = 0xffffffff;
+	unsigned long broadcast;
+	struct list_head *list;
+	struct net_iface *iface = NULL;
+	int i;
+
+	// Find the interface name
+	list_for_each(list, &conf.net_ifaces) {
+		struct net_iface *nif;
+		nif = list_entry(list, struct net_iface, list);
+		if (nif->ifindex == ifindex) {
+			iface = nif;
+		}
+	}
+
+	if (iface == NULL)
+		RTDBG("Interface %d does not exist\n", ifindex);
+
+	// Build the netmask
+	for (i = 0; i < 32-plen4; i++)
+		netmask = netmask << 1;
+
+	netmask = htonl(netmask);
+	broadcast = (addr->s_addr & netmask) | (~netmask);
+	memcpy(brd_v4_coa, &broadcast, 4);
+
+	RTDBG("address information : %d.%d.%d.%d, %d.%d.%d.%d, plen %d\n",
+		NIP4ADDR(addr), brd_v4_coa[0], brd_v4_coa[1],
+		brd_v4_coa[2], brd_v4_coa[3], plen4);
+
+	memset(&req, 0, sizeof(req));
+
+	req.msg.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifaddrmsg));
+	req.msg.nlmsg_flags = NLM_F_REQUEST;
+	req.msg.nlmsg_type = RTM_DELADDR;
+
+	req.ifa.ifa_family = AF_INET;
+	req.ifa.ifa_prefixlen = plen4;
+//	req.ifa.ifa_flags = IFA_F_PERMANENT;
+	req.ifa.ifa_index = ifindex;
+
+	addattr_l(&req.msg, sizeof(req), IFA_LOCAL, &addr->s_addr, 4);
+	addattr_l(&req.msg, sizeof(req), IFA_ADDRESS, &addr->s_addr, 4);
+	addattr_l(&req.msg, sizeof(req), IFA_BROADCAST, &brd_v4_coa, 4);
+//	addattr_l(&req.msg, sizeof(req), IFA_LABEL, iface->name, strlen(iface->name) + 1);
+
+	if (rtnl_talk(&dna_rth, &req.msg, 0, 0, NULL, NULL, NULL) < 0) {
+		RTDBG("IPv4 address could not be removed on interface %d, %s\n",
+			ifindex, iface->name);
+		return 0;
+	}
+	else
+		RTDBG("IPv4 address removed on interface %d\n", ifindex);
+
+	return 0;
 }
 
 

@@ -149,6 +149,10 @@ int default_discard_binding(const struct in6_addr *remote_hoa,
 	if (bu->ip6mhbu_flags & IP6_MH_BU_MR && !conf.HaAcceptMobRtr)
 		return IP6_MH_BAS_MR_OP_NOT_PERMITTED;
 
+	if ((bu->ip6mhbu_flags & IP6_MH_BU_UDP)
+			&& !IN6_IS_ADDR_V4MAPPED(remote_coa))
+		return IP6_MH_BAS_NO_UDP_ENCAP;
+
 	pthread_rwlock_rdlock(&policy_lock);
 	acl = hash_get(&policy_bind_acl_hash, NULL, remote_hoa);
 	if (acl != NULL) {

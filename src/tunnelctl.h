@@ -2,6 +2,8 @@
 #ifndef __TUNNELCTL_H__
 #define __TUNNELCTL_H__ 1
 
+#include "mn.h"
+
 int tunnel_add(struct in6_addr *local,
 	       struct in6_addr *remote,
 	       int link,
@@ -12,6 +14,16 @@ int tunnel_add(struct in6_addr *local,
 	       void *data);
 
 int tunnel_mod(int ifindex,
+	       struct in6_addr *local,
+	       struct in6_addr *remote,
+	       int link,
+	       int (*ext_tunnel_ops)(int request,
+				     int old_if,
+				     int new_if,
+				     void *data),
+	       void *data);
+
+int dsmip_mn_tunnel_mod(struct home_addr_info *hai,
 	       struct in6_addr *local,
 	       struct in6_addr *remote,
 	       int link,

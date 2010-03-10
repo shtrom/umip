@@ -52,6 +52,7 @@ int addr_do(const struct in6_addr *addr, int plen, int ifindex, void *arg,
 			       struct rtattr *rta_tb[], void *arg));
 
 int addr_del(const struct in6_addr *addr, uint8_t plen, int ifindex);
+int addr4_del(const struct in_addr *addr, uint8_t plen4, int ifindex);
 
 int addr_add(const struct in6_addr *addr, uint8_t plen,
 	     uint8_t flags, uint8_t scope, int ifindex,

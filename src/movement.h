@@ -17,6 +17,9 @@
 #define DEFAULT_RETRANSMIT_TIMER 1 * TIME_SEC_MSEC
 #define DEFAULT_REACHABLE_TIME 30 * TIME_SEC_MSEC
 
+extern struct rtnl_handle md_rth;
+extern struct rtnl_handle dna_rth;
+
 struct md_router {
 	struct list_head list;
 	struct in6_addr lladdr;
@@ -46,6 +49,7 @@ struct md_coa {
 	struct list_head list;
 	uint8_t flags;
 	uint8_t plen;
+	uint8_t plen4;
 	uint8_t scope;
 	int ifindex;
 	int if_is_tunnel;
@@ -110,7 +114,9 @@ struct md_inet6_iface {
 	struct list_head expired_rtrs;
 	struct list_head coas;
 	struct list_head expired_coas;
+	struct list_head v4_rtrs;
 	struct tq_elem tqe;
+	int dhcp_status;
 };
 
 enum {
@@ -144,6 +150,8 @@ struct movement_event {
 	struct md_coa *coa;
 };
 
+struct md_inet6_iface *
+dsmip_get_inet6_iface(int ifindex);
 
 static inline struct md_inet6_iface *
 md_get_inet6_iface(struct list_head *iface_list, int ifindex)
@@ -196,5 +204,8 @@ static inline int md_is_link_up(struct md_inet6_iface *iface)
 }
 
 int rtr_addr_chk(struct md_router *rtr, struct in6_addr *rtr_addr);
+
+struct md_router *md_create_router_v4(struct md_inet6_iface *iface,
+				      const struct in_addr *gw_addr);
 
 #endif

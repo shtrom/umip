@@ -289,12 +289,15 @@ int mpd_prefix_check(struct in6_addr *dst,
 	struct prefix_list_entry *p;
 	int res = -ENODEV;
 
+	printf("matching %x:%x:%x:%x:%x:%x:%x:%x and %x:%x:%x:%x:%x:%x:%x:%x\n", NIP6ADDR(dst), NIP6ADDR(src));
+
 	i = ha_get_if_by_addr(dst);
 	if (i != NULL) {
 		int expired = 0;
 		res = -ENOENT;
 		pthread_rwlock_rdlock(&prefix_lock);
 		p = prefix_list_get(&i->prefix_list, src, 0);
+		printf("prefix from list : %p\n", p);
 		if (p != NULL) {
 			unsigned long valid, preferred;
 			struct timespec now;
@@ -326,6 +329,8 @@ int mpd_prefix_check(struct in6_addr *dst,
 		if (expired)
 			mpd_del_expired_pinfos(i);
 	}
+
+	printf("res : %d\n", res);
 	return res;
 }
 

@@ -78,12 +78,14 @@ nl		\n
 qstring		\"[^\"\n]*[\"\n]
 digit		[0-9]
 number		({digit})+
+digit3		({digit}){1,3}
 decimal		({number}"."{number})
 hexdec		([a-f]|[A-F]|[0-9])
 addr1		{hexdec}{1,4}":"({hexdec}{1,4}":")*(":"{hexdec}{1,4})+
 addr2		{hexdec}{1,4}(":"{hexdec}{1,4}){0,6}"::"
 addr3		({hexdec}{1,4}":"){7}{hexdec}{1,4}
 addr		({addr1}|{addr2}|{addr3}|"::")
+addr4		({digit3}"."{digit3}"."{digit3}"."{digit3})
 true		(enabled|allow|true)
 false		(disabled|deny|block|false)
 %%
@@ -216,6 +218,7 @@ DoRouteOptimizationCN		{ return DOROUTEOPTIMIZATIONCN; }
 DoRouteOptimizationMN		{ return DOROUTEOPTIMIZATIONMN; }
 HomeAddress			{ return HOMEADDRESS; }
 HomeAgentAddress		{ return HOMEAGENTADDRESS; }
+HomeAgentV4Address		{ return HOMEAGENTADDRESS4; }
 InitialBindackTimeoutFirstReg	{ return INITIALBINDACKTIMEOUTFIRSTREG; }
 InitialBindackTimeoutReReg	{ return INITIALBINDACKTIMEOUTREREG; }
 InitialSolicitTimer		{ return INITIALSOLICITTIMER; }
@@ -271,6 +274,8 @@ HaServedPrefix       	       	{ return HASERVEDPREFIX; }
 HomePrefix     			{ return HOMEPREFIX; }
 MobRtrUseExplicitMode    	{ return MOBRTRUSEEXPLICITMODE; }
 CnBindingPolicySet              { return CNBINDINGPOLICYSET; }
+MnUseDsmip6			{ return MNUSEDSMIP6; }
+HaAcceptDsmip6			{ return HAACCEPTDSMIP6; }
 internal			{ return INTERNAL; }
 
 {addr}		{
@@ -282,6 +287,17 @@ internal			{ return INTERNAL; }
 				return INV_TOKEN;
 			}
 			return ADDR;
+		}
+
+{addr4}		{
+			int i;
+
+			i = inet_pton(AF_INET, yytext, &yylval.addr4);
+
+			if (i < 1) {
+				return INV_TOKEN;
+			}
+			return ADDR4;
 		}
 
 {number}	{ yylval.num = atoi(yytext); return NUMBER; }
