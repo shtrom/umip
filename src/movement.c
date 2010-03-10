@@ -1836,7 +1836,9 @@ md_check_default_router(struct md_inet6_iface *iface, struct md_router *new)
 			if (conf.MnRouterProbes > 0) {
 				md_probe_router(old);
 				md_add_backup_router(iface, new);
-			}
+			} else
+				__md_free_router(new);
+
 			return;
 		}
 	}
