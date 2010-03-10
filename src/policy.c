@@ -183,7 +183,7 @@ int default_use_bradv(__attribute__ ((unused)) const struct in6_addr *remote_hoa
 		      __attribute__ ((unused)) const struct timespec *lft,
 		      __attribute__ ((unused)) struct timespec *refresh)
 {
-	return 0;
+	return conf.KeyMngMobCapability;
 }
 
 /**
