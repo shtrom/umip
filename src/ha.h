@@ -32,6 +32,7 @@ struct home_agent {
 struct ha_addr_holder {
 	struct list_head list;
 	struct in6_addr ha_addr;
+	struct in_addr ha_addr4;
 	struct in6_addr anycast_addr;
 };
 

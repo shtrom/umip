@@ -79,9 +79,12 @@ struct home_addr_info {
 	struct list_head ro_policies;
 	struct ha_candidate_list ha_list;
 	struct in6_addr ha_addr;
+	struct in_addr ha_addr4;
 	int pend_ba;
 	int verdict;
-	int if_tunnel;
+	int if_tunnel;		/* DSMIPv6: current used tunnel */
+	int if_tunnel64;	/* DSMIPv6: v6/v6 tunnel */
+	int if_tunnel66;	/* DSMIPv6: v6/v4 tunnel */
 	int if_home;
 	int if_block;
 	uint8_t altcoa;

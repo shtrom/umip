@@ -130,6 +130,17 @@ AC_CACHE_CHECK([whether to enable debug virtual terminal],
 	       [ac_cv_enable_vt], [ac_cv_enable_vt=no])
 AM_CONDITIONAL(ENABLE_VT, test x$enable_vt = xyes)
 
+dnl Option --enable-tlv
+AC_ARG_ENABLE(tlv,
+	AC_HELP_STRING([--enable-tlv],[enable support TLV UDP encapsulation]),
+        [ac_cv_enable_tlv=$enableval], [ac_cv_enable_tlv=no])
+if test x$ac_cv_enable_tlv = xyes; then
+        AC_DEFINE([TLV_ENCAP], [1], [Support TLV encap])
+fi
+AC_CACHE_CHECK([whether to support TLV-format UDP encapsulation],
+	       [ac_cv_enable_tlv], [ac_cv_enable_tlv=no])
+AM_CONDITIONAL(TLV_ENCAP, test x$enable_tlv = xyes)
+
 dnl Check Advanced IPv6 Socket API destination options header function availability
 AC_MSG_NOTICE([*** checking inet6_opt for RFC3542: Advanced IPv6 Socket API support])
 AC_REPLACE_FUNCS(inet6_opt_find)
@@ -215,6 +226,7 @@ AC_PACKAGE_NAME version AC_PACKAGE_VERSION
   Use OpenSSL crypto library: ..... $ac_cv_lib_crypto_HMAC_Init
   Enable debugging mode: .......... $ac_cv_enable_debug
   Enable virtual debug terminal: .. $ac_cv_enable_vt
+  Support TLV UDP encapsulation: .. $ac_cv_enable_tlv
 
   Build target: $host
   CPPFLAGS: $CPPFLAGS

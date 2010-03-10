@@ -47,8 +47,9 @@
 #include "proc_sys.h"
 #include "prefix.h"
 #include "conf.h"
+#include "dhcp_dna.h"
 
-#define MD_DEBUG_LEVEL 1
+#define MD_DEBUG_LEVEL 3
 
 #if MD_DEBUG_LEVEL >= 1
 #define MDBG dbg
@@ -143,6 +144,14 @@ static void md_flush_coa(struct md_coa *coa)
 		      "%x:%x:%x:%x:%x:%x:%x:%x on iface %d\n",
 		      NIP6ADDR(&coa->addr), coa->ifindex);
 		addr_del(&coa->addr, coa->plen, coa->ifindex);
+		/* DSMIPv6: also delete the IPv4 address corresponding
+		 * to the mapped CoA if needed */
+		if (IN6_IS_ADDR_V4MAPPED(&coa->addr)) {
+			struct in_addr addr;
+			ipv6_unmap_addr(&coa->addr, &addr.s_addr);
+			addr4_del(&addr, coa->plen4, coa->ifindex);
+		}
+
 	}
 	md_free_coa(coa);
 }
@@ -312,6 +321,48 @@ static void md_expire_router(struct md_inet6_iface *iface,
 	list_add_tail(&old->list, &iface->expired_rtrs);
 }
 
+static void md_expire_router_v4(struct md_inet6_iface *iface,
+				struct md_router *old)
+{
+	struct in_addr rtr_v4;
+
+	struct rtrequest {
+		struct nlmsghdr n;
+		struct rtmsg r;
+		char payload[256];
+	} rtreq;
+
+	assert(old != NULL);
+
+	memcpy(&rtr_v4, &old->lladdr, sizeof(struct in_addr));
+
+	MDBG("expiring v4 router %d.%d.%d.%d on iface %s (%d)\n",
+		NIP4ADDR(&rtr_v4), iface->name, iface->ifindex);
+
+	/* TODO : the route should be removed by dhcp logic, isn't it ? */
+	/* or maybe dhcp logic can call this function for old router ? */
+
+	memset(&rtreq, 0, sizeof(rtreq));
+
+	rtreq.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg));
+	rtreq.n.nlmsg_flags = NLM_F_REQUEST;
+	rtreq.n.nlmsg_type = RTM_DELROUTE;
+
+	rtreq.r.rtm_family = AF_INET;
+	rtreq.r.rtm_table = RT_TABLE_MAIN;
+	rtreq.r.rtm_scope = RT_SCOPE_UNIVERSE;
+	rtreq.r.rtm_type = RTN_UNICAST;
+
+	addattr_l(&rtreq.n, sizeof(rtreq), RTA_GATEWAY, &rtr_v4.s_addr, 4);
+	addattr32(&rtreq.n, sizeof(rtreq), RTA_OIF, iface->ifindex);
+
+	if (rtnl_talk(&dna_rth, &rtreq.n, 0, 0, NULL, NULL, NULL) < 0)
+		MDBG("v4 route could not be deleted\n");
+	else {
+		MDBG("v4 route deleted\n");
+	}
+}
+
 static void md_block_rule_del(struct md_inet6_iface *iface)
 {
 	rule_del(NULL, 0, IP6_RULE_PRIO_MIP6_BLOCK_HOA, RTN_BLACKHOLE,
@@ -346,6 +397,15 @@ static void md_flush_inet6_iface(struct md_inet6_iface *iface)
 		md_expire_coa(iface, coa);
 	}
 	md_flush_coa_list(&iface->expired_coas);
+	list_for_each_safe(l, n, &iface->v4_rtrs) {
+		rtr = list_entry(l, struct md_router, list);
+		md_expire_router_v4(iface, rtr);
+	}
+	if (iface->dhcp_status) {
+		// RK: dhcp_link_down() is done by md_expire_coa
+		//dhcp_link_down(iface);
+		iface->dhcp_status = 0;
+	}
 }
 
 static void md_expire_inet6_iface(struct md_inet6_iface *iface)
@@ -372,14 +432,20 @@ md_init_coa(struct md_coa *coa, struct ifaddrmsg *ifa, struct rtattr **rta_tb,
 	memset(coa, 0, sizeof(struct md_coa));
 	INIT_LIST_HEAD(&coa->list);
 	coa->flags = ifa->ifa_flags;
-	coa->plen = ifa->ifa_prefixlen;
+	coa->addr = *(struct in6_addr *) RTA_DATA(rta_tb[IFA_ADDRESS]);
+	if (IN6_IS_ADDR_V4MAPPED(&coa->addr)) {
+		/* DSMIPv6: If the address is mapped, then ifa_prefixlen
+		 * is actually the lenghth of the IPv4 address */
+		coa->plen4 = ifa->ifa_prefixlen;
+		coa->plen = 64;
+	} else
+		coa->plen = ifa->ifa_prefixlen;
 	coa->scope = ifa->ifa_scope;
 	coa->ifindex = ifa->ifa_index;
 	/* For tunnel interfaces, mark the CoA
 	   to avoid removing the address from
 	   the interface when flushing it. */
 	coa->if_is_tunnel = if_is_tunnel;
-	coa->addr = *(struct in6_addr *) RTA_DATA(rta_tb[IFA_ADDRESS]);
 }
 
 static struct md_coa *md_create_coa(struct md_inet6_iface *iface,
@@ -418,7 +484,7 @@ static int update_coa(struct md_inet6_iface *iface,
 		list_add(&new->list, &iface->coas);
 		MDBG2("adding CoA %x:%x:%x:%x:%x:%x:%x:%x on iface %s (%d)\n",
 		      NIP6ADDR(&new->addr), iface->name, iface->ifindex);
-		if (!(iface->iface_flags & MD_LINK_LOCAL_DAD)) {
+		if (!(iface->iface_flags & MD_LINK_LOCAL_DAD) || (IN6_IS_ADDR_V4MAPPED(addr))) {
 			__md_trigger_movement_event(ME_COA_NEW, 0, iface, new);
 			if (iface->iface_flags & MD_BLOCK_TRAFFIC)
 				md_block_rule_del(iface);
@@ -452,6 +518,111 @@ static int update_coa(struct md_inet6_iface *iface,
 	return 0;
 }
 
+static int md_map_v4coa(struct ifaddrmsg *ifa, struct rtattr **rta_tb, struct ifaddrmsg **ifa_v6, struct rtattr **rta_tb_v6)
+{
+  int res = 0;
+
+  __u32 *saddr32;
+  __u32 *daddr32;
+  struct ifa_cacheinfo *d_ci;
+
+  /* step 1 : create right rtattr and ifa structures */
+  rta_tb_v6[IFA_ADDRESS] = malloc(RTA_LENGTH(16));
+  if (rta_tb_v6[IFA_ADDRESS] == NULL)
+    {
+      res = -ENOMEM;
+      MDBG3("out of memory while processing new v4 address\n");
+      goto md_map_v4coa_out;
+    }
+  daddr32 = (__u32 *) RTA_DATA(rta_tb_v6[IFA_ADDRESS]);
+
+  rta_tb_v6[IFA_CACHEINFO] = malloc(RTA_LENGTH(sizeof(struct ifa_cacheinfo)));
+  if (rta_tb_v6[IFA_CACHEINFO] == NULL)
+    {
+      res = -ENOMEM;
+      MDBG3("out of memory while processing new v4 address\n");
+      goto md_map_v4coa_out_free_rta_1;
+    }
+  d_ci = (struct ifa_cacheinfo *) RTA_DATA(rta_tb_v6[IFA_CACHEINFO]);
+
+  *ifa_v6 = malloc(sizeof(struct ifaddrmsg));
+  if (*ifa_v6 == NULL)
+    {
+      res = -ENOMEM;
+      MDBG3("out of memory while processing new v4 address\n");
+      goto md_map_v4coa_out_free_rta_2;
+    }
+
+  /* step 2 : fill-in fake ifa_v6 structure */
+
+  (*ifa_v6)->ifa_family = AF_INET6;
+  /* This is the IPv4 prefix len, which will be changed upon
+   * reception of the message */
+  (*ifa_v6)->ifa_prefixlen = ifa->ifa_prefixlen;
+  (*ifa_v6)->ifa_flags = IFA_F_NODAD; /* TODO : dunno about that */
+  (*ifa_v6)->ifa_scope = RT_SCOPE_UNIVERSE;
+  (*ifa_v6)->ifa_index = ifa->ifa_index;
+
+#ifdef __DSMIP_DEBUG__
+  MDBG3("ifa_v6 made-up information : %d, %d, %d, %d, %d\n",
+	(*ifa_v6)->ifa_family,
+	(*ifa_v6)->ifa_prefixlen,
+	(*ifa_v6)->ifa_flags,
+	(*ifa_v6)->ifa_scope,
+	(*ifa_v6)->ifa_index);
+#endif
+
+  /* step 3 : fill-in fake rtattr with v6-mapped v4 address */
+
+  saddr32 = (__u32 *) RTA_DATA(rta_tb[IFA_ADDRESS]);
+
+  daddr32[0] = 0;
+  daddr32[1] = 0;
+  daddr32[2] = htonl(0x0000ffff);
+  daddr32[3] = *saddr32;
+
+#ifdef __DSMIP_DEBUG__
+  MDBG3("rta_tb_v6[IFA_ADDRESS] made-up information :\n");
+  MDBG3("    new address %x:%x:%x:%x:%x:%x:%x:%x on iface %d\n",
+	NIP6ADDR((struct in6_addr *)RTA_DATA(rta_tb_v6[IFA_ADDRESS])),
+	ifa->ifa_index);
+#endif
+
+  /* step 4 : fill-in fake rtattr with own values for CACHEINFO */
+
+  d_ci->ifa_prefered = 36000;//s_ci->ifa_prefered;
+  d_ci->ifa_valid = 72000;//s_ci->ifa_valid;
+  d_ci->cstamp = 0;//s_ci->cstamp;
+  d_ci->tstamp = 0;//s_ci->tstamp;
+
+#ifdef __DSMIP_DEBUG__
+  MDBG3("rta_tb_v6[IFA_CACHEINFO] made-up information : %d, %d, %d, %d\n",
+	d_ci->ifa_prefered,
+	d_ci->ifa_valid,
+	d_ci->cstamp,
+	d_ci->tstamp);
+#endif
+
+  return 0;
+
+ md_map_v4coa_out_free_rta_2:
+  free(rta_tb_v6[IFA_CACHEINFO]);
+
+ md_map_v4coa_out_free_rta_1:
+  free(rta_tb_v6[IFA_ADDRESS]);
+
+ md_map_v4coa_out:
+  return res;
+
+}
+
+static void md_map_free(struct ifaddrmsg *ifa_v6, struct rtattr **rta_tb_v6)
+{
+  free(rta_tb_v6[IFA_CACHEINFO]);
+  free(rta_tb_v6[IFA_ADDRESS]);
+  free(ifa_v6);
+}
+
 static int process_new_addr(struct ifaddrmsg *ifa, struct rtattr **rta_tb)
 {
 	struct md_inet6_iface *iface;
@@ -477,6 +648,27 @@ static int process_new_addr(struct ifaddrmsg *ifa, struct rtattr **rta_tb)
 	return res;
 }
 
+static int process_new_addr_v4(struct ifaddrmsg *ifa, struct rtattr **rta_tb)
+{
+  struct rtattr *rta_tb_v6[IFA_MAX];
+  struct ifaddrmsg *ifa_v6;
+  int res = 0;
+
+  MDBG3("new v4 address %d.%d.%d.%d on iface %d\n",
+	NIP4ADDR((struct in_addr *)RTA_DATA(rta_tb[IFA_ADDRESS])),
+	ifa->ifa_index);
+
+  if ( (res = md_map_v4coa(ifa, rta_tb, &ifa_v6, rta_tb_v6)) < 0)
+    return res;
+
+  res = process_new_addr(ifa_v6, rta_tb_v6);
+
+  md_map_free(ifa_v6, rta_tb_v6);
+
+  return res;
+
+}
+
 static void md_inet6_iface_init(struct md_inet6_iface *i, int ifindex)
 {
 	struct list_head *list;
@@ -498,6 +690,7 @@ static void md_inet6_iface_init(struct md_inet6_iface *i, int ifindex)
 	INIT_LIST_HEAD(&i->expired_rtrs);
 	INIT_LIST_HEAD(&i->coas);
 	INIT_LIST_HEAD(&i->expired_coas);
+	INIT_LIST_HEAD(&i->v4_rtrs);
 	INIT_LIST_HEAD(&i->tqe.list);
 }
 
@@ -541,6 +734,22 @@ static int process_del_addr(struct ifaddrmsg *ifa, struct rtattr **rta_tb)
 	return res;
 }
 
+static int process_del_addr_v4(struct ifaddrmsg *ifa, struct rtattr **rta_tb)
+{
+	struct rtattr *rta_tb_v6[IFA_MAX];
+	struct ifaddrmsg *ifa_v6;
+	int res = 0;
+
+	if ( (res = md_map_v4coa(ifa, rta_tb, &ifa_v6, rta_tb_v6)) < 0)
+		return res;
+
+	res = process_del_addr(ifa_v6, rta_tb_v6);
+
+	md_map_free(ifa_v6, rta_tb_v6);
+
+	return res;
+}
+
 static int process_addr(struct nlmsghdr *n)
 {
 	struct ifaddrmsg *ifa;
@@ -555,13 +764,30 @@ static int process_addr(struct nlmsghdr *n)
 	parse_rtattr(rta_tb, IFA_MAX, IFA_RTA(ifa),
 		     n->nlmsg_len - NLMSG_LENGTH(sizeof(*ifa)));
 
-	if (!rta_tb[IFA_ADDRESS] || !rta_tb[IFA_CACHEINFO])
-		return -1;
+	if ((ifa->ifa_family == AF_INET6) && (!rta_tb[IFA_ADDRESS] || !rta_tb[IFA_CACHEINFO]))
+	        return -1;
+	if ((ifa->ifa_family == AF_INET) && (!rta_tb[IFA_ADDRESS]))
+	        return -1;
 
-	if (n->nlmsg_type == RTM_NEWADDR)
-		process_new_addr(ifa, rta_tb);
-	else if (n->nlmsg_type == RTM_DELADDR)
-		process_del_addr(ifa, rta_tb);
+	if (n->nlmsg_type == RTM_NEWADDR) {
+#ifdef __DSMIP_DEBUG__
+	  MDBG3("new address : %d (%d,%d)\n", ifa->ifa_family, AF_INET, AF_INET6);
+#endif
+	        if (ifa->ifa_family == AF_INET6)
+		        process_new_addr(ifa, rta_tb);
+		else if (ifa->ifa_family == AF_INET)
+		        process_new_addr_v4(ifa, rta_tb);
+		else
+		        MDBG3("Warning, ignoring unknown new address family : %d", ifa->ifa_family);
+	}
+	else if (n->nlmsg_type == RTM_DELADDR) {
+	        if (ifa->ifa_family == AF_INET6)
+		        process_del_addr(ifa, rta_tb);
+		else if (ifa->ifa_family == AF_INET)
+		        process_del_addr_v4(ifa, rta_tb);
+		else
+		        MDBG3("Warning, ignoring unknown deleted address family : %d", ifa->ifa_family);
+	}
 
 	return 0;
 }
@@ -578,6 +804,12 @@ static void __md_discover_router(struct md_inet6_iface *iface)
 		ndisc_send_rs(iface->ifindex, &in6addr_all_routers_mc, NULL, 0);
 		tssetsec(exp_in, iface->devconf[DEVCONF_RTR_SOLICIT_INTERVAL]);
 		add_task_rel(&exp_in, &iface->tqe, md_discover_router);
+	}
+	if (md_is_link_up(iface) && (iface->router_solicits > 1) &&
+	    !(iface->dhcp_status)) {
+/*                dna_reachability_check(iface->index);*/
+		iface->dhcp_status |= DHCP_RUNNING;
+                dhcp_configuration(iface);
 	}
 }
 
@@ -799,6 +1031,7 @@ static void __md_new_link(struct md_inet6_iface *iface, int link_changed)
 	if (!iface->is_tunnel) {
 		assert(!list_empty(&iface->default_rtr));
 		iface->router_solicits = 0;
+		iface->dhcp_status = 0;
 
 		if (link_changed) {
 			struct list_head *l, *n;
@@ -988,6 +1221,8 @@ static int process_link(struct nlmsghdr *n)
 	if (ifi->ifi_family != AF_UNSPEC && ifi->ifi_family != AF_INET6)
 		return 0;
 
+	/* JEAN : should we also filter our own sit tunnels messages ? */
+
 	memset(rta_tb, 0, sizeof(rta_tb));
 	parse_rtattr(rta_tb, IFLA_MAX, IFLA_RTA(ifi),
 		     n->nlmsg_len - NLMSG_LENGTH(sizeof(*ifi)));
@@ -1063,6 +1298,11 @@ static int process_nlmsg(__attribute__ ((unused)) const struct sockaddr_nl *who,
 			 __attribute__ ((unused)) void *arg)
 {
 	pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
+
+#ifdef __DSMIP_DEBUG__
+	MDBG("* netlink message * : %d\n", n->nlmsg_type);
+#endif
+
 	switch (n->nlmsg_type) {
 	case RTM_NEWLINK:
 	case RTM_DELLINK:
@@ -1235,6 +1475,34 @@ static struct md_router *md_create_router(struct md_inet6_iface *iface,
 free_rtr:
 	__md_free_router(new);
 	return NULL;
+}
+
+struct md_router *md_create_router_v4(struct md_inet6_iface *iface,
+					  const struct in_addr *gw_addr)
+{
+	struct md_router *new;
+
+	if (!(new = malloc(sizeof(struct md_router))))
+		return NULL;
+
+	memset(new, 0, sizeof(struct md_router));
+	clock_gettime(CLOCK_REALTIME, &new->timestamp);
+	INIT_LIST_HEAD(&new->prefixes);
+	INIT_LIST_HEAD(&new->list);
+	INIT_LIST_HEAD(&new->tqe.list);
+
+	new->iface = iface;
+
+	/* TODO : set lifetime to dhcp lease values */
+
+	memcpy(&new->lladdr, gw_addr, sizeof(*gw_addr));
+	new->ifindex = iface->ifindex;
+
+	MDBG3("creating new v4 router "
+	      "%d.%d.%d.%d on interface %s (%d)\n",
+	     NIP4ADDR(gw_addr), iface->name, iface->ifindex);
+
+	return new;
 }
 
 int rtr_addr_chk(struct md_router *rtr, struct in6_addr *rtr_addr)
@@ -1490,7 +1758,7 @@ static void md_update_router_stats(struct md_router *rtr)
 	if ((iface = md_get_inet6_iface(&ifaces, rtr->ifindex)) == NULL)
 		MDBG2("Iface of router we are inserting a route for is"
 		      " reachable via an unknown interface (%d)\n",
-		      ifi->ifi_index);
+		      rtr->ifindex);
 	else
 		iface_pref = iface->preference;
 
@@ -1956,6 +2224,7 @@ static struct icmp6_handler md_ra_handler = {
 };
 
 struct rtnl_handle md_rth;
+struct rtnl_handle dna_rth;
 
 static void *md_nl_listen(__attribute__ ((unused)) void *arg)
 {
@@ -2001,6 +2270,9 @@ int md_init(void)
 	if ((err = rtnl_route_open(&md_rth, 0)) < 0)
 		return err;
 
+	if ((err = rtnl_route_open(&dna_rth, 0)) < 0)
+		return err;
+
 	val = RTNLGRP_LINK;
 	if (setsockopt(md_rth.fd, SOL_NETLINK,
 		       NETLINK_ADD_MEMBERSHIP, &val, sizeof(val)) < 0) {
@@ -2014,6 +2286,12 @@ int md_init(void)
 		return -1;
 	}
 	val = RTNLGRP_IPV6_IFADDR;
+	if (setsockopt(md_rth.fd, SOL_NETLINK,
+		       NETLINK_ADD_MEMBERSHIP, &val, sizeof(val)) < 0) {
+		dbg("%d %s\n", __LINE__, strerror(errno));
+		return -1;
+	}
+	val = RTNLGRP_IPV4_IFADDR;
 	if (setsockopt(md_rth.fd, SOL_NETLINK,
 		       NETLINK_ADD_MEMBERSHIP, &val, sizeof(val)) < 0) {
 		dbg("%d %s\n", __LINE__, strerror(errno));
@@ -2042,6 +2320,7 @@ int md_start(void)
 void md_stop(void)
 {
 	rtnl_close(&md_rth);
+	rtnl_close(&dna_rth);
 	icmp6_handler_dereg(ND_ROUTER_ADVERT, &md_ra_handler);
 	icmp6_handler_dereg(ND_NEIGHBOR_ADVERT, &md_na_handler);
 	pthread_cancel(md_listener);
@@ -2091,4 +2370,17 @@ void md_cleanup(void)
 	}
 	pthread_mutex_unlock(&iface_lock);
 	return;
+}
+
+struct md_inet6_iface *
+dsmip_get_inet6_iface(int ifindex)
+{
+	struct list_head *list;
+	list_for_each(list, &ifaces) {
+		struct md_inet6_iface *iface;
+		iface = list_entry(list, struct md_inet6_iface, list);
+		if (iface->ifindex == ifindex)
+			return iface;
+	}
+	return NULL;
 }

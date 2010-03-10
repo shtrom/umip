@@ -47,6 +47,7 @@ struct mip6_config {
 	char MnDiscardHaParamProb;
 	char SendMobPfxSols;
 	char OptimisticHandoff;
+	char MnUseDsmip6;
 
 	/* HA options */
 	char HaAcceptMobRtr;
@@ -56,6 +57,8 @@ struct mip6_config {
 	unsigned int MinMobPfxAdvInterval;
 	unsigned int HaMaxBindingLife;
 	struct list_head nemo_ha_served_prefixes;
+	char HaAcceptDsmip6;
+	struct in6_addr HaAddr4Mapped;
 
 	/* CN options */
 	char DoRouteOptimizationCN;

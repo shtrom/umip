@@ -70,6 +70,9 @@ struct ip6_mh_binding_update {
 #define IP6_MH_BU_KEYM		0x1000	/* Key management mobility */
 #define IP6_MH_BU_MAP		0x0800	/* HMIPv6 MAP Registration */
 #define IP6_MH_BU_MR		0x0400	/* NEMO MR Registration */
+					/* 0x0200 taken by PMIP6 */
+#define IP6_MH_BU_UDP		0x0100	/* UDP encapsulation */
+#define IP6_MH_BU_TLV		0x0080	/* TLV-format for UDP encapsulation */
 #else				/* BYTE_ORDER == LITTLE_ENDIAN */
 #define IP6_MH_BU_ACK		0x0080	/* Request a binding ack */
 #define IP6_MH_BU_HOME		0x0040	/* Home Registration */
@@ -77,6 +80,9 @@ struct ip6_mh_binding_update {
 #define IP6_MH_BU_KEYM		0x0010	/* Key management mobility */
 #define IP6_MH_BU_MAP		0x0008	/* HMIPv6 MAP Registration */
 #define IP6_MH_BU_MR		0x0004	/* NEMO MR Registration */
+					/* 0x0002 taken by PMIP6 */
+#define IP6_MH_BU_UDP		0x0001	/* UDP encapsulation */
+#define IP6_MH_BU_TLV		0x8000	/* TLV-format for UDP encapsulation */
 #endif
 
 struct ip6_mh_binding_ack {
@@ -91,6 +97,7 @@ struct ip6_mh_binding_ack {
 /* ip6mhba_flags */
 #define IP6_MH_BA_KEYM		0x80	/* Key management mobility */
 #define IP6_MH_BA_MR		0x40	/* NEMO MR registration */
+#define IP6_MH_BA_TLV		0x20	/* TLV-format for UDP encapsulation */
 
 struct ip6_mh_binding_error {
 	struct ip6_mh	ip6mhbe_hdr;
@@ -145,6 +152,52 @@ struct ip6_mh_opt_mob_net_prefix {
 	struct in6_addr ip6mnp_prefix;
 } __attribute__ ((packed));
 
+/* DSMIPv6 specific options */
+struct ip6_mh_opt_ipv4_hoa {
+	uint8_t 	ip6moih_type;
+	uint8_t 	ip6moih_len;
+	unsigned 	ip6moih_prefix_len:6;
+	unsigned 	ip6moih_flags_reserved:10;
+	struct in_addr ip6moih_v4hoa;
+} __attribute__ ((packed));
+
+/* ip6moih_flags */
+#if BYTE_ORDER == BIG_ENDIAN
+#define IP6_MHOPT_IPV4HOA_PFX	0x200	/* Request a prefix */
+#else				/* BYTE_ORDER == LITTLE_ENDIAN */
+#define IP6_MHOPT_IPV4HOA_PFX	0x002	/* Request a prefix */
+#endif
+
+struct ip6_mh_opt_ipv4_coa {
+	uint8_t 	ip6moic_type;
+	uint8_t 	ip6moic_len;
+	uint16_t 	ip6moic_reserved;
+	struct in_addr ip6moic_v4coa;
+} __attribute__ ((packed));
+
+struct ip6_mh_opt_ipv4_ack {
+	uint8_t 	ip6moia_type;
+	uint8_t 	ip6moia_len;
+	uint8_t 	ip6moia_status;
+	unsigned 	ip6moia_prefix_len:5;
+	unsigned 	ip6moia_reserved:3;
+	struct in_addr ip6moia_v4hoa;
+} __attribute__ ((packed));
+
+struct ip6_mh_opt_ipv4_nat {
+	uint8_t 	ip6moin_type;
+	uint8_t 	ip6moin_len;
+	uint16_t 	ip6moin_flags_reserved;
+	uint32_t 	ip6moin_refresh;	/* Refresh time */
+} __attribute__ ((packed));
+
+/* ip6moin_flags */
+#if BYTE_ORDER == BIG_ENDIAN
+#define IP6_MHOPT_NAT_ENCAPS	0x8000	/* Force UDP encapsulation */
+#else				/* BYTE_ORDER == LITTLE_ENDIAN */
+#define IP6_MHOPT_NAT_ENCAPS	0x0080	/* Force UDP encapsulation */
+#endif
+
 /*
  *     Mobility Header Message Types
  */
@@ -167,6 +220,10 @@ struct ip6_mh_opt_mob_net_prefix {
 #define IP6_MHOPT_NONCEID	0x04	/* Nonce Index */
 #define IP6_MHOPT_BAUTH		0x05	/* Binding Auth Data */
 #define IP6_MHOPT_MOB_NET_PRFX	0x06	/* Mobile Network Prefix */
+#define IP6_MHOPT_IPV4HOA	0x15	/* IPv4 Home Address */
+#define IP6_MHOPT_IPV4COA	0x16	/* IPv4 Care of Address */
+#define IP6_MHOPT_IPV4ACK	0x17	/* IPv4 Address Acknowledgment */
+#define IP6_MHOPT_NAT		0x18	/* NAT Detection */
 
 /*
  *    Status values accompanied with Mobility Binding Acknowledgement
@@ -191,10 +248,22 @@ struct ip6_mh_opt_mob_net_prefix {
 #define IP6_MH_BAS_INVAL_PRFX		141	/* Invalid Prefix */
 #define IP6_MH_BAS_NOT_AUTH_FOR_PRFX	142	/* Not Authorized for Prefix */
 #define IP6_MH_BAS_FWDING_FAILED	143	/* Forwarding Setup failed */
+#define IP6_MH_BAS_NO_UDP_ENCAP	152	/* Cannot force UDP encapsulation */
 /*
  *    Status values for the Binding Error mobility messages
  */
 #define IP6_MH_BES_UNKNOWN_HAO	1	/* Unknown binding for HOA */
 #define IP6_MH_BES_UNKNOWN_MH	2	/* Unknown MH Type */
+/*
+ *    Status values for IPv4 Address Acknowledgment option
+ */
+#define IP6_MHOPT_IPV4ACK_ACCEPTED	0	/* Success */
+#define IP6_MHOPT_IPV4ACK_UNSPECIFIED	128	/* Reason unspecified */
+#define IP6_MHOPT_IPV4ACK_PROHIBIT	129	/* Administratively prohibited */
+#define IP6_MHOPT_IPV4ACK_INCORRECT	130	/* Incorrect IPv4 Home Address */
+#define IP6_MHOPT_IPV4ACK_INVALID	131	/* Invalid IPv4 address */
+#define IP6_MHOPT_IPV4ACK_NODHCP	132	/* Dynamic IPv4 HoA assignement
+						    not available */
+#define IP6_MHOPT_IPV4ACK_NOPFX	133	/* Prefix allocation unauthorized */
 
 #endif	/* netinet/ip6mh.h */

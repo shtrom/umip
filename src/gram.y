@@ -79,6 +79,7 @@ struct cn_binding_pol_entry *cnbpol = NULL;
 
 struct ipsec_policy_set {
 	struct in6_addr ha;
+	struct in_addr ha4;
 	struct list_head hoa_list;
 };
 
@@ -110,6 +111,7 @@ static void uerror(const char *fmt, ...) {
 %union {
 	char *string;
 	struct in6_addr addr;
+	struct in_addr addr4;
 	char bool;
 	unsigned int num;
 	unsigned int numpair[2];
@@ -118,6 +120,7 @@ static void uerror(const char *fmt, ...) {
 
 %token <string> QSTRING
 %token <addr>	ADDR
+%token <addr4>	ADDR4
 %token <bool>	BOOL
 %token <num>	NUMBER
 %token <dec>	DECIMAL
@@ -130,6 +133,7 @@ static void uerror(const char *fmt, ...) {
 %token		DOROUTEOPTIMIZATIONMN
 %token		HOMEADDRESS
 %token		HOMEAGENTADDRESS
+%token		HOMEAGENTADDRESS4
 %token		INITIALBINDACKTIMEOUTFIRSTREG
 %token		INITIALBINDACKTIMEOUTREREG
 %token		INITIALSOLICITTIMER
@@ -192,6 +196,8 @@ static void uerror(const char *fmt, ...) {
 %token		HASERVEDPREFIX
 %token		MOBRTRUSEEXPLICITMODE
 %token          CNBINDINGPOLICYSET
+%token		MNUSEDSMIP6
+%token		HAACCEPTDSMIP6
 
 %token		INV_TOKEN
 
@@ -360,6 +366,18 @@ topdef		: MIP6ENTITY mip6entity ';'
 		{
 			conf_parsed->OptimisticHandoff = $2;
 		}
+		| MNUSEDSMIP6 BOOL ';'
+		{
+			conf.MnUseDsmip6 = $2;
+		}
+		| HAACCEPTDSMIP6 BOOL ';'
+		{
+			conf.HaAcceptDsmip6 = $2;
+		}
+		| HOMEAGENTADDRESS4 ADDR4 ';'
+		{
+			ipv6_map_addr(&conf.HaAddr4Mapped, &$2);
+		}
                 | CNBINDINGPOLICYSET  '{' cnbindingpoldefs '}'
 		;
 
@@ -492,6 +510,10 @@ linkdef		: HOMEAGENTADDRESS ADDR ';'
 		{
 			memcpy(&hai.ha_addr, &$2, sizeof(struct in6_addr));
 		}
+		| HOMEAGENTADDRESS4 ADDR4 ';'
+		{
+			memcpy(&hai.ha_addr4, &$2, sizeof(struct in_addr));
+		}
 		| HOMEADDRESS homeaddress ';'
 		| USEALTCOA BOOL ';'
                 {
@@ -549,6 +571,10 @@ ipsecpolicyset	: ipsechaaddrdef ipsecmnaddrdefs ipsecpolicydefs
 ipsechaaddrdef	: HOMEAGENTADDRESS ADDR ';'
 		{
 			ipsec_ps.ha = $2;
+		}
+		| HOMEAGENTADDRESS4 ADDR4 ';'
+		{
+			ipsec_ps.ha4 = $2;
 		}
 		;
 

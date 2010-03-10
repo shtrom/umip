@@ -13,6 +13,7 @@
 #include <string.h>
 #include <netinet/in.h>
 #include <sys/uio.h>
+#include <assert.h>
 
 #define tstomsec(tv) \
 	((tv).tv_sec * TIME_SEC_MSEC + (tv).tv_nsec / TIME_MSEC_NSEC)
@@ -174,6 +175,41 @@ static inline int in6_is_addr_routable_unicast(const struct in6_addr *a)
         ntohs((addr)->s6_addr16[5]), \
         ntohs((addr)->s6_addr16[6]), \
         ntohs((addr)->s6_addr16[7])
+
+#define NIP4ADDR(addr) \
+        ((addr)->s_addr & 0x000000ff), \
+        ((addr)->s_addr & 0x0000ff00) >> 8, \
+        ((addr)->s_addr & 0x00ff0000) >> 16, \
+        ((addr)->s_addr & 0xff000000) >> 24
+
+#define NIP4ADDR2(addr) \
+        (addr & 0x000000ff), \
+        (addr & 0x0000ff00) >> 8, \
+        (addr & 0x00ff0000) >> 16, \
+        (addr & 0xff000000) >> 24
+
+static inline int ipv6_map_addr(struct in6_addr *a6, struct in_addr *a4)
+{
+	assert(a4);
+	assert(a6);
+	memset(a6, 0, sizeof(struct in6_addr));
+	a6->s6_addr32[2] = htonl (0xffff);
+	a6->s6_addr32[3] = *(uint32_t*)&a4->s_addr;
+	if (!IN6_IS_ADDR_V4MAPPED(a6))
+		return 0;
+	return 1;
+}
+
+static inline int ipv6_unmap_addr(struct in6_addr *a6, uint32_t *a4)
+{
+	assert(a6);
+	if (!IN6_IS_ADDR_V4MAPPED(a6))
+		return 0;
+	assert(a4);
+	*a4 = 0;
+	*a4 = *(uint32_t*)&a6->s6_addr[12];
+	return 1;
+}
 
 /**
  * free_iov_data - free vector data

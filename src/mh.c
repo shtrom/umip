@@ -78,6 +78,10 @@ int mh_opts_dup_ok[] = {
 	0, /* Nonce Index */
 	0, /* Binding Auth Data */
 	1, /* Mobile Network Prefix */
+	0, /* IPv4 Home Address */
+	0, /* IPv4 Care of Address */
+	0, /* IPv4 Address Acknowledgment */
+	0, /* NAT Detection */
 };
 
 #define __MH_SENTINEL (IP6_MH_TYPE_MAX + 1)
@@ -372,6 +376,122 @@ int mh_create_opt_auth_data(struct iovec *iov)
 	return 0;
 }
 
+/**
+ * mh_create_opt_ipv4_hoa - create IPv4 Home Address option
+ * @iov: vector
+ *
+ * Creates an IPv4 Home Address option with data set to zero.
+ * Stores pointer and length in iovec vector @iov. Returns zero on success,
+ * otherwise negative error value.
+ **/
+int mh_create_opt_ipv4_hoa(struct iovec *iov)
+{
+	struct ip6_mh_opt_ipv4_hoa *opt;
+	size_t optlen = sizeof(struct ip6_mh_opt_ipv4_hoa);
+
+	iov->iov_base = malloc(optlen);
+	iov->iov_len = optlen;
+
+	if (iov->iov_base == NULL)
+		return -ENOMEM;
+
+	memset(iov->iov_base, 0, iov->iov_len);
+	opt = (struct ip6_mh_opt_ipv4_hoa *)iov->iov_base;
+	opt->ip6moih_type = IP6_MHOPT_IPV4HOA;
+	opt->ip6moih_len = 6;
+
+	/* XXX Implement */
+
+	return 0;
+}
+
+/**
+ * mh_create_opt_ipv4_coa - create IPv4 Care of Address option
+ * @iov: vector
+ * @addr: IPv4 care-of address
+ *
+ * Creates an IPv4 Care of Address option with data set to zero.
+ * Stores pointer and length in iovec vector @iov. Returns zero on success,
+ * otherwise negative error value.
+ **/
+int mh_create_opt_ipv4_coa(struct iovec *iov, struct in_addr *addr)
+{
+	struct ip6_mh_opt_ipv4_coa *opt;
+	size_t optlen = sizeof(struct ip6_mh_opt_ipv4_coa);
+
+	iov->iov_base = malloc(optlen);
+	iov->iov_len = optlen;
+
+	if (iov->iov_base == NULL)
+		return -ENOMEM;
+
+	memset(iov->iov_base, 0, iov->iov_len);
+	opt = (struct ip6_mh_opt_ipv4_coa *)iov->iov_base;
+	opt->ip6moic_type = IP6_MHOPT_IPV4COA;
+	opt->ip6moic_len = 6;
+	opt->ip6moic_v4coa = *addr;
+
+	return 0;
+}
+
+/**
+ * mh_create_opt_ipv4_ack - create IPv4 Address Acknowledgement option
+ * @iov: vector
+ *
+ * Creates an IPv4 Address Acknowledgement option with data set to zero.
+ * Stores pointer and length in iovec vector @iov. Returns zero on success,
+ * otherwise negative error value.
+ **/
+int mh_create_opt_ipv4_ack(struct iovec *iov)
+{
+	struct ip6_mh_opt_ipv4_ack *opt;
+	size_t optlen = sizeof(struct ip6_mh_opt_ipv4_ack);
+
+	iov->iov_base = malloc(optlen);
+	iov->iov_len = optlen;
+
+	if (iov->iov_base == NULL)
+		return -ENOMEM;
+
+	memset(iov->iov_base, 0, iov->iov_len);
+	opt = (struct ip6_mh_opt_ipv4_ack *)iov->iov_base;
+	opt->ip6moia_type = IP6_MHOPT_IPV4ACK;
+	opt->ip6moia_len = 6;
+
+	/* XXX Implement */
+
+	return 0;
+}
+
+/**
+ * mh_create_opt_ipv4_nat - create NAT detection option
+ * @iov: vector
+ *
+ * Creates a NAT detection option with data set to zero.
+ * Stores pointer and length in iovec vector @iov. Returns zero on success,
+ * otherwise negative error value.
+ **/
+int mh_create_opt_ipv4_nat(struct iovec *iov)
+{
+	struct ip6_mh_opt_ipv4_nat *opt;
+	size_t optlen = sizeof(struct ip6_mh_opt_ipv4_nat);
+
+	iov->iov_base = malloc(optlen);
+	iov->iov_len = optlen;
+
+	if (iov->iov_base == NULL)
+		return -ENOMEM;
+
+	memset(iov->iov_base, 0, iov->iov_len);
+	opt = (struct ip6_mh_opt_ipv4_nat *)iov->iov_base;
+	opt->ip6moin_type = IP6_MHOPT_NAT;
+	opt->ip6moin_len = 6;
+
+	/* XXX Implement */
+
+	return 0;
+}
+
 /* We can use these safely, since they are only read and never change */
 static const uint8_t _pad1[1] = { 0x00 };
 static const uint8_t _pad2[2] = { 0x01, 0x00 };
@@ -488,6 +608,18 @@ static int mh_try_pad(const struct iovec *in, struct iovec *out, int count)
 		case IP6_MHOPT_MOB_NET_PRFX:
 			pad = optpad(8, 4, len); /* 8n+4 */
 			break;
+		case IP6_MHOPT_IPV4HOA:
+			pad = optpad(4, 0, len); /* 4n */
+			break;
+		case IP6_MHOPT_IPV4COA:
+			pad = optpad(4, 0, len); /* 4n */
+			break;
+		case IP6_MHOPT_IPV4ACK:
+			pad = optpad(4, 0, len); /* 4n */
+			break;
+		case IP6_MHOPT_NAT:
+			pad = optpad(4, 0, len); /* 4n */
+			break;
 		}
 		if (pad > 0) {
 			create_opt_pad(&out[n++], pad);
@@ -498,8 +630,9 @@ static int mh_try_pad(const struct iovec *in, struct iovec *out, int count)
 		out[n].iov_base = in[m].iov_base;
 		n++;
 	}
-	if (count == 1) {
-		pad = optpad(8, 0, len);
+	/* The end of message must be 8n aligned */
+	pad = optpad(8, 0, len);
+	if (pad > 0) {
 		create_opt_pad(&out[n++], pad);
 	}
 
@@ -663,6 +796,7 @@ int mh_send(const struct in6_addr_bundle *addrs, const struct iovec *mh_vec,
 	pinfo.ipi6_ifindex = oif;
 
 	cmsglen = CMSG_SPACE(sizeof(pinfo));
+	//if ( (addrs->remote_coa != NULL) && (!IN6_IS_ADDR_V4MAPPED(addrs->remote_coa))) {
 	if (addrs->remote_coa != NULL) {
 		rthlen = inet6_rth_space(IPV6_RTHDR_TYPE_2, 1);
 		if (!rthlen) {
@@ -670,7 +804,15 @@ int mh_send(const struct in6_addr_bundle *addrs, const struct iovec *mh_vec,
 			return -1;
 		}
 		cmsglen += CMSG_SPACE(rthlen);
+#ifdef __DSMIP_DEBUG__
+	printf("using CoA\n");
+#endif
 	}
+/*	else {
+		printf("Ignoring absent coa (or v4-mapped coa, using sit tunnel instead)\n");
+	}
+*/
+
 	cmsg = malloc(cmsglen);
 	if (cmsg == NULL) {
 		MDBG("malloc failed\n");
@@ -692,6 +834,7 @@ int mh_send(const struct in6_addr_bundle *addrs, const struct iovec *mh_vec,
 	cmsg->cmsg_type = IPV6_PKTINFO;
 	memcpy(CMSG_DATA(cmsg), &pinfo, sizeof(pinfo));
 
+	//if ( (addrs->remote_coa != NULL) && (!IN6_IS_ADDR_V4MAPPED(addrs->remote_coa))) {
 	if (addrs->remote_coa != NULL) {
 		void *rthp;
 
@@ -714,6 +857,11 @@ int mh_send(const struct in6_addr_bundle *addrs, const struct iovec *mh_vec,
 		inet6_rth_add(rthp, addrs->remote_coa);
 		rthp = NULL;
 	}
+/*	else {
+		printf("Ignoring absent coa (or v4-mapped coa, using sit tunnel instead)\n");
+	}
+*/
+
 
 	pthread_mutex_lock(&mh_sock.send_mutex);
 	setsockopt(mh_sock.fd, IPPROTO_IPV6, IPV6_PKTINFO,
@@ -743,6 +891,14 @@ static int mh_opt_len_chk(uint8_t type, int len)
 		return len != sizeof(struct ip6_mh_opt_auth_data);
 	case IP6_MHOPT_MOB_NET_PRFX:
 		return len != sizeof(struct ip6_mh_opt_mob_net_prefix);
+	case IP6_MHOPT_IPV4HOA:
+		return len != sizeof(struct ip6_mh_opt_ipv4_hoa);
+	case IP6_MHOPT_IPV4COA:
+		return len != sizeof(struct ip6_mh_opt_ipv4_coa);
+	case IP6_MHOPT_IPV4ACK:
+		return len != sizeof(struct ip6_mh_opt_ipv4_ack);
+	case IP6_MHOPT_NAT:
+		return len != sizeof(struct ip6_mh_opt_ipv4_nat);
 	case IP6_MHOPT_PADN:
 	default:
 		return 0;
@@ -999,7 +1155,7 @@ void mh_send_ba(const struct in6_addr_bundle *addrs, uint8_t status,
 	struct ip6_mh_binding_ack *ba;
 	struct iovec mh_vec[2];
 
-	MDBG("status %d\n", status);
+	MDBG("status %d, iif %d\n", status, iif);
 
 	ba = mh_create(mh_vec, IP6_MH_TYPE_BACK);
 	if (!ba)

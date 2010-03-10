@@ -220,6 +220,7 @@ static void conf_default(struct mip6_config *c)
 	c->MobRtrUseExplicitMode = 1;
 	c->SendMobPfxSols = 1;
 	c->OptimisticHandoff = 0;
+	c->MnUseDsmip6 = 0;
 
 	/* HA options */
 	c->SendMobPfxAdvs = 1;
@@ -228,6 +229,8 @@ static void conf_default(struct mip6_config *c)
 	c->MinMobPfxAdvInterval = 600; /* seconds */
 	c->HaMaxBindingLife = MAX_BINDING_LIFETIME;
 	INIT_LIST_HEAD(&c->nemo_ha_served_prefixes);
+	c->HaAcceptDsmip6 = 0;
+	memset(&c->HaAddr4Mapped, 0, sizeof(struct in6_addr));
 
 	/* CN bindings */
 	c->DoRouteOptimizationCN = 1;
@@ -272,6 +275,7 @@ int conf_parse(struct mip6_config *c, int argc, char **argv)
 void conf_show(struct mip6_config *c)
 {
 	struct list_head *list;
+	struct in_addr addr4 = { 0 };
 
 	/* Common options */
 	dbg("config_file = %s\n", c->config_file);
@@ -329,6 +333,7 @@ void conf_show(struct mip6_config *c)
 	dbg("OptimisticHandoff = %s\n", CONF_BOOL_STR(c->OptimisticHandoff));
 	dbg("MobRtrUseExplicitMode = %s\n",
 	    CONF_BOOL_STR(c->MobRtrUseExplicitMode));
+	dbg("MnUseDsmip6 = %s\n", CONF_BOOL_STR(c->MnUseDsmip6));
 
 	/* HA options */
 	dbg("SendMobPfxAdvs = %s\n", CONF_BOOL_STR(c->SendMobPfxAdvs));
@@ -338,6 +343,9 @@ void conf_show(struct mip6_config *c)
 	dbg("MinMobPfxAdvInterval = %u\n", c->MinMobPfxAdvInterval);
 	dbg("HaMaxBindingLife = %u\n", c->HaMaxBindingLife);
 	dbg("HaAcceptMobRtr = %s\n", CONF_BOOL_STR(c->HaAcceptMobRtr));
+	dbg("HaAcceptDsmip6 = %s\n", CONF_BOOL_STR(c->HaAcceptDsmip6));
+	ipv6_unmap_addr(&c->HaAddr4Mapped, &addr4.s_addr);
+	dbg("HomeAgentV4Address = %d.%d.%d.%d\n", NIP4ADDR(&addr4));
 
 	/* CN options */
 	dbg("DoRouteOptimizationCN = %s\n",

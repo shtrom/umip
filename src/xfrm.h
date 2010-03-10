@@ -58,6 +58,7 @@ void xfrm_del_bce(const struct in6_addr *our_addr,
 
 int xfrm_pre_bu_add_bule(struct bulentry *bule);
 int xfrm_post_ba_mod_bule(struct bulentry *bule);
+int xfrm_del_bule_dsmip(struct bulentry *bule);
 void xfrm_del_bule(struct bulentry *bule);
 
 long xfrm_last_used(const struct in6_addr *daddr,
@@ -105,6 +106,8 @@ int xfrm_ipsec_policy_mod(struct xfrm_userpolicy_info *sp,
 int xfrm_ipsec_tnl_state_acquire(struct xfrm_userpolicy_info *sp,
 				 struct xfrm_user_tmpl *tmpl);
 
+int xfrm_move_hoa(struct home_addr_info *hai, int oldif);
+
 static inline int pre_bu_bul_update(struct bulentry *bule)
 {
 	return xfrm_pre_bu_add_bule(bule);
@@ -113,6 +116,16 @@ static inline int pre_bu_bul_update(struct bulentry *bule)
 static inline int post_ba_bul_update(struct bulentry *bule)
 {
 	return xfrm_post_ba_mod_bule(bule);
+}
+
+static inline int post_bu_bul_dsmip(struct bulentry *bule)
+{
+	return xfrm_del_bule_dsmip(bule);
+}
+
+static inline int post_move_hoa(struct home_addr_info *hai, int oldif)
+{
+	return xfrm_move_hoa(hai, oldif);
 }
 
 #endif /* __XFRM_H__ */

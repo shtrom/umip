@@ -337,6 +337,7 @@ int bcache_update_expire(struct bcentry *bce)
 	tsadd(expires, bce->add_time, expires);
 	add_task_abs(&expires, &bce->tqe, _expire);
 	xfrm_add_bce(&bce->our_addr, &bce->peer_addr, &bce->coa, 1);
+	printf("pure v6 address %x:%x:%x:%x:%x:%x:%x:%x, adding xfrm states\n", NIP6ADDR(&bce->coa));
 
 	return 0;
 }
@@ -384,7 +385,7 @@ static void bce_delete(struct bcentry *bce, int flush)
 	pthread_rwlock_wrlock(&bce->lock);
 	if (bce->type != BCE_DAD) {
 		del_task(&bce->tqe);
-		if (bce->type != BCE_NONCE_BLOCK)
+		if ((bce->type != BCE_NONCE_BLOCK) && (!(IN6_IS_ADDR_V4MAPPED(&bce->coa))))
 			xfrm_del_bce(&bce->our_addr, &bce->peer_addr);
 	}
 	if (bce->cleanup)

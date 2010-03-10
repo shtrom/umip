@@ -81,6 +81,9 @@ enum {
 /* Types of xfrm_states */
 #define BUL_XFRM_STATE_SIG 0x1
 #define BUL_XFRM_STATE_DATA 0x2
+#define BUL_XFRM_STATE_SIG_DSMIP 0x4	/* DSMIPv6: Set if UDP encaps. is set for signaling */
+#define BUL_XFRM_STATE_DATA6 0x8	/* DSMIPv6: set when states for IPv6
+					 * only are set*/
 
 struct bulentry *bul_get(struct home_addr_info *hinfo,
 			 const struct in6_addr *our_addr,

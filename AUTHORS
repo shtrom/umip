@@ -17,3 +17,7 @@ following people:
 - Arnaud EBALARD (EADS): fixes for Big Endian architectures,
   improvements of the NEMO debug messages, improvements in the
   IPsec support code for NEMO.
+
+DSMIPv6 implementation from Nautilus6/WIDE Project (http://www.nautilus6.org)
+- KUNTZ Romain <kuntz(at)sfc.wide.ad.jp>
+- LORCHAT Jean <lorchat(at)sfc.wide.ad.jp>

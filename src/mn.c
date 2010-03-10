@@ -42,6 +42,13 @@
 #include <netinet/ip6.h>
 
 #include <linux/fib_rules.h>
+#include <linux/types.h>
+#include <linux/ipv6_route.h>
+
+// XXX
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
 
 #include "debug.h"
 #include "mipv6.h"
@@ -350,6 +357,14 @@ static int mn_send_bu_msg(struct bulentry *bule)
 		}
 		bind_key = bule->Kbm;
 	}
+	if (IN6_IS_ADDR_V4MAPPED(&bule->coa)) {
+		struct in_addr v4coa = {0};
+		ipv6_unmap_addr(&bule->coa, &v4coa.s_addr);
+		if (mh_create_opt_ipv4_coa(&iov[iov_ind++], &v4coa)) {
+			free_iov_data(iov, iov_ind);
+			return -ENOMEM;
+		}
+	}
 	if (bule->flags & IP6_MH_BU_ACK)
 		bule->wait_ack = 1;
 	addrs.src = &bule->hoa;
@@ -604,7 +619,9 @@ static int mv_hoa(struct ifaddrmsg *ifa, struct rtattr *rta_tb[], void *arg)
 	struct timespec now;
 	uint32_t preferred = PREFIX_LIFETIME_INFINITE;
 	uint32_t valid = PREFIX_LIFETIME_INFINITE;
-	int plen = (mha->if_next == hai->if_tunnel ? 128 : hai->plen);
+	int plen = (((mha->if_next == hai->if_tunnel) ||
+		     (mha->if_next == hai->if_tunnel64) ||
+		     (mha->if_next == hai->if_tunnel66)) ? 128 : hai->plen);
 
 	clock_gettime(CLOCK_REALTIME, &now);
 
@@ -630,7 +647,7 @@ static int mv_hoa(struct ifaddrmsg *ifa, struct rtattr *rta_tb[], void *arg)
 
 	hoa->iif = mha->if_next;
 	addr_del(&hoa->addr, ifa->ifa_prefixlen, ifa->ifa_index);
-	return 0;
+	return post_move_hoa(hai, ifa->ifa_index); /* DSMIPv6 addition */
 }
 
 int nemo_mr_tnl_routes_add(struct home_addr_info *hai, int ifindex)
@@ -667,10 +684,20 @@ static int mn_tnl_state_add(struct home_addr_info *hai, int ifindex, int all)
 	if (hai->home_reg_status != HOME_REG_NONE) {
 		if ((err = mn_ro_pol_add(hai, ifindex, all)) < 0)
 			return err;
+		MDBG("Adding route towards tunnel index %d\n", ifindex);
 		if ((err = route_add(ifindex, RT6_TABLE_MIP6, RTPROT_MIP, 0,
 				     IP6_RT_PRIO_MIP6_OUT, &in6addr_any, 0,
 				     &in6addr_any, 0, NULL)) < 0) {
 			mn_ro_pol_del(hai, ifindex, all);
+			MDBG("*********** the insertion failed !!! ************");
+		}
+		if (ifindex == hai->if_tunnel64) {
+			MDBG("You are using DSMIPv6, adding default route to main table\n");
+			if ((err = route_add(ifindex, RT6_TABLE_MAIN, 0,
+					     RTF_DEFAULT, 1024, &in6addr_any, 0,
+					     &in6addr_any, 0, NULL)) < 0) {
+			  MDBG("dsmip route failed\n");
+			}
 		}
 	}
 	if (hai->mob_rtr &&
@@ -696,6 +723,7 @@ static void nemo_mr_tnl_routes_del(struct home_addr_info *hai, int ifindex)
 static void mn_tnl_state_del(struct home_addr_info *hai, int ifindex, int all)
 {
 	if (hai->home_reg_status != HOME_REG_NONE) {
+		MDBG("Deleting route towards tunnel index %d\n", ifindex);
 		if (hai->mob_rtr)
 			nemo_mr_tnl_routes_del(hai, ifindex);
 		route_del(ifindex, RT6_TABLE_MIP6, IP6_RT_PRIO_MIP6_OUT,
@@ -742,6 +770,9 @@ static int process_first_home_bu(struct bulentry *bule,
 		       hai->lladdr_comp | hai->mob_rtr);
 	if (conf.UseMnHaIPsec && conf.KeyMngMobCapability)
 		bule->flags |= IP6_MH_BU_KEYM;
+#ifdef TLV_ENCAP
+	bule->flags |= IP6_MH_BU_TLV;
+#endif
 	bule->coa_changed = -1;
 	bule->coa = hai->primary_coa.addr;
 	bule->if_coa = hai->primary_coa.iif;
@@ -754,7 +785,18 @@ static int process_first_home_bu(struct bulentry *bule,
 	bule->home = hai;
 	bule->consecutive_resends = 0;
 
+#ifdef __DSMIP_DEBUG__
+	printf("built following BULE : \n");
+	dump_bule(bule, stdout);
+	printf("-----\n");
+#endif
+
 	hai->home_reg_status = HOME_REG_UNCERTAIN;
+
+	if (IN6_IS_ADDR_V4MAPPED(&bule->coa))
+		hai->if_tunnel = hai->if_tunnel64;
+	else
+		hai->if_tunnel = hai->if_tunnel66;
 
 	if ((err = mn_tnl_state_add(hai, hai->if_tunnel, 0)) < 0)
 		MDBG("Failed to initialize new bule for HA\n");
@@ -824,6 +866,9 @@ static void mn_send_home_bu(struct home_addr_info *hai)
 			bul_delete(bule);
 			return;
 		}
+#ifdef __DSMIP_DEBUG__
+		printf("first_home_BU_success\n");
+#endif
 		type_movement = MIP6_TYPE_MOVEMENT_HL2FL;
 		MDBG("New bule for HA\n");
 	} else if (bule->type == BUL_ENTRY) {
@@ -894,6 +939,9 @@ static void mn_send_home_bu(struct home_addr_info *hai)
         }
 	if (!homereg_expired) {
 		bule->do_send_bu = 1;
+#ifdef __DSMIP_DEBUG__
+		printf("sending bul\n");
+#endif
 		mn_send_bu_msg(bule);
 		bul_update_timer(bule);
 
@@ -904,8 +952,17 @@ static void mn_send_home_bu(struct home_addr_info *hai)
 			post_ba_bul_update(bule);
 	}
 	/* Before bul_iterate, tunnel modification should be done. */
-	tunnel_mod(hai->if_tunnel, &hai->primary_coa.addr, &hai->ha_addr,
-		   hai->primary_coa.iif, mn_ext_tunnel_ops, hai);
+	if (IN6_IS_ADDR_V4MAPPED(&hai->primary_coa.addr)) {
+		struct in6_addr ha_addr;
+		ipv6_map_addr(&ha_addr, &hai->ha_addr4);
+		hai->if_tunnel = dsmip_mn_tunnel_mod(hai, &hai->primary_coa.addr,
+						&ha_addr, hai->primary_coa.iif,
+						mn_ext_tunnel_ops, hai);
+
+	} else
+		hai->if_tunnel = dsmip_mn_tunnel_mod(hai, &hai->primary_coa.addr,
+						&hai->ha_addr, hai->primary_coa.iif,
+						mn_ext_tunnel_ops, hai);
 
 	bule->last_coa = bule->coa;
 	bule->coa_changed = 0;
@@ -945,6 +1002,7 @@ void mn_send_cn_bu(struct bulentry *bule)
 		tsadd(bule->lastsent, bule->lifetime, bule->hard_expire);
 		bule->do_send_bu = 0;
 		post_ba_bul_update(bule);
+//		post_bu_bul_dsmip(bule);	/* DSMIPv6 */
 	}
 	bul_update_expire(bule);
 	bul_update_timer(bule);
@@ -1056,6 +1114,10 @@ static void mn_process_ha_ba(struct ip6_mh_binding_ack *ba,
 	bule->do_send_bu = 0;
 	bule->consecutive_resends = 0;
 	clock_gettime(CLOCK_REALTIME, &now);
+	if (ba->ip6mhba_status == IP6_MH_BAS_NO_UDP_ENCAP) {
+		MDBG("Home Agent cannot force UDP encapsulation\n");
+		/* XXX MAY resend the BU without the F flag */
+	}
 	if (ba->ip6mhba_status >= IP6_MH_BAS_UNSPECIFIED) {
 		char err_str[MAX_BA_STATUS_STR_LEN];
 
@@ -1186,6 +1248,18 @@ static void mn_process_ha_ba(struct ip6_mh_binding_ack *ba,
 		         "HA does not support IKE session surviving, "
 		         "traffic may be interrupted after movements.\n"
 			 );
+		}
+	}
+
+	/* IP6_MH_BA_TLV */
+	if (bule->flags & IP6_MH_BU_TLV) {
+		if (ba->ip6mhba_flags & IP6_MH_BA_TLV) {
+			/* Use TLV-format UDP encapsulation */
+		} else {
+			/* Remove the flag from this bule */
+			bule->flags &= ~IP6_MH_BU_TLV;
+			cdbg("HA does not support TLV-format UDP "
+					"encapsulation.\n");
 		}
 	}
 
@@ -1510,7 +1584,11 @@ static void clean_home_addr_info(struct home_addr_info *hai)
 	rule_del(NULL, RT6_TABLE_MIP6,
 		 IP6_RULE_PRIO_MIP6_HOA_OUT, RTN_UNICAST,
 		 &hai->hoa.addr, 128, &in6addr_any, 0, FIB_RULE_FIND_SADDR);
-	tunnel_del(hai->if_tunnel, NULL, NULL);
+	tunnel_del(hai->if_tunnel66, NULL, NULL);
+	if (conf.MnUseDsmip6) {
+		/* DSMIPv6: clean v6/v4 tunnel */
+		tunnel_del(hai->if_tunnel64, NULL, NULL);
+	}
 	dhaad_stop(hai);
 	free(hai);
 }
@@ -1603,13 +1681,71 @@ static int conf_home_addr_info(struct home_addr_info *conf_hai)
 		MDBG("HA address %x:%x:%x:%x:%x:%x:%x:%x\n",
 		     NIP6ADDR(&hai->ha_addr));
 	}
-	hai->if_tunnel = tunnel_add(&hai->hoa.addr, &hai->ha_addr,
+	hai->if_tunnel66 = tunnel_add(&hai->hoa.addr, &hai->ha_addr,
 				    hai->if_home, NULL, NULL);
 
-	if (hai->if_tunnel <= 0) {
+	if (hai->if_tunnel66 <= 0) {
 		MDBG("failed to create MN-HA tunnel\n");
 		goto clean_err;
 	}
+	/* DSMIPv6: add the v6/v4 tunnel.
+	 */
+	if (conf.MnUseDsmip6) {
+		struct in6_addr ha_addr;
+		struct in6_addr local;
+		struct in_addr any = { INADDR_ANY };
+		ipv6_map_addr(&ha_addr, &hai->ha_addr4);
+		ipv6_map_addr(&local, &any);
+		hai->if_tunnel64 = tunnel_add(&local, &ha_addr,
+				   	      hai->if_home, NULL, NULL);
+
+		if (hai->if_tunnel64 <= 0) {
+			MDBG("failed to create MN-HA v6/v4 tunnel\n");
+			goto clean_err;
+		}
+	}
+	/* DSMIPv6
+	 * By default the current used tunnel is the v6/v6 one
+	 */
+	hai->if_tunnel = hai->if_tunnel66;
+
+	/* XXX DSMIPv6 TUNNEL TEST
+	 */
+	if(0){
+		struct in6_addr ha_addr;
+		struct in6_addr tmp_coa, tmp_coa2;
+
+		inet_pton(AF_INET6, "2001:200:0:8410::aabb", &tmp_coa);
+		inet_pton(AF_INET6, "::ffff:1010:1010", &tmp_coa2);
+		ipv6_map_addr(&ha_addr, &hai->ha_addr4);
+
+		hai->if_tunnel = dsmip_mn_tunnel_mod(hai, &tmp_coa,
+					&hai->ha_addr, hai->primary_coa.iif,
+					mn_ext_tunnel_ops, hai);
+
+		MDBG("XXXXXX 66to66 XXXXXXXXX hai->if_tunnel = %d\n", hai->if_tunnel);
+
+		hai->if_tunnel = dsmip_mn_tunnel_mod(hai, &tmp_coa2,
+					&ha_addr, hai->primary_coa.iif,
+					mn_ext_tunnel_ops, hai);
+
+		MDBG("XXXXXX 66to64 XXXXXXXXX hai->if_tunnel = %d\n", hai->if_tunnel);
+
+		inet_pton(AF_INET6, "::ffff:1010:1011", &tmp_coa2);
+		hai->if_tunnel = dsmip_mn_tunnel_mod(hai, &tmp_coa2,
+					&ha_addr, hai->primary_coa.iif,
+					mn_ext_tunnel_ops, hai);
+
+		MDBG("XXXXXX 64to64 XXXXXXXXX hai->if_tunnel = %d\n", hai->if_tunnel);
+
+		inet_pton(AF_INET6, "2001:200:0:8490::ccdd", &tmp_coa);
+		hai->if_tunnel = dsmip_mn_tunnel_mod(hai, &tmp_coa,
+					&hai->ha_addr, hai->primary_coa.iif,
+					mn_ext_tunnel_ops, hai);
+
+		MDBG("XXXXXX 64to66 XXXXXXXXX hai->if_tunnel = %d\n", hai->if_tunnel);
+	}
+
 	if (rule_add(NULL, RT6_TABLE_MIP6,
 		     IP6_RULE_PRIO_MIP6_HOA_OUT, RTN_UNICAST,
 		     &hai->hoa.addr, 128, &in6addr_any, 0, FIB_RULE_FIND_SADDR) < 0) {
@@ -1637,7 +1773,7 @@ static int conf_home_addr_info(struct home_addr_info *conf_hai)
 	arg.flag = 1;
 
 	if (addr_do(&hai->hoa.addr, 128,
-		    hai->if_tunnel, &arg, flag_hoa) < 0) {
+		    hai->if_tunnel66, &arg, flag_hoa) < 0) {
 		goto clean_err;
 	}
 	if (hai->mob_rtr && nemo_mr_rules_add(hai) < 0) {
@@ -2169,13 +2305,27 @@ static int mn_home_rtr_chk(struct home_addr_info *hai, struct md_router *rtr)
 	return !at_home;
 }
 
+static inline int dsmip_mn_verify_iface(const struct md_inet6_iface *iface)
+{
+	struct list_head *l;
+
+	list_for_each(l, &iface->coas) {
+		struct md_coa *coa;
+		coa = list_entry(l, struct md_coa, list);
+		if (IN6_IS_ADDR_V4MAPPED(&coa->addr))
+			return 1;
+	}
+
+	return 0;
+}
 
 static inline int mn_verify_iface(const struct md_inet6_iface *iface)
 {
 	/* Tunnel interfaces do not have a default router
 	   (route is via the device itself) */
  	return (!list_empty(&iface->coas) &&
-		(iface->is_tunnel || !list_empty(&iface->default_rtr)));
+		(iface->is_tunnel || !list_empty(&iface->default_rtr)) ||
+		dsmip_mn_verify_iface(iface));
 }
 
 static struct md_inet6_iface *mn_get_iface(const struct home_addr_info *hai,
@@ -2353,11 +2503,19 @@ static int mn_make_ho_verdict(const struct movement_event *me,
 	}
 	new_iface = mn_get_iface(hai, pref_iif, me->iface_list);
 
+#ifdef __DSMIP_DEBUG__
+	printf("new iface : %p\n", (void *) new_iface);
+#endif
+
 	if (new_iface == NULL)
 		return MN_HO_INVALIDATE;
 
 	coa = mn_get_coa(hai, new_iface->ifindex,
 			 &hai->primary_coa.addr, &new_iface->coas);
+
+#ifdef __DSMIP_DEBUG__
+	printf("coa : %p\n", (void *) coa);
+#endif
 
 	if (coa == NULL)
 		return MN_HO_INVALIDATE;
@@ -2367,8 +2525,10 @@ static int mn_make_ho_verdict(const struct movement_event *me,
 		return MN_HO_IGNORE;
 
 	if (!new_iface->is_tunnel) {
- 		if (list_empty(&new_iface->default_rtr))
-			return MN_HO_IGNORE;
+		if (!IN6_IS_ADDR_V4MAPPED(&coa->addr)) {
+			if (list_empty(&new_iface->default_rtr))
+				return MN_HO_IGNORE;
+		}
 
 		*next_rtr = md_get_first_router(&new_iface->default_rtr);
 	}
@@ -2469,12 +2629,22 @@ int mn_movement_event(struct movement_event *event)
 	/* Then registration if we are not at home,
 	   otherwise we need to wait for BA to avoid forwarding loops */
 	if (!pending_bas) {
+#ifdef __DSMIP_DEBUG__
+	  printf("no BAs pending, good\n");
+#endif
 		list_for_each(lh, &home_addr_list) {
 			hai = list_entry(lh, struct home_addr_info, list);
 			if (!hai->at_home &&
 			    positive_ho_verdict(hai->verdict)) {
+#ifdef __DSMIP_DEBUG__
+	  printf("positive verdict, good\n");
+#endif
 				mn_move(hai);
 			}
+#ifdef __DSMIP_DEBUG__
+			else
+			  printf("at_home %d / verdict (start#%d) %d\n", hai->at_home, MN_HO_NONE, hai->verdict);
+#endif
 		}
 	}
 	pthread_rwlock_unlock(&mn_lock);
