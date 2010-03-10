@@ -11,7 +11,7 @@ int inet6_rth_add(void *bp, const struct in6_addr *addr)
 	struct ip6_rthdr *rth;
 
 	rth = (struct ip6_rthdr *)bp;
-	
+
 	memcpy((uint8_t *)bp + 8 + rth->ip6r_segleft * sizeof(struct in6_addr),
 	       addr, sizeof(struct in6_addr));
 

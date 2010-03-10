@@ -2,7 +2,7 @@
  * $Id: pmgr.c.in 1.3 06/02/08 00:53:40+02:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
- * 
+ *
  * Author: Antti Tuominen <anttit@tcs.hut.fi>
  *
  * Copyright 2005 GO-Core Project

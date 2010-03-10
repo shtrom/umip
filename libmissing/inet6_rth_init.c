@@ -33,6 +33,6 @@ void *inet6_rth_init(void *bp, socklen_t bplen, int type,
 	rth->ip6r_len = segments << 1;
 	rth->ip6r_type = type;
 	rth->ip6r_segleft = 0;
-	
+
 	return bp;
 }

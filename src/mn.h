@@ -66,7 +66,7 @@ struct mn_addr {
 struct home_addr_info {
 	struct list_head list;
 	struct mn_addr hoa; /* Home address */
-	uint8_t plen; 
+	uint8_t plen;
 	uint8_t home_reg_status;
 	uint8_t home_block;
 	uint8_t use_dhaad;
@@ -77,7 +77,7 @@ struct home_addr_info {
 	struct hash bul; /* Binding Update List */
 	struct mn_addr primary_coa;
 	struct list_head ro_policies;
-	struct ha_candidate_list ha_list;	
+	struct ha_candidate_list ha_list;
 	struct in6_addr ha_addr;
 	int pend_ba;
 	int verdict;

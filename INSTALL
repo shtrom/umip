@@ -53,7 +53,7 @@
 
    For comments about IPsec support check README.IPsec.
 
-5. A startup script 
+5. A startup script
 
    To automatically start the Mobile IPv6 subsystem, you need to have
    a startup script.  Many distributions have their own style of

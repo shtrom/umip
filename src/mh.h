@@ -34,14 +34,14 @@ struct mh_handler {
 int mh_init(void);
 void mh_cleanup(void);
 
-int mh_send(const struct in6_addr_bundle *addrs, 
-	    const struct iovec *mh_vec, int iovlen, 
+int mh_send(const struct in6_addr_bundle *addrs,
+	    const struct iovec *mh_vec, int iovlen,
 	    const uint8_t *bind_key, int oif);
 
 void mh_send_brr(struct in6_addr *mn_addr, struct in6_addr *local);
 
-void mh_send_ba(const struct in6_addr_bundle *addrs, uint8_t status, 
-		uint8_t flags, uint16_t sequence, 
+void mh_send_ba(const struct in6_addr_bundle *addrs, uint8_t status,
+		uint8_t flags, uint16_t sequence,
 		const struct timespec *lifetime,
 		const uint8_t *key, int iif);
 

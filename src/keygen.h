@@ -3,7 +3,7 @@
 #ifndef __KEYGEN_H__
 #define __KEYGEN_H__ 1
 
-int rr_cn_calc_Kbm(uint16_t home_nonce_ind, uint16_t coa_nonce_ind, 
+int rr_cn_calc_Kbm(uint16_t home_nonce_ind, uint16_t coa_nonce_ind,
 		   struct in6_addr *hoa, struct in6_addr *coa, uint8_t *kbm);
 
 void rr_mn_calc_Kbm(uint8_t *nonce_hoa, uint8_t *nonce_coa, uint8_t *kbm);

@@ -356,7 +356,7 @@ int ipsec_policy_apply(const struct in6_addr *haaddr,
 
 	list_for_each(lp, &conf.ipsec_policies) {
 		struct ipsec_policy_entry *e;
-		
+
 		e = list_entry(lp, struct ipsec_policy_entry, list);
 
 		if (haaddr && !IN6_ARE_ADDR_EQUAL(haaddr, &e->ha_addr))
@@ -508,7 +508,7 @@ static int _ha_tnl_update(const struct in6_addr *haaddr,
 		dbg("invalid ipsec proto\n");
 		goto end;
 	}
-	
+
 	ifindex = info->tunnel;
 	oldcoa = IN6_ARE_ADDR_EQUAL(&info->old_coa, &in6addr_any) ?
 		peer_addr : &info->old_coa;
@@ -875,12 +875,12 @@ int ha_ipsec_trns_update(const struct in6_addr *haaddr,
 
 
 /*
- *   Add/Delete IPsec Security Policy 
+ *   Add/Delete IPsec Security Policy
  */
-static int _ha_tnl_pol_mod(const struct in6_addr *haaddr, 
-			   const struct in6_addr *hoa, 
-			   struct ipsec_policy_entry *e, 
-			   void *arg, 
+static int _ha_tnl_pol_mod(const struct in6_addr *haaddr,
+			   const struct in6_addr *hoa,
+			   struct ipsec_policy_entry *e,
+			   void *arg,
 			   int add)
 {
 	int err = 0;
@@ -983,7 +983,7 @@ static int _ha_tnl_pol_add(const struct in6_addr *haaddr,
 	return _ha_tnl_pol_mod(haaddr, hoa, e, arg, 1);
 }
 
-int ha_ipsec_tnl_pol_add(const struct in6_addr *our_addr, 
+int ha_ipsec_tnl_pol_add(const struct in6_addr *our_addr,
 			 const struct in6_addr *peer_addr,
 			 int tunnel,
 			 struct list_head *mnp)
@@ -1009,7 +1009,7 @@ static int _ha_tnl_pol_del(const struct in6_addr *haaddr,
 	return _ha_tnl_pol_mod(haaddr, hoa, e, arg, 0);
 }
 
-int ha_ipsec_tnl_pol_del(const struct in6_addr *our_addr, 
+int ha_ipsec_tnl_pol_del(const struct in6_addr *our_addr,
 			 const struct in6_addr *peer_addr,
 			 int tunnel,
 			 struct list_head *mnp)
@@ -1096,7 +1096,7 @@ static int _mn_tnl_update(const struct in6_addr *haaddr,
 
 	/*
 	 * Additionally, we need to update endpoint address stored in the
-	 * policy entry for processing BU from peer MN. Note that incoming 
+	 * policy entry for processing BU from peer MN. Note that incoming
 	 * BU is normally IPsec-tunneled by the HA.
 	 */
 	if (e->type == IPSEC_POLICY_TYPE_TUNNELMH) {
@@ -1300,7 +1300,7 @@ static int _mn_tnl_pol_mod(const struct in6_addr *haaddr,
 		dbg("invalid ipsec proto\n");
 		goto end;
 	}
-	
+
 	ifindex = bule->home->if_tunnel;
 
 	dump_migrate(ifindex, ipsec_proto, hoa, haaddr, NULL, NULL);
@@ -1315,7 +1315,7 @@ static int _mn_tnl_pol_mod(const struct in6_addr *haaddr,
 		err = -1;
 		goto end;
 	}
-		
+
 	/* outbound */
 	_set_sp(&sp, e, XFRM_POLICY_OUT, &in6addr_any, 0, hoa, 0,
 		ifindex, MIP6_ENTITY_MN);
@@ -1326,7 +1326,7 @@ static int _mn_tnl_pol_mod(const struct in6_addr *haaddr,
 		err = -1;
 		goto end;
 	}
-	
+
 	/*
 	 * Additionally, we need to create SPD entry to process incoming BU
 	 * from peer MN.  Note that BU is normally IPsec-tunneled by the HA.

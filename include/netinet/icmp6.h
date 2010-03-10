@@ -16,7 +16,7 @@
 
 /*
  *   The following data structures can be used for the ICMP message
- *   types discussed in section 6.5 through 6.8 in the base Mobile 
+ *   types discussed in section 6.5 through 6.8 in the base Mobile
  *   IPv6 [2] specification.
  */
 #ifndef HAVE_STRUCT_MIP_DHAAD_REQ

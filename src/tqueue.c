@@ -2,7 +2,7 @@
  * $Id: tqueue.c 1.49 06/02/28 18:57:32+02:00 anttit@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
- * 
+ *
  * Authors:
  *  Antti Tuominen <anttit@tcs.hut.fi>
  *  Ville Nuorvala <vnuorval@tcs.hut.fi>
@@ -134,7 +134,7 @@ int del_task(struct tq_elem *elem)
 	if (elem == curr)
 		curr = NULL;
 	pthread_mutex_unlock(&mutex);
-	
+
 	return 0;
 }
 
@@ -213,7 +213,7 @@ static void *runner(__attribute__ ((unused)) void *arg)
 			first->task(first);
 			pthread_mutex_lock(&mutex);
 			curr = NULL;
-		}		
+		}
 	}
 	pthread_mutex_unlock(&mutex);
 	pthread_exit(NULL);

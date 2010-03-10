@@ -15,5 +15,5 @@ The NEMO Basic Support code has been ported to UMIP by Romain KUNTZ
 following people:
 - Sebastien DECUGIS (Nautilus6): IPsec support for NEMO
 - Arnaud EBALARD (EADS): fixes for Big Endian architectures,
-  improvements of the NEMO debug messages, improvements in the 
+  improvements of the NEMO debug messages, improvements in the
   IPsec support code for NEMO.

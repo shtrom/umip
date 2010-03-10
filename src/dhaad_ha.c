@@ -2,7 +2,7 @@
  * $Id: dhaad_ha.c 1.14 06/05/07 21:52:42+03:00 anttit@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
- * 
+ *
  * Authors: Antti Tuominen <anttit@tcs.hut.fi>
  *          Ville Nuorvala <vnuorval@tcs.hut.fi>
  *
@@ -158,7 +158,7 @@ static int dhaad_get_halist(struct ha_interface *i, uint16_t flags,
 }
 
 static void dhaad_recv_req(const struct icmp6_hdr *ih, ssize_t len,
-			   const struct in6_addr *src, 
+			   const struct in6_addr *src,
 			   const struct in6_addr *dst,
 			   __attribute__ ((unused)) int iif,
 			   __attribute__ ((unused)) int hoplimit)
@@ -177,7 +177,7 @@ static void dhaad_recv_req(const struct icmp6_hdr *ih, ssize_t len,
 		return;
 
 	if ((i = ha_get_if_by_anycast(dst, &ha_addr)) == NULL) {
-		dbg("no halist for anycast address %x:%x:%x:%x:%x:%x:%x:%x\n", 
+		dbg("no halist for anycast address %x:%x:%x:%x:%x:%x:%x:%x\n",
 		    NIP6ADDR(dst));
 		return;
 	}

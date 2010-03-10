@@ -42,7 +42,7 @@ int default_best_iface(const struct in6_addr *hoa,
  * @pref_coa: preferred CoA
  * @coa: suggested CoA
  *
- * Return iif if a CoA is available and store the address in @coa 
+ * Return iif if a CoA is available and store the address in @coa
  **/
 int default_best_coa(const struct in6_addr *hoa,
 		     const struct in6_addr *ha, int iif,
@@ -54,7 +54,7 @@ int default_best_coa(const struct in6_addr *hoa,
  * @remote_hoa: remote MN's home address
  * @remote_coa: remote MN's care-of address
  * @local_addr: local address
- * @bu: Binding Update message 
+ * @bu: Binding Update message
  * @suggested: suggested lifetime
  * @lifetime: granted lifetime
  *
@@ -64,7 +64,7 @@ int default_best_coa(const struct in6_addr *hoa,
 int default_max_binding_life(const struct in6_addr *remote_hoa,
 			     const struct in6_addr *remote_coa,
 			     const struct in6_addr *local_addr,
-			     const struct ip6_mh_binding_update *bu, 
+			     const struct ip6_mh_binding_update *bu,
 			     ssize_t len,
 			     const struct timespec *suggested,
 			     struct timespec *lifetime);

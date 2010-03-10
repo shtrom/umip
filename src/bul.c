@@ -86,7 +86,7 @@ void dump_bule(void *bule, void *os)
 		fprintf(out, "== NON_MIP_CN_ENTRY ==\n");
 	else if (e->type == UNREACH_ENTRY)
 		fprintf(out, "== UNREACH_ENTRY ==\n");
-	else 
+	else
 		fprintf(out, "== Unknown BUL entry ==\n");
 
 	fprintf(out, "Home address    %x:%x:%x:%x:%x:%x:%x:%x\n",
@@ -165,7 +165,7 @@ void bul_update_expire(struct bulentry *bule)
 	}
 }
 
-/* Adds bul entry to both hashes and adds a timer for expiry / resend. 
+/* Adds bul entry to both hashes and adds a timer for expiry / resend.
    Caller must fill all non-private fields of bule */
 int bul_add(struct bulentry *bule)
 {
@@ -174,7 +174,7 @@ int bul_add(struct bulentry *bule)
 	struct home_addr_info *hai = bule->home;
 
 	assert(bule && tsisset(bule->lifetime) && hai);
-	
+
 	if ((ret = hash_add(&bul_hash, bule, &bule->hoa, &bule->peer_addr)) < 0)
 		return ret;
 	if ((ret = hash_add(&hai->bul, bule, NULL, &bule->peer_addr)) < 0)
@@ -200,7 +200,7 @@ home_bul_free:
 	hash_delete(&hai->bul, &bule->hoa, &bule->peer_addr);
 bul_free:
 	hash_delete(&bul_hash, &bule->hoa, &bule->peer_addr);
-	return ret; 
+	return ret;
 }
 
 /* bul_delete - deletes a bul entry */
@@ -225,7 +225,7 @@ void bul_delete(struct bulentry *bule)
 	if (bule->flags & IP6_MH_BU_HOME) {
 		if (bule->type == UNREACH_ENTRY) {
 			pthread_mutex_lock(&hai->ha_list.c_lock);
-			if (IN6_ARE_ADDR_EQUAL(&bule->peer_addr, 
+			if (IN6_ARE_ADDR_EQUAL(&bule->peer_addr,
 					       &hai->ha_list.last_ha))
 				hai->ha_list.last_ha = in6addr_any;
 			pthread_mutex_unlock(&hai->ha_list.c_lock);
@@ -279,18 +279,18 @@ static int bule_cleanup(void *vbule, void *vbul)
 	return 0;
 }
 
-/* bul_home_cleanup - cleans up a bul 
+/* bul_home_cleanup - cleans up a bul
  * @bul: binding update list to clean up
  */
 void bul_home_cleanup(struct hash *bul)
 {
-	hash_iterate(bul, bule_cleanup, bul);	
+	hash_iterate(bul, bule_cleanup, bul);
 	hash_cleanup(bul);
 }
 
 void bul_flush(void)
 {
-	hash_iterate(&bul_hash, bule_cleanup, NULL);	
+	hash_iterate(&bul_hash, bule_cleanup, NULL);
 }
 
 /* bul_cleanup - cleans up global bul */
@@ -300,12 +300,12 @@ void bul_cleanup(void)
 }
 
 /* bul_iterate - iterates through binding update list calling func for
- * every entry. 
+ * every entry.
  * @func: function to be called for every entry, @func
  * takes a void cast bulentry as its first argument and @arg as its
- * second.  
+ * second.
  * @arg: second argument with which @func is called for every
- * bul entry 
+ * bul entry
  */
 int bul_iterate(struct hash *h, int (* func)(void *, void *), void *arg)
 {

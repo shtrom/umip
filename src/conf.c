@@ -2,7 +2,7 @@
  * $Id: conf.c 1.50 06/05/12 11:48:36+03:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
- * 
+ *
  * Authors: Antti Tuominen <anttit@tcs.hut.fi>
  *          Ville Nuorvala <vnuorval@tcs.hut.fi>
  *
@@ -298,7 +298,7 @@ void conf_show(struct mip6_config *c)
 
 	dbg("NonVolatileBindingCache = %s\n",
 	    CONF_BOOL_STR(c->NonVolatileBindingCache));
-	
+
 	/* IPsec options */
 	dbg("KeyMngMobCapability = %s\n",
 	    CONF_BOOL_STR(c->KeyMngMobCapability));
@@ -312,9 +312,9 @@ void conf_show(struct mip6_config *c)
 	dbg("MnRouterProbes = %u\n", c->MnRouterProbes);
 	dbg("MnRouterProbeTimeout = %f\n",
 	    tstodsec(c->MnRouterProbeTimeout_ts));
-	dbg("InitialBindackTimeoutFirstReg = %f\n", 
+	dbg("InitialBindackTimeoutFirstReg = %f\n",
 	    tstodsec(c->InitialBindackTimeoutFirstReg_ts));
-	dbg("InitialBindackTimeoutReReg = %f\n", 
+	dbg("InitialBindackTimeoutReReg = %f\n",
 	    tstodsec(c->InitialBindackTimeoutReReg_ts));
 	dbg("InitialSolicitTimer = %f\n", tstodsec(c->InitialSolicitTimer_ts));
 	if (c->MoveModulePath)

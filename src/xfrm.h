@@ -61,12 +61,12 @@ int xfrm_post_ba_mod_bule(struct bulentry *bule);
 void xfrm_del_bule(struct bulentry *bule);
 
 long xfrm_last_used(const struct in6_addr *daddr,
-		    const struct in6_addr *saddr, 
+		    const struct in6_addr *saddr,
 		    int proto,
 		    const struct timespec *now);
 
-long mn_bule_xfrm_last_used(const struct in6_addr *peer, 
-			    const struct in6_addr *hoa, 
+long mn_bule_xfrm_last_used(const struct in6_addr *peer,
+			    const struct in6_addr *hoa,
 			    const struct timespec *now);
 
 int mn_ro_pol_add(struct home_addr_info *hai, int ifindex, int changed);
@@ -113,6 +113,6 @@ static inline int pre_bu_bul_update(struct bulentry *bule)
 static inline int post_ba_bul_update(struct bulentry *bule)
 {
 	return xfrm_post_ba_mod_bule(bule);
-} 
+}
 
 #endif /* __XFRM_H__ */

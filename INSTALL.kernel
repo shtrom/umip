@@ -19,7 +19,7 @@ All that said, here follows the instructions.
 
 1. Check if your current kernel supports Mobile IPv6 extensions.  To
    do this we have provided a shell script to check it for you.  Just
-   run: 
+   run:
 
      ./chkconf_kernel.sh
 
@@ -80,7 +80,7 @@ All that said, here follows the instructions.
      CONFIG_SYSVIPC=y
      CONFIG_PROC_FS=y
      CONFIG_NET=y
-     CONFIG_INET=y 
+     CONFIG_INET=y
      CONFIG_IPV6=y
      CONFIG_IPV6_MIP6=y
      CONFIG_XFRM=y

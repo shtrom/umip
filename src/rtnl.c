@@ -2,7 +2,7 @@
  * $Id: rtnl.c 1.56 06/05/15 19:50:13+03:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
- * 
+ *
  * Authors:
  *  Ville Nuorvala <vnuorval@tcs.hut.fi>,
  *  Antti Tuominen <anttit@tcs.hut.fi>
@@ -46,8 +46,8 @@
 
 #if RT_DEBUG_LEVEL >= 1
 #define RTDBG dbg
-#else 
-#define RTDBG(...) 
+#else
+#define RTDBG(...)
 #endif /* RTDBG */
 
 int rtnl_do(int proto, struct nlmsghdr *sn, struct nlmsghdr *rn)
@@ -64,7 +64,7 @@ int rtnl_do(int proto, struct nlmsghdr *sn, struct nlmsghdr *rn)
 }
 
 int addr_do(const struct in6_addr *addr, int plen, int ifindex, void *arg,
-	    int (*do_callback)(struct ifaddrmsg *ifa, 
+	    int (*do_callback)(struct ifaddrmsg *ifa,
 			       struct rtattr *rta_tb[], void *arg))
 {
 	uint8_t sbuf[256];
@@ -96,15 +96,15 @@ int addr_do(const struct in6_addr *addr, int plen, int ifindex, void *arg,
 		ifa = NLMSG_DATA(rn);
 	} else {
 		ifa = NLMSG_DATA(rn);
-		
-		if (rn->nlmsg_type != RTM_NEWADDR || 
+
+		if (rn->nlmsg_type != RTM_NEWADDR ||
 		    rn->nlmsg_len < NLMSG_LENGTH(sizeof(*ifa)) ||
 		    ifa->ifa_family != AF_INET6) {
 			return -EINVAL;
 		}
 	}
 	memset(rta_tb, 0, sizeof(rta_tb));
-	parse_rtattr(rta_tb, IFA_MAX, IFA_RTA(ifa), 
+	parse_rtattr(rta_tb, IFA_MAX, IFA_RTA(ifa),
 		     rn->nlmsg_len - NLMSG_LENGTH(sizeof(*ifa)));
 
 	if (!rta_tb[IFA_ADDRESS])
@@ -122,10 +122,10 @@ int addr_do(const struct in6_addr *addr, int plen, int ifindex, void *arg,
 }
 
 static int addr_mod(int cmd, uint16_t nlmsg_flags,
-		    const struct in6_addr *addr, uint8_t plen, 
-		    uint8_t flags, uint8_t scope, int ifindex, 
+		    const struct in6_addr *addr, uint8_t plen,
+		    uint8_t flags, uint8_t scope, int ifindex,
 		    uint32_t prefered, uint32_t valid)
-				      
+
 {
 	uint8_t buf[256];
 	struct nlmsghdr *n;
@@ -157,8 +157,8 @@ static int addr_mod(int cmd, uint16_t nlmsg_flags,
 	return rtnl_route_do(n, NULL);
 }
 
-int addr_add(const struct in6_addr *addr, uint8_t plen, 
-	     uint8_t flags, uint8_t scope, int ifindex, 
+int addr_add(const struct in6_addr *addr, uint8_t plen,
+	     uint8_t flags, uint8_t scope, int ifindex,
 	     uint32_t prefered, uint32_t valid)
 {
 	return addr_mod(RTM_NEWADDR, NLM_F_CREATE|NLM_F_REPLACE,
@@ -187,7 +187,7 @@ int prefix_add(int ifindex, const struct nd_opt_prefix_info *pinfo)
 	pfxm = NLMSG_DATA(n);
 	pfxm->prefix_family = AF_INET6;
 	pfxm->prefix_ifindex = ifindex;
-	pfxm->prefix_type = pinfo->nd_opt_pi_type;	    
+	pfxm->prefix_type = pinfo->nd_opt_pi_type;
 	pfxm->prefix_len = pinfo->nd_opt_pi_prefix_len;
 	pfxm->prefix_flags = pinfo->nd_opt_pi_flags_reserved;
 
@@ -217,7 +217,7 @@ static int route_mod(int cmd, int oif, uint8_t table, uint8_t proto,
 
 	memset(buf, 0, sizeof(buf));
 	n = (struct nlmsghdr *)buf;
-	
+
 	n->nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg));
 	n->nlmsg_flags = NLM_F_REQUEST;
 	if (cmd == RTM_NEWROUTE) {
@@ -240,7 +240,7 @@ static int route_mod(int cmd, int oif, uint8_t table, uint8_t proto,
 		addattr_l(n, sizeof(buf), RTA_SRC, src, sizeof(*src));
 	addattr32(n, sizeof(buf), RTA_OIF, oif);
 	if (gateway)
-		addattr_l(n, sizeof(buf), 
+		addattr_l(n, sizeof(buf),
 			  RTA_GATEWAY, gateway, sizeof(*gateway));
 	if (priority)
 		addattr32(n, sizeof(buf), RTA_PRIORITY, priority);
@@ -265,9 +265,9 @@ static int route_mod(int cmd, int oif, uint8_t table, uint8_t proto,
  * success, negative otherwise.
  **/
 int route_add(int oif, uint8_t table, uint8_t proto,
-	      unsigned flags, uint32_t metric, 
+	      unsigned flags, uint32_t metric,
 	      const struct in6_addr *src, int src_plen,
-	      const struct in6_addr *dst, int dst_plen, 
+	      const struct in6_addr *dst, int dst_plen,
 	      const struct in6_addr *gateway)
 {
 	return route_mod(RTM_NEWROUTE, oif, table, proto, flags,
@@ -289,12 +289,12 @@ int route_add(int oif, uint8_t table, uint8_t proto,
  * as destination, through interface @oif, from the routing table
  * number @table.
  **/
-int route_del(int oif, uint8_t table, uint32_t metric, 
+int route_del(int oif, uint8_t table, uint32_t metric,
 	      const struct in6_addr *src, int src_plen,
 	      const struct in6_addr *dst, int dst_plen,
 	      const struct in6_addr *gateway)
 {
-	return route_mod(RTM_DELROUTE, oif, table, RTPROT_UNSPEC, 
+	return route_mod(RTM_DELROUTE, oif, table, RTPROT_UNSPEC,
 			 0, metric, src, src_plen, dst, dst_plen, gateway);
 }
 
@@ -309,7 +309,7 @@ static int rule_mod(const char *iface, int cmd, uint8_t table,
 
 	memset(buf, 0, sizeof(buf));
 	n = (struct nlmsghdr *)buf;
-	
+
 	n->nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg));
 	n->nlmsg_flags = NLM_F_REQUEST;
 	if (cmd == RTM_NEWRULE) {

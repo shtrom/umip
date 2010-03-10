@@ -2,7 +2,7 @@
  * $Id: ha.c 1.126 06/05/07 21:52:42+03:00 anttit@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
- * 
+ *
  * Authors: Ville Nuorvala <vnuorval@tcs.hut.fi>
  *          Antti Tuominen <anttit@tcs.hut.fi>
  *
@@ -111,7 +111,7 @@ static void ha_recv_ra(const struct icmp6_hdr *ih, ssize_t len,
 
 			if (olen < sizeof(*p) || p->nd_opt_pi_prefix_len > 128)
 				return;
-			p->nd_opt_pi_valid_time = 
+			p->nd_opt_pi_valid_time =
 				ntohl(p->nd_opt_pi_valid_time);
 			p->nd_opt_pi_preferred_time =
 				ntohl(p->nd_opt_pi_preferred_time);
@@ -135,7 +135,7 @@ static void ha_recv_ra(const struct icmp6_hdr *ih, ssize_t len,
 	}
 	for (i = 0; i < num_pinfo; i++) {
 		/* if the router is running as HA, add it, else delete it */
-		if (pinfo[i]->nd_opt_pi_flags_reserved & 
+		if (pinfo[i]->nd_opt_pi_flags_reserved &
 		    ND_OPT_PI_FLAG_RADDR) {
 			dhaad_insert_halist(iface, pref, life,
 					    flags, pinfo[i]);
@@ -213,7 +213,7 @@ static int ha_if_addr_setup(__attribute__ ((unused)) const struct sockaddr_nl *w
 {
 	struct ifaddrmsg *ifa = NLMSG_DATA(n);
 	struct ha_interface *i = (struct ha_interface *)arg;
-	struct ha_addr_holder *addr; 
+	struct ha_addr_holder *addr;
 	struct rtattr * rta_tb[IFA_MAX+1];
 
 	if (n->nlmsg_len < NLMSG_LENGTH(sizeof(*ifa)))
@@ -227,7 +227,7 @@ static int ha_if_addr_setup(__attribute__ ((unused)) const struct sockaddr_nl *w
 		return 0;
 
 	memset(rta_tb, 0, sizeof(rta_tb));
-	parse_rtattr(rta_tb, IFA_MAX, IFA_RTA(ifa), 
+	parse_rtattr(rta_tb, IFA_MAX, IFA_RTA(ifa),
 		     n->nlmsg_len - NLMSG_LENGTH(sizeof(*ifa)));
 
 	if (!rta_tb[IFA_ADDRESS])
@@ -241,7 +241,7 @@ static int ha_if_addr_setup(__attribute__ ((unused)) const struct sockaddr_nl *w
 
 		dhaad_gen_ha_anycast(&addr->anycast_addr,
 				     ha_addr, ifa->ifa_prefixlen);
-				     
+
 		if (if_mc_group(ICMP6_MAIN_SOCK, i->ifindex,
 				&addr->anycast_addr, IPV6_JOIN_ANYCAST) < 0)
 			return -1;
@@ -603,10 +603,10 @@ static int home_tnl_del(int old_if, int new_if, struct home_tnl_ops_parm *p)
 	mnp = &p->bce->mob_net_prefixes;
 
 	if (conf.UseMnHaIPsec) {
-		/* migrate */ 
+		/* migrate */
 		ha_ipsec_tnl_update(our_addr, peer_addr,
 				    coa, old_coa, p->bce->tunnel, mnp);
-		/* delete SP entry */ 
+		/* delete SP entry */
 		ha_ipsec_tnl_pol_del(our_addr, peer_addr, p->bce->tunnel, mnp);
 	}
 	/* delete HoA route */
@@ -655,7 +655,7 @@ static int home_tnl_add(int old_if, int new_if, struct home_tnl_ops_parm *p)
 		p->ba_status = IP6_MH_BAS_INSUFFICIENT;
 		goto err;
 	}
-	/* add SP entry */	
+	/* add SP entry */
 	if (conf.UseMnHaIPsec) {
 		if (ha_ipsec_tnl_pol_add(our_addr, peer_addr,
 					 p->bce->tunnel, mnp) < 0) {
@@ -670,7 +670,7 @@ static int home_tnl_add(int old_if, int new_if, struct home_tnl_ops_parm *p)
 			goto err;
 		}
 
-		/* migrate */ 
+		/* migrate */
 		if (ha_ipsec_tnl_update(our_addr, peer_addr, coa, old_coa,
 					p->bce->tunnel, mnp) < 0) {
 			p->ba_status = IP6_MH_BAS_INSUFFICIENT;
@@ -729,7 +729,7 @@ static int home_tnl_chg(int old_if, int new_if, struct home_tnl_ops_parm *p)
 			}
 		}
 
-		/* migrate */ 
+		/* migrate */
 		if (conf.UseMnHaIPsec &&
 		    !IN6_ARE_ADDR_EQUAL(old_coa, coa)) {
 			if (ha_ipsec_trns_update(our_addr, peer_addr,
@@ -742,7 +742,7 @@ static int home_tnl_chg(int old_if, int new_if, struct home_tnl_ops_parm *p)
 						p->bce->tunnel, mnp) < 0)
 				return -1;
 		}
-	} else { 
+	} else {
 		home_tnl_del(old_if, new_if, p);
 		if (home_tnl_add(old_if, new_if, p) < 0)
 			return -1;
@@ -867,7 +867,7 @@ static void *ha_recv_bu_worker(void *varg)
 	struct home_tnl_ops_parm p;
 
 	pthread_dbg("thread started");
-restart:	
+restart:
 	home_ifindex = 0;
 	new = 0;
 	ba_flags = 0;
@@ -1021,7 +1021,7 @@ restart:
 	bce->flags = bu_flags;
 	bce->lifetime = lft;
 	if (new) {
-		if (tunnel_add(out.src, out.bind_coa, 0, 
+		if (tunnel_add(out.src, out.bind_coa, 0,
 			       home_tnl_ops, &p) < 0) {
 			if (p.ba_status >= IP6_MH_BAS_UNSPECIFIED)
 				status = p.ba_status;
@@ -1036,7 +1036,7 @@ restart:
 
 		if (route_add(bce->link, RT6_TABLE_MIP6,
 			      RTPROT_MIP, 0, IP6_RT_PRIO_MIP6_OUT,
-			      &bce->our_addr, 128, &bce->peer_addr, 128, 
+			      &bce->our_addr, 128, &bce->peer_addr, 128,
 			      NULL) < 0) {
 			status = IP6_MH_BAS_INSUFFICIENT;
 			goto send_nack;
@@ -1053,7 +1053,7 @@ restart:
 		bce->old_coa = bce->coa;
 		bce->coa = *out.bind_coa;
 		if (tunnel_mod(bce->tunnel, out.src, out.bind_coa, 0,
-			       home_tnl_ops, &p) < 0) { 
+			       home_tnl_ops, &p) < 0) {
 			if (p.ba_status >= IP6_MH_BAS_UNSPECIFIED)
 				status = p.ba_status;
 			else
@@ -1192,7 +1192,7 @@ int ha_recv_home_bu(const struct ip6_mh *mh, ssize_t len,
 	arg->dst = *out.dst;
 	if (out.remote_coa)
 		arg->remote_coa = *out.remote_coa;
-	else 
+	else
 		arg->remote_coa = in6addr_any;
 	if (out.bind_coa)
 		arg->bind_coa = *out.bind_coa;

@@ -58,7 +58,7 @@ if BUILTIN_CRYPTO
 mip6d_SOURCES += crypto.c crypto.h
 endif
 
-mip6d_LDADD = 
+mip6d_LDADD =
 
 if MISSING
 mip6d_LDADD += -L../libmissing -lmissing

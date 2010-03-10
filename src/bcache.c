@@ -69,7 +69,7 @@ void dump_bce(void *bce, void *os)
 	}
 	fprintf(out, " Care-of address %x:%x:%x:%x:%x:%x:%x:%x\n",
 		NIP6ADDR(&e->coa));
-	fprintf(out, " Home address    %x:%x:%x:%x:%x:%x:%x:%x\n", 
+	fprintf(out, " Home address    %x:%x:%x:%x:%x:%x:%x:%x\n",
 	     NIP6ADDR(&e->peer_addr));
 	fprintf(out, " Local address   %x:%x:%x:%x:%x:%x:%x:%x\n",
 		NIP6ADDR(&e->our_addr));
@@ -117,7 +117,7 @@ static void bce_delete(struct bcentry *bce, int flush);
  * _expire - expire binding cache entry
  **/
 static void _expire(struct tq_elem *tqe)
-{	
+{
 	pthread_rwlock_wrlock(&bc_lock);
 	if (!task_interrupted()) {
 		struct bcentry *e = tq_data(tqe, struct bcentry, tqe);
@@ -137,7 +137,7 @@ static void _expire(struct tq_elem *tqe)
 	}
 	pthread_rwlock_unlock(&bc_lock);
 }
-	
+
 /**
  * bcache_alloc - allocate binding cache entry
  * @type: type of entry
@@ -205,7 +205,7 @@ struct bcentry *bcache_get(const struct in6_addr *our_addr,
 
 	bce = hash_get(&bc_hash, our_addr, peer_addr);
 
-	if (bce) 
+	if (bce)
 		pthread_rwlock_wrlock(&bce->lock);
 	else
 		pthread_rwlock_unlock(&bc_lock);
@@ -214,7 +214,7 @@ struct bcentry *bcache_get(const struct in6_addr *our_addr,
 }
 
 /**
- * bcache_release_entry - unlocks a binding cache entry 
+ * bcache_release_entry - unlocks a binding cache entry
  **/
 void bcache_release_entry(struct bcentry *bce)
 {
@@ -267,7 +267,7 @@ static int __bcache_start(struct bcentry *bce)
 	tsadd(bce->add_time,
 	      bce->type == BCE_HOMEREG ? bce->lifetime : tmp,
 	      expires);
-	add_task_abs(&expires, &bce->tqe, _expire); 
+	add_task_abs(&expires, &bce->tqe, _expire);
 	xfrm_add_bce(&bce->our_addr, &bce->peer_addr, &bce->coa, 0);
 	return 0;
 }
@@ -335,7 +335,7 @@ int bcache_update_expire(struct bcentry *bce)
 		tssub(bce->lifetime, CN_BRR_BEFORE_EXPIRY_TS, expires);
 	}
 	tsadd(expires, bce->add_time, expires);
-	add_task_abs(&expires, &bce->tqe, _expire);	
+	add_task_abs(&expires, &bce->tqe, _expire);
 	xfrm_add_bce(&bce->our_addr, &bce->peer_addr, &bce->coa, 1);
 
 	return 0;
@@ -415,14 +415,14 @@ static int bce_cleanup(void *data, __attribute__ ((unused)) void *arg)
 
 void bcache_flush(void)
 {
-	pthread_rwlock_wrlock(&bc_lock); 
+	pthread_rwlock_wrlock(&bc_lock);
 	hash_iterate(&bc_hash, bce_cleanup, NULL);
 	pthread_rwlock_unlock(&bc_lock);
 }
 
 void bcache_cleanup(void)
 {
-	pthread_rwlock_wrlock(&bc_lock); 
+	pthread_rwlock_wrlock(&bc_lock);
 	hash_cleanup(&bc_hash);
 	pthread_rwlock_unlock(&bc_lock);
 }
@@ -438,7 +438,7 @@ void bcache_cleanup(void)
 int bcache_iterate(int (* func)(void *, void *), void *arg)
 {
 	int err;
-	pthread_rwlock_rdlock(&bc_lock); 
+	pthread_rwlock_rdlock(&bc_lock);
 	err = hash_iterate(&bc_hash, func, arg);
 	pthread_rwlock_unlock(&bc_lock);
 	return err;

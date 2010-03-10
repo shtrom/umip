@@ -4,7 +4,7 @@
 #define __IPSEC_H__
 #include <linux/xfrm.h>
 #include "list.h"
-	
+
 #define IPSEC_F_MH_BUBA		0x001
 #define IPSEC_F_MH_BERR		0x002
 #define IPSEC_F_MH		0x004
@@ -103,12 +103,12 @@ int ha_ipsec_trns_update(const struct in6_addr *haaddr,
 			 const struct in6_addr *old_coa,
 			 int tunnel);
 
-int ha_ipsec_tnl_pol_add(const struct in6_addr *our_addr, 
+int ha_ipsec_tnl_pol_add(const struct in6_addr *our_addr,
 			 const struct in6_addr *peer_addr,
 			 int tunnel,
 			 struct list_head *mnp);
 
-int ha_ipsec_tnl_pol_del(const struct in6_addr *our_addr, 
+int ha_ipsec_tnl_pol_del(const struct in6_addr *our_addr,
 			 const struct in6_addr *peer_addr,
 			 int tunnel,
 			 struct list_head *mnp);

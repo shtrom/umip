@@ -2,7 +2,7 @@
  * $Id: mn.c 1.380 06/05/15 18:34:56+03:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
- * 
+ *
  * Authors:
  *  Ville Nuorvala	<vnuorval@tcs.hut.fi>
  *  Antti Tuominen	<anttit@tcs.hut.fi>
@@ -34,7 +34,7 @@
 #include <syslog.h>
 #include <errno.h>
 #include <time.h>
-#include <unistd.h> 
+#include <unistd.h>
 
 #include <netinet/icmp6.h>
 #include <netinet/ip6mh.h>
@@ -84,7 +84,7 @@
 #define	FIB_RULE_FIND_SADDR	0
 #endif
 
-LIST_HEAD(home_addr_list); 
+LIST_HEAD(home_addr_list);
 
 pthread_rwlock_t mn_lock;
 
@@ -159,7 +159,7 @@ static void bule_invalidate(struct bulentry *e,
 	int type = e->type;
 	uint16_t flags = e->flags;
 
-	if (type != BUL_ENTRY) 
+	if (type != BUL_ENTRY)
 		return;
 
 	MDBG("%s unable to handle binding, changing BUL entry to %s\n",
@@ -269,7 +269,7 @@ static void mn_recv_param_prob(const struct icmp6_hdr *ih, ssize_t len,
 
 	/* If CN did not understand Mobility Header, set BUL entry to
 	 * ACK_ERROR so no further BUs are sumbitted to this CN. */
-	if (ih->icmp6_code == ICMP6_PARAMPROB_NEXTHEADER && 
+	if (ih->icmp6_code == ICMP6_PARAMPROB_NEXTHEADER &&
 	    *off_octet == IPPROTO_MH) {
 		MDBG("CN doesn't implement MH handling.\n");
 		statistics_inc(&mipl_stat, MIPL_STATISTICS_IN_X_MH_PARAM);
@@ -285,7 +285,7 @@ static void mn_recv_param_prob(const struct icmp6_hdr *ih, ssize_t len,
 	if (mn_rr_error_check(laddr, raddr, &addr))
 		laddr = &addr;
 	e = bul_get(NULL, laddr, raddr);
-	if (e != NULL) { 
+	if (e != NULL) {
 		if (e->flags & IP6_MH_BU_HOME) {
 			if (!conf.UseMnHaIPsec &&
 			    !conf.MnDiscardHaParamProb) {
@@ -310,7 +310,7 @@ static struct icmp6_handler mn_param_prob_handler = {
 static int mn_send_bu_msg(struct bulentry *bule)
 {
 	struct ip6_mh_binding_update *bu;
-	
+
 	struct iovec iov[IP6_MHOPT_MAX+1];
 	int iov_ind = 0;
 	int ret = -ENOMEM;
@@ -326,7 +326,7 @@ static int mn_send_bu_msg(struct bulentry *bule)
 	bu->ip6mhbu_flags = bule->flags;
 	bu->ip6mhbu_lifetime = htons(bule->lifetime.tv_sec >> 2);
 
-	if (bule->use_alt_coa && 
+	if (bule->use_alt_coa &&
 	    mh_create_opt_altcoa(&iov[iov_ind++], &bule->coa)) {
 		free_iov_data(iov, iov_ind);
 		return -ENOMEM;
@@ -347,7 +347,7 @@ static int mn_send_bu_msg(struct bulentry *bule)
 		    mh_create_opt_auth_data(&iov[iov_ind++])) {
 			free_iov_data(iov, iov_ind);
 			return -ENOMEM;
-		} 
+		}
 		bind_key = bule->Kbm;
 	}
 	if (bule->flags & IP6_MH_BU_ACK)
@@ -365,7 +365,7 @@ static int mn_send_bu_msg(struct bulentry *bule)
 
 	free_iov_data(iov, iov_ind);
 	statistics_inc(&mipl_stat, MIPL_STATISTICS_OUT_BU);
-	
+
 	return ret;
 }
 
@@ -378,7 +378,7 @@ static int mn_get_home_lifetime(struct home_addr_info *hai,
 		unsigned long coa_lft;
 		unsigned long hoa_lft;
 
-		clock_gettime(CLOCK_REALTIME, &now);		
+		clock_gettime(CLOCK_REALTIME, &now);
 
 		coa_lft = mpd_curr_lft(&now, &coa->timestamp,
 				       coa->valid_time.tv_sec);
@@ -419,7 +419,7 @@ static int mn_get_ro_lifetime(struct home_addr_info *hai,
 			unsigned long coa_lft;
 			unsigned long home_lft;
 
-			clock_gettime(CLOCK_REALTIME, &now);		
+			clock_gettime(CLOCK_REALTIME, &now);
 
 			coa_lft = mpd_curr_lft(&now, &coa->timestamp,
 					       coa->valid_time.tv_sec);
@@ -457,15 +457,15 @@ static int mn_dereg(void *vbule, __attribute__ ((unused)) void *arg)
 	return 0;
 }
 
-#define FLUSH_ALL 0 
-#define FLUSH_VALID 1 
-#define FLUSH_FAILED 2 
+#define FLUSH_ALL 0
+#define FLUSH_VALID 1
+#define FLUSH_FAILED 2
 
 static int _bul_flush(void *vbule, void *arg)
 {
 	struct bulentry *bule = vbule;
 	int *type = arg;
-	if (*type == FLUSH_ALL || 
+	if (*type == FLUSH_ALL ||
 	    (*type == FLUSH_VALID && bule->type == BUL_ENTRY) ||
 	    (*type == FLUSH_FAILED && bule->type != BUL_ENTRY))
 		bul_delete(bule);
@@ -504,7 +504,7 @@ static int bu_lft_check(struct bulentry *bule)
  * bu_resend - resend a binding update
  */
 static void bu_resend(struct tq_elem *tqe)
-{      
+{
 	pthread_rwlock_wrlock(&mn_lock);
 	if (!task_interrupted()) {
 		struct bulentry *bule = tq_data(tqe, struct bulentry, tqe);
@@ -523,7 +523,7 @@ static void bu_resend(struct tq_elem *tqe)
 		bule->seq++;
 
 		if (bule->flags & IP6_MH_BU_HOME &&
-		    hai->use_dhaad && 
+		    hai->use_dhaad &&
 		    bule->consecutive_resends > MAX_CONSECUTIVE_RESENDS) {
 			struct timespec now;
 			clock_gettime(CLOCK_REALTIME, &now);
@@ -555,7 +555,7 @@ static void bu_refresh(struct tq_elem *tqe)
 		clock_gettime(CLOCK_REALTIME, &bule->lastsent);
 
 		bule->delay = conf.InitialBindackTimeoutReReg_ts;
-	
+
 		expired = bu_lft_check(bule);
 
 		bule->seq++;
@@ -569,7 +569,7 @@ static void bu_refresh(struct tq_elem *tqe)
 			bul_update_expire(bule);
 			bul_update_timer(bule);
 			if (conf.OptimisticHandoff)
-				post_ba_bul_update(bule);	
+				post_ba_bul_update(bule);
 		}
 	}
 	pthread_rwlock_unlock(&mn_lock);
@@ -583,7 +583,7 @@ static void mn_update_hoa_lifetime(struct mn_addr *mn_hoa,
 	mn_hoa->timestamp = *timestamp;
 	tssetsec(mn_hoa->valid_time, valid_time);
 	tssetsec(mn_hoa->preferred_time, preferred_time);
-	MDBG2("updated HoA lifetimes: preferred %u s and valid %u s\n", 
+	MDBG2("updated HoA lifetimes: preferred %u s and valid %u s\n",
 	      mn_hoa->preferred_time.tv_sec, mn_hoa->valid_time.tv_sec);
 }
 
@@ -593,7 +593,7 @@ struct mv_hoa_args {
 };
 
 /*
- * Move home address between 
+ * Move home address between
  */
 static int mv_hoa(struct ifaddrmsg *ifa, struct rtattr *rta_tb[], void *arg)
 {
@@ -610,7 +610,7 @@ static int mv_hoa(struct ifaddrmsg *ifa, struct rtattr *rta_tb[], void *arg)
 
 	if (hai->lladdr_comp && rta_tb[IFA_CACHEINFO] != NULL) {
 		struct ifa_cacheinfo *ci = RTA_DATA(rta_tb[IFA_CACHEINFO]);
-		mn_update_hoa_lifetime(hoa, &now, 
+		mn_update_hoa_lifetime(hoa, &now,
 				       ci->ifa_valid, ci->ifa_prefered);
 		valid = ci->ifa_valid;
 		preferred = ci->ifa_prefered;
@@ -698,7 +698,7 @@ static void mn_tnl_state_del(struct home_addr_info *hai, int ifindex, int all)
 	if (hai->home_reg_status != HOME_REG_NONE) {
 		if (hai->mob_rtr)
 			nemo_mr_tnl_routes_del(hai, ifindex);
-		route_del(ifindex, RT6_TABLE_MIP6, IP6_RT_PRIO_MIP6_OUT, 
+		route_del(ifindex, RT6_TABLE_MIP6, IP6_RT_PRIO_MIP6_OUT,
 			  &hai->hoa.addr, 128, &in6addr_any, 0, NULL);
 		mn_ro_pol_del(hai, ifindex, all);
 	}
@@ -707,7 +707,7 @@ static void mn_tnl_state_del(struct home_addr_info *hai, int ifindex, int all)
 
 static void mn_home_ext_cleanup(struct bulentry *bule)
 {
-	struct home_addr_info *hai = bule->home; 
+	struct home_addr_info *hai = bule->home;
 
 	hai->home_reg_status = HOME_REG_NONE;
 
@@ -831,7 +831,7 @@ static void mn_send_home_bu(struct home_addr_info *hai)
 		clock_gettime(CLOCK_REALTIME, &bule->lastsent);
 
 		if (IN6_ARE_ADDR_EQUAL(&bule->hoa, &bule->coa)) {
-			if (process_first_home_bu(bule, 
+			if (process_first_home_bu(bule,
 						  hai, &lifetime) < 0) {
 				bul_delete(bule);
 				return;
@@ -870,7 +870,7 @@ static void mn_send_home_bu(struct home_addr_info *hai)
 		if (tsisset(bule->hard_expire) &&
 		    tsafter(bule->hard_expire, bule->lastsent)) {
 			/* If MN returns to home link after the expiration of
-			 * home registration, MN does not send de-reg BU to HA 
+			 * home registration, MN does not send de-reg BU to HA
 			 */
 			homereg_expired = 1;
 		}
@@ -906,7 +906,7 @@ static void mn_send_home_bu(struct home_addr_info *hai)
 	/* Before bul_iterate, tunnel modification should be done. */
 	tunnel_mod(hai->if_tunnel, &hai->primary_coa.addr, &hai->ha_addr,
 		   hai->primary_coa.iif, mn_ext_tunnel_ops, hai);
-		
+
 	bule->last_coa = bule->coa;
 	bule->coa_changed = 0;
 
@@ -950,7 +950,7 @@ void mn_send_cn_bu(struct bulentry *bule)
 	bul_update_timer(bule);
 }
 
-/* Sets lifetime and expire of bulentry based on lifetime of received BA 
+/* Sets lifetime and expire of bulentry based on lifetime of received BA
  * @bule: corresponding bul entry
  * @ba_lifetime: lifetime from BA
  * @bu_resend: refresh in seconds
@@ -969,7 +969,7 @@ static inline int set_bule_lifetime(struct bulentry *bule,
 	} else {
 		tssetsec(bule->delay, max(ba_lifetime->tv_sec, 0));
 	}
-	dbg("Set bule lifetime to %ld (s) and resend to bule->delay %d (s)\n", 
+	dbg("Set bule lifetime to %ld (s) and resend to bule->delay %d (s)\n",
 	    bule->lifetime.tv_sec, bule->delay.tv_sec);
 
 	return 0;
@@ -978,25 +978,25 @@ static inline int set_bule_lifetime(struct bulentry *bule,
 static void mn_send_home_na(struct home_addr_info *hai)
 {
 	uint32_t na_flags = ND_NA_FLAG_OVERRIDE;
-	
+
 	ndisc_send_na(hai->hoa.iif, &hai->hoa.addr,
 		      &in6addr_all_nodes_mc, &hai->hoa.addr, na_flags);
 	if (hai->lladdr_comp && hai->home_reg_status != HOME_REG_NONE) {
 		struct in6_addr lladdr;
 
 		ipv6_addr_llocal(&hai->hoa.addr, &lladdr);
-		ndisc_send_na(hai->hoa.iif, &lladdr, 
-			      &in6addr_all_nodes_mc, 
+		ndisc_send_na(hai->hoa.iif, &lladdr,
+			      &in6addr_all_nodes_mc,
 			      &lladdr, na_flags);
 	}
 }
 
-/* Returns number of pending BAs, when it is 0, MN can start registering the 
+/* Returns number of pending BAs, when it is 0, MN can start registering the
    addresses on the link as CoAs
 */
 static int mn_dereg_home(struct home_addr_info *hai)
 {
-	if (hai->pend_ba) { 
+	if (hai->pend_ba) {
 		hai->pend_ba = 0;
 		pending_bas--;
 		if (hai->at_home)
@@ -1015,7 +1015,7 @@ static int mn_chk_bauth(struct ip6_mh_binding_ack *ba, ssize_t len,
 	if ((bauth = mh_opt(&ba->ip6mhba_hdr, mh_opts, IP6_MHOPT_BAUTH))) {
 		/* Authenticator is calculated with MH checksum set to 0 */
 		ba->ip6mhba_hdr.ip6mh_cksum = 0;
-		return mh_verify_auth_data(ba, len, bauth, 
+		return mh_verify_auth_data(ba, len, bauth,
 					   &e->coa, &e->peer_addr, e->Kbm);
 	}
 	if (e->seq == ntohs(ba->ip6mhba_seqno)) {
@@ -1025,7 +1025,7 @@ static int mn_chk_bauth(struct ip6_mh_binding_ack *ba, ssize_t len,
 		} else if (status == IP6_MH_BAS_COA_NI_EXPIRED) {
 			/* resend CoTi */
 			e->rr.state = RR_C_EXPIRED;
-		} else if (status == IP6_MH_BAS_NI_EXPIRED){ 
+		} else if (status == IP6_MH_BAS_NI_EXPIRED){
 			e->rr.state = RR_EXPIRED;
 		}
 		mn_rr_force_refresh(e);
@@ -1338,7 +1338,7 @@ static int do_handoff(struct home_addr_info *hai)
 			dhaad_stop(hai);
 		else
 			dhaad_start(hai);
-		
+
 	}
 	return 0;
 }
@@ -1380,7 +1380,7 @@ struct flag_hoa_args {
 static int flag_hoa(struct ifaddrmsg *ifa, struct rtattr *rta_tb[], void *arg)
 {
 	/*
-	 * To do: also call this function for addresses learned through MPD 
+	 * To do: also call this function for addresses learned through MPD
 	 */
 
 	struct flag_hoa_args *fhoa = arg;
@@ -1401,7 +1401,7 @@ static int flag_hoa(struct ifaddrmsg *ifa, struct rtattr *rta_tb[], void *arg)
 
 	if (rta_tb[IFA_CACHEINFO] != NULL) {
 		struct ifa_cacheinfo *ci = RTA_DATA(rta_tb[IFA_CACHEINFO]);
-		mn_update_hoa_lifetime(hoa, &now, 
+		mn_update_hoa_lifetime(hoa, &now,
 				       ci->ifa_valid, ci->ifa_prefered);
 		valid = ci->ifa_valid;
 		preferred = ci->ifa_prefered;
@@ -1513,7 +1513,7 @@ static void clean_home_addr_info(struct home_addr_info *hai)
 	tunnel_del(hai->if_tunnel, NULL, NULL);
 	dhaad_stop(hai);
 	free(hai);
-}	
+}
 
 static int rpl_copy(const struct list_head *rpl1, struct list_head *rpl2)
 {
@@ -1582,8 +1582,8 @@ static int conf_home_addr_info(struct home_addr_info *conf_hai)
 	struct flag_hoa_args arg;
 	struct home_addr_info *hai;
 
-	MDBG("HoA address %x:%x:%x:%x:%x:%x:%x:%x\n", 
-	     NIP6ADDR(&conf_hai->hoa.addr)); 
+	MDBG("HoA address %x:%x:%x:%x:%x:%x:%x:%x\n",
+	     NIP6ADDR(&conf_hai->hoa.addr));
 
 	if  ((hai = hai_copy(conf_hai)) == NULL)
 		goto err;
@@ -1600,14 +1600,14 @@ static int conf_home_addr_info(struct home_addr_info *conf_hai)
 	if (IN6_IS_ADDR_UNSPECIFIED(&hai->ha_addr)) {
 		hai->use_dhaad = 1;
 	} else {
-		MDBG("HA address %x:%x:%x:%x:%x:%x:%x:%x\n", 
-		     NIP6ADDR(&hai->ha_addr)); 
+		MDBG("HA address %x:%x:%x:%x:%x:%x:%x:%x\n",
+		     NIP6ADDR(&hai->ha_addr));
 	}
 	hai->if_tunnel = tunnel_add(&hai->hoa.addr, &hai->ha_addr,
 				    hai->if_home, NULL, NULL);
 
 	if (hai->if_tunnel <= 0) {
-		MDBG("failed to create MN-HA tunnel\n"); 
+		MDBG("failed to create MN-HA tunnel\n");
 		goto clean_err;
 	}
 	if (rule_add(NULL, RT6_TABLE_MIP6,
@@ -1623,9 +1623,9 @@ static int conf_home_addr_info(struct home_addr_info *conf_hai)
 		goto clean_err;
 	}
 
-	MDBG("Home address %x:%x:%x:%x:%x:%x:%x:%x\n", 
-	     NIP6ADDR(&hai->hoa.addr)); 
-	
+	MDBG("Home address %x:%x:%x:%x:%x:%x:%x:%x\n",
+	     NIP6ADDR(&hai->hoa.addr));
+
 	hai->home_reg_status = HOME_REG_NONE;
 	hai->verdict = MN_HO_NONE;
 
@@ -1670,7 +1670,7 @@ static int mn_home_reg_addr_expires(struct bulentry *e, struct mn_addr *addr)
 
 	tsadd(e->lastsent, e->delay, next_bu);
 	tsadd(addr->timestamp, addr->valid_time, addr_expires);
-	
+
 	if (!tsbefore(next_bu, addr_expires))
 		return 0;
 	e->consecutive_resends = 0;
@@ -1685,7 +1685,7 @@ static int update_hoa(struct ifaddrmsg *ifa,
 
         return addr_add(&hai->hoa.addr, 128, ifa->ifa_flags,
 			ifa->ifa_scope, hai->hoa.iif,
-			hai->hoa.preferred_time.tv_sec, 
+			hai->hoa.preferred_time.tv_sec,
 			hai->hoa.valid_time.tv_sec);
 }
 
@@ -1720,10 +1720,10 @@ int mn_update_home_prefix(struct home_addr_info *hai,
 
 	valid_time = mpd_curr_lft(&now, &hai->hoa.timestamp,
 				  hai->hoa.valid_time.tv_sec);
-	
+
 	mn_update_hoa_lifetime(&hai->hoa, &now, p.nd_opt_pi_valid_time,
 			       p.nd_opt_pi_preferred_time);
-	
+
 	if (hai->home_reg_status == HOME_REG_NONE) {
 		int plen = (hai->hoa.iif == hai->if_tunnel ? 128 : hai->plen);
 
@@ -1737,7 +1737,7 @@ int mn_update_home_prefix(struct home_addr_info *hai,
 		}
 	} else if (hai->home_reg_status != HOME_REG_VALID) {
 		if (hai->hoa.valid_time.tv_sec) {
-			addr_do(&hai->hoa.addr, 128, hai->hoa.iif, 
+			addr_do(&hai->hoa.addr, 128, hai->hoa.iif,
 				hai, update_hoa);
 		} else
 			addr_del(&hai->hoa.addr, 128, hai->hoa.iif);
@@ -1745,23 +1745,23 @@ int mn_update_home_prefix(struct home_addr_info *hai,
 
 	if (!hai->at_home) {
 		struct bulentry *e;
-		
+
 		e = bul_get(hai,  NULL, &hai->ha_addr);
 		if (e == NULL || !(e->flags & IP6_MH_BU_HOME))
 			return -ENOENT;
-		
+
 		/* check if new HoA lifetime is smaller than current
 		   home registration lifetime */
 		MDBG2("preferred_time %u valid_life %u\n",
 		      p.nd_opt_pi_preferred_time, p.nd_opt_pi_valid_time);
-		
+
 		if (mn_home_reg_addr_expires(e, &hai->hoa)) {
 			MDBG("HoA expires before next BU, do_handoff()\n");
 			do_handoff(hai);
 		} else
 			hai->verdict = MN_HO_NONE;
 
-		if (p.nd_opt_pi_valid_time && 
+		if (p.nd_opt_pi_valid_time &&
 		    !prefix_lft_infinite(p.nd_opt_pi_valid_time))
 			mpd_schedule_first_mps(&e->hoa, &e->peer_addr,
 					       &hai->hoa.valid_time);
@@ -1812,7 +1812,7 @@ static int mn_ext_tunnel_ops(__attribute__ ((unused)) int request,
 
 	if (old_if == new_if)
 		return 0;
-	
+
 	mha.if_next = new_if;
 	mha.target = hai;
 
@@ -1828,7 +1828,7 @@ undo:
 	mha.if_next = old_if;
 
 	if (hai->hoa.iif == new_if)
-		addr_do(&hai->hoa.addr, 128, new_if, &mha, mv_hoa); 
+		addr_do(&hai->hoa.addr, 128, new_if, &mha, mv_hoa);
 	mn_tnl_state_del(hai, new_if, 1);
 	return -1;
 }
@@ -1861,7 +1861,7 @@ static int mn_move(struct home_addr_info *hai)
 		}
 		if (hai->home_reg_status != HOME_REG_NONE && !hai->pend_ba) {
 			pending_bas++;
-			hai->pend_ba = 1;	
+			hai->pend_ba = 1;
 			do_handoff(hai);
 		}
 	} else {
@@ -1881,7 +1881,7 @@ static int mn_move(struct home_addr_info *hai)
 	return 0;
 }
 
-static int mn_recv_na(int fd, struct home_addr_info *hai, 
+static int mn_recv_na(int fd, struct home_addr_info *hai,
 		      struct in6_addr *addr, int ifindex, int has_home_reg)
 {
 	unsigned char msg[MAX_PKT_LEN];
@@ -1924,9 +1924,9 @@ static int mn_recv_na(int fd, struct home_addr_info *hai,
 		while (optlen > 1) {
 			int olen = opt[1] << 3;
 
-			if (olen > optlen || olen == 0) 
+			if (olen > optlen || olen == 0)
 				return 1;
-			
+
 			switch (opt[0]) {
 			case ND_OPT_TARGET_LINKADDR:
 				hwalen = ndisc_l2addr_from_opt(iface_type,
@@ -1974,7 +1974,7 @@ static int mn_dad_probe(struct in6_addr *addr, int plen, int ifindex)
 	return deleted;
 }
 
-static int mn_hoa_add(struct home_addr_info *hai, 
+static int mn_hoa_add(struct home_addr_info *hai,
 		      struct in6_addr *addr, int plen, int ifindex)
 {
 	int scope;
@@ -1990,14 +1990,14 @@ static int mn_hoa_add(struct home_addr_info *hai,
 	} else {
 		struct mn_addr *hoa = &hai->hoa;
 		struct timespec now;
-		
+
 		scope = RT_SCOPE_UNIVERSE;
 
 		clock_gettime(CLOCK_REALTIME, &now);
 
 		preferred = mpd_curr_lft(&now, &hoa->timestamp,
 					 hoa->preferred_time.tv_sec);
-		
+
 		valid = mpd_curr_lft(&now, &hoa->timestamp,
 				     hoa->valid_time.tv_sec);
 
@@ -2006,7 +2006,7 @@ static int mn_hoa_add(struct home_addr_info *hai,
 	return addr_add(addr, plen, flag, scope, ifindex, preferred, valid);
 }
 
-static int mn_addr_do_dad(int fd, struct home_addr_info *hai, 
+static int mn_addr_do_dad(int fd, struct home_addr_info *hai,
 			  struct in6_addr *addr, int plen,
 			  int ifindex, int has_home_reg)
 {
@@ -2023,13 +2023,13 @@ static int mn_addr_do_dad(int fd, struct home_addr_info *hai,
 	for (;;) {
 		int ret;
 		/* Note on portability: we assume that tv is modified to show
-		   the time left which is AFAIK true only in Linux 
-		   timeout 
+		   the time left which is AFAIK true only in Linux
+		   timeout
 		*/
 		ret = select(fd+1, &rset, NULL, NULL, &tv);
 		if (ret < 0)
 			return -1;
-		
+
 		if (ret == 0) {
 			if (add)
 				mn_hoa_add(hai, addr, plen, ifindex);
@@ -2080,7 +2080,7 @@ static int mn_do_dad(struct home_addr_info *hai, int dereg)
 		   sizeof(struct icmp6_filter));
 
 	ipv6_addr_solict_mult(&hai->hoa.addr, &solicit);
-	if_mc_group(sock, hai->primary_coa.iif, &in6addr_all_nodes_mc, 
+	if_mc_group(sock, hai->primary_coa.iif, &in6addr_all_nodes_mc,
 		    IPV6_JOIN_GROUP);
 	if_mc_group(sock, hai->primary_coa.iif, &solicit, IPV6_JOIN_GROUP);
 
@@ -2088,13 +2088,13 @@ static int mn_do_dad(struct home_addr_info *hai, int dereg)
 		if (hai->lladdr_comp) {
 			struct in6_addr lladdr;
 			ipv6_addr_llocal(&hai->hoa.addr, &lladdr);
-			if (mn_addr_do_dad(sock, NULL, &lladdr, 64, 
+			if (mn_addr_do_dad(sock, NULL, &lladdr, 64,
 					   hai->primary_coa.iif, 0) < 0) {
 				MDBG("Link-local DAD failed!\n");
 				goto err;
 			}
 		}
-		if (mn_addr_do_dad(sock, hai, &hai->hoa.addr, hai->plen, 
+		if (mn_addr_do_dad(sock, hai, &hai->hoa.addr, hai->plen,
 				   hai->primary_coa.iif, 0) < 0) {
 			MDBG("HoA DAD failed!\n");
 			goto err;
@@ -2102,7 +2102,7 @@ static int mn_do_dad(struct home_addr_info *hai, int dereg)
 		if (dereg)
 			mn_send_home_na(hai);
 		ret = mn_move(hai);
-	} else if (!mn_addr_do_dad(sock, hai, &hai->hoa.addr, 
+	} else if (!mn_addr_do_dad(sock, hai, &hai->hoa.addr,
 				   hai->plen, hai->primary_coa.iif, 1)) {
 		ret = mn_move(hai);
 	}
@@ -2120,7 +2120,7 @@ static inline void mn_update_coa_lifetime(struct mn_addr *mn_coa,
 	mn_coa->timestamp = md_coa->timestamp;
 	mn_coa->valid_time = md_coa->valid_time;
 	mn_coa->preferred_time = md_coa->preferred_time;
-	MDBG2("updated CoA lifetimes: preferred %u s and valid %u s\n", 
+	MDBG2("updated CoA lifetimes: preferred %u s and valid %u s\n",
 	      mn_coa->preferred_time.tv_sec, mn_coa->valid_time.tv_sec);
 }
 
@@ -2129,17 +2129,17 @@ static void mn_coa_updated(struct home_addr_info *hai)
 	if (!hai->at_home) {
 		struct bulentry *e;
 		struct mn_addr *coa;
-		
+
 		e = bul_get(hai, NULL, &hai->ha_addr);
 		if (e == NULL || !(e->flags & IP6_MH_BU_HOME))
 			return;
-		
+
 		coa = &hai->primary_coa;
-		
+
 		MDBG2("preferred_time %u valid_life %u\n",
 		      coa->preferred_time.tv_sec,
 		      coa->valid_time.tv_sec);
-		
+
 		/* check if new CoA lifetime is smaller than current
 		   home registration lifetime */
 		if (mn_home_reg_addr_expires(e, coa)) {
@@ -2240,7 +2240,7 @@ static struct md_coa *mn_get_coa(const struct home_addr_info *hai, int iif,
 }
 
 static int mn_make_ho_verdict(const struct movement_event *me,
-			      const struct home_addr_info *hai, 
+			      const struct home_addr_info *hai,
 			      struct md_router **next_rtr,
 			      struct md_coa **next_coa)
 {
@@ -2250,7 +2250,7 @@ static int mn_make_ho_verdict(const struct movement_event *me,
 	int pref_iif = hai->primary_coa.iif; /* prefer current CoA interface */
 	int force = 0;
 
-	if (me->iface != NULL && 
+	if (me->iface != NULL &&
 	    (!me->iface->is_tunnel) &&
 	    (rtr = md_get_first_router(&me->iface->default_rtr)) != NULL &&
 	    mn_is_at_home(&rtr->prefixes, &hai->home_prefix, hai->home_plen)) {
@@ -2328,10 +2328,10 @@ static int mn_make_ho_verdict(const struct movement_event *me,
 
 		if (old_iface == NULL ||
 		    (old_iface == me->iface &&
-		     IN6_ARE_ADDR_EQUAL(&hai->primary_coa.addr, 
+		     IN6_ARE_ADDR_EQUAL(&hai->primary_coa.addr,
 					&me->coa->addr)))
 			break;
-		return MN_HO_IGNORE;		
+		return MN_HO_IGNORE;
 	case ME_COA_LFT_DEC:
 	case ME_COA_LFT_INC:
 		assert(me->iface != NULL);
@@ -2362,7 +2362,7 @@ static int mn_make_ho_verdict(const struct movement_event *me,
 	if (coa == NULL)
 		return MN_HO_INVALIDATE;
 
-	if (!force && new_iface == old_iface && 
+	if (!force && new_iface == old_iface &&
 	    IN6_ARE_ADDR_EQUAL(&coa->addr, &hai->primary_coa.addr))
 		return MN_HO_IGNORE;
 
@@ -2396,7 +2396,7 @@ static void mn_chk_ho_verdict(struct home_addr_info *hai,
 	if (hai->verdict == MN_HO_INVALIDATE) {
 		hai->primary_coa.iif = 0;
 		return;
-	} 
+	}
 	if (rtr != NULL)
 		move_home = mn_home_rtr_chk(hai, rtr);
 
@@ -2407,7 +2407,7 @@ static void mn_chk_ho_verdict(struct home_addr_info *hai,
 		hai->primary_coa.iif = coa->ifindex;
 		mn_update_coa_lifetime(&hai->primary_coa, coa);
 		mn_coa_updated(hai);
-	} else { 
+	} else {
 		switch (hai->verdict) {
 		case MN_HO_PROCEED:
 			hai->primary_coa.iif = coa->ifindex;
@@ -2460,7 +2460,7 @@ int mn_movement_event(struct movement_event *event)
 			if (event->event_type == ME_COA_EXPIRED)
 				mn_rr_delete_co(&event->coa->addr);
 			list_for_each(lh, &home_addr_list) {
-				hai = list_entry(lh, 
+				hai = list_entry(lh,
 						 struct home_addr_info, list);
 				mn_chk_ho_verdict(hai, event);
 			}
@@ -2471,7 +2471,7 @@ int mn_movement_event(struct movement_event *event)
 	if (!pending_bas) {
 		list_for_each(lh, &home_addr_list) {
 			hai = list_entry(lh, struct home_addr_info, list);
-			if (!hai->at_home && 
+			if (!hai->at_home &&
 			    positive_ho_verdict(hai->verdict)) {
 				mn_move(hai);
 			}
@@ -2484,7 +2484,7 @@ int mn_movement_event(struct movement_event *event)
 /**
  * mn_rr_start_handoff - start RR procedure after changing CoA
  * vbule: bulentry
- * 
+ *
  * Triggers RR with CN if necessary, else sends BU to CN.
  **/
 
@@ -2533,7 +2533,7 @@ void mn_start_ro(struct in6_addr *cn, struct in6_addr *hoa)
 
 	if (if_coa > 0) {
 		MDBG("MN: Start RO to %x:%x:%x:%x:%x:%x:%x:%x, "
-		     "from %x:%x:%x:%x:%x:%x:%x:%x\n", 
+		     "from %x:%x:%x:%x:%x:%x:%x:%x\n",
 		     NIP6ADDR(cn), NIP6ADDR(hoa));
 
 		bule = bul_get(NULL, hoa, cn);
@@ -2603,7 +2603,7 @@ static void mn_recv_brr(__attribute__ ((unused)) const struct ip6_mh *mh,
 
 	/* Do we need a binding?  */
 	last_used = xfrm_last_used(cn, hoa, IPPROTO_DSTOPTS, &now);
-	
+
 	if (last_used >= 0 && last_used < MN_RO_RESTART_THRESHOLD)
 		mn_rr_start_handoff(e, NULL);
 
@@ -2699,11 +2699,11 @@ int mn_init(void)
 		goto err_rr;
 	list_for_each(l, &conf.home_addrs) {
 		struct home_addr_info *hai;
-		hai = list_entry(l, struct home_addr_info, list); 
+		hai = list_entry(l, struct home_addr_info, list);
 		if (conf_home_addr_info(hai) < 0)
 			goto err_hoa;
 	}
-	if_mc_group(ICMP6_MAIN_SOCK, 0, &in6addr_all_nodes_mc, 
+	if_mc_group(ICMP6_MAIN_SOCK, 0, &in6addr_all_nodes_mc,
 		    IPV6_JOIN_GROUP);
 	if (linklocal_rt_rules_add() < 0)
 		goto err_rule;

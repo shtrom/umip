@@ -2,7 +2,7 @@
  * $Id: scan.l 1.44 06/05/12 11:48:36+03:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
- * 
+ *
  * Authors: Antti Tuominen <anttit@tcs.hut.fi>
  *          Ville Nuorvala <vnuorval@tcs.hut.fi>
  *
@@ -275,7 +275,7 @@ internal			{ return INTERNAL; }
 
 {addr}		{
 			int i;
-				
+
 			i = inet_pton(AF_INET6, yytext, &yylval.addr);
 
 			if (i < 1) {

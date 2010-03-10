@@ -34,7 +34,7 @@ struct bulentry {
 	int type;                       /* BUL / NON_MIP_CN / UNREACH  */
 	uint16_t seq;			/* sequence number of the latest BU */
 	uint16_t flags;			/* BU send flags */
-	struct in6_addr last_coa;        /* Last good coa */      
+	struct in6_addr last_coa;        /* Last good coa */
 	struct timespec lastsent;
 	struct timespec lifetime;      	/* lifetime sent in this BU */
 	struct timespec delay;		/* call back time in ms*/
@@ -54,7 +54,7 @@ struct bulentry {
 
 	void (* callback)(struct tq_elem *);
 	void (*ext_cleanup)(struct bulentry *);
-};	
+};
 
 
 

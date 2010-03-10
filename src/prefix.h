@@ -81,7 +81,7 @@ static inline void ipv6_addr_create(struct in6_addr *addr,
  * Returns zero if the prefixes are the same, otherwise 1.
  **/
 static inline int ipv6_pfx_cmp(const struct in6_addr *p1,
-			       const struct in6_addr *p2, 
+			       const struct in6_addr *p2,
 			       int plen)
 {
 	int o = plen >> 3, b = plen & 0x7;

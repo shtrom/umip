@@ -2,7 +2,7 @@
  * $Id: dhaad_mn.c 1.21 06/05/15 12:03:38+03:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
- * 
+ *
  * Authors: Ville Nuorvala <vnuorval@tcs.hut.fi>,
  *          Antti Tuominen <anttit@tcs.hut.fi>
  *
@@ -86,7 +86,7 @@ static int dhaad_append_candidate(struct ha_candidate_list *t,
 	return 0;
 }
 
-static int dhaad_send_request(int oif, struct in6_addr *src, 
+static int dhaad_send_request(int oif, struct in6_addr *src,
 			      struct in6_addr *pfx, int plen,
 			      uint16_t flags)
 {
@@ -139,8 +139,8 @@ static void dhaad_resend(struct tq_elem *tqe)
 static void _dhaad_start(struct home_addr_info *hai, int force)
 {
 	struct ha_candidate_list *t = &hai->ha_list;
-	if (force || 
-	    (movement_ho_verdict(hai->verdict) && 
+	if (force ||
+	    (movement_ho_verdict(hai->verdict) &&
 	     (!tsisset(t->dhaad_delay) ||
 	      t->dhaad_resends == DHAAD_RETRIES))) {
 		if (!(hai->home_block & HOME_ADDR_BLOCK))

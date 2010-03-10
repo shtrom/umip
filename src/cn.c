@@ -2,7 +2,7 @@
  * $Id: cn.c 1.84 06/05/07 21:52:42+03:00 anttit@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
- * 
+ *
  * Authors: Ville Nuorvala <vnuorval@tcs.hut.fi>
  *          Antti Tuominen <anttit@tcs.hut.fi>
  *
@@ -158,7 +158,7 @@ static void cn_recv_dst_unreach(const struct icmp6_hdr *ih, ssize_t len,
 
 	bce = bcache_get(laddr, raddr);
 
-	if (bce == NULL) 
+	if (bce == NULL)
 		return;
 
 	bce->unreach++;
@@ -167,7 +167,7 @@ static void cn_recv_dst_unreach(const struct icmp6_hdr *ih, ssize_t len,
 		bcache_release_entry(bce);
 		bcache_delete(laddr, raddr);
 		dbg("BCE for %x:%x:%x:%x:%x:%x:%x:%x deleted "
-		    "due to receipt of ICMPv6 destination unreach\n", 
+		    "due to receipt of ICMPv6 destination unreach\n",
 		    NIP6ADDR(raddr));
 	} else {
 		bcache_release_entry(bce);
@@ -199,7 +199,7 @@ static void cn_recv_hoti(const struct ip6_mh *mh, ssize_t len,
 
 	hoti = (struct ip6_mh_home_test_init *)mh;
 	hot = mh_create(&iov, IP6_MH_TYPE_HOT);
-	hot->ip6mhht_nonce_index = 
+	hot->ip6mhht_nonce_index =
 		htons(rr_cn_keygen_token(in->src, 0, keygen_token));
 	cookiecpy(hot->ip6mhht_cookie, hoti->ip6mhhti_cookie);
 	memcpy(hot->ip6mhht_keygen, keygen_token, 8);
@@ -233,7 +233,7 @@ static void cn_recv_coti(const struct ip6_mh *mh, ssize_t len,
 
 	coti = (struct ip6_mh_careof_test_init *)mh;
 	cot = mh_create(&iov, IP6_MH_TYPE_COT);
-	cot->ip6mhct_nonce_index = 
+	cot->ip6mhct_nonce_index =
 		htons(rr_cn_keygen_token(in->src, 1, keygen_token));
 	cookiecpy(cot->ip6mhct_cookie, coti->ip6mhcti_cookie);
 	memcpy(cot->ip6mhct_keygen, keygen_token, 8);

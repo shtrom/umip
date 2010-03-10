@@ -57,7 +57,7 @@ struct md_coa {
 
 /* index values for the variables in ipv6_devconf */
 
-/* 
+/*
    This is stupid!
    To do: have these enums moved somewhere else than <include/linux/ipv6.h>
 */
@@ -165,7 +165,7 @@ static inline struct md_router *md_get_first_router(struct list_head *rtr_list)
 	return NULL;
 }
 
-static inline struct md_coa *md_get_coa(struct list_head *coa_list, 
+static inline struct md_coa *md_get_coa(struct list_head *coa_list,
 					const struct in6_addr *coaddr)
 {
 	struct list_head *list;
@@ -193,7 +193,7 @@ static inline int md_is_link_up(struct md_inet6_iface *iface)
 {
 	return (iface->link_flags & IFF_UP &&
 		iface->link_flags & IFF_RUNNING);
-} 
+}
 
 int rtr_addr_chk(struct md_router *rtr, struct in6_addr *rtr_addr);
 

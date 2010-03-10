@@ -2,7 +2,7 @@
  * $Id: keygen.c 1.15 06/05/05 19:40:57+03:00 anttit@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
- * 
+ *
  * Author: Antti Tuominen <anttit@tcs.hut.fi>
  *
  * Copyright 2003-2005 Go-Core Project
@@ -166,7 +166,7 @@ static struct nonce_holder *_validate_nonce(uint16_t nidx)
 	return n;
 }
 
-static void build_kgen_token(struct in6_addr *addr, uint8_t *nonce, 
+static void build_kgen_token(struct in6_addr *addr, uint8_t *nonce,
 			     uint8_t id, uint8_t *buf)
 {
 	uint8_t tmp[20];
@@ -236,8 +236,8 @@ int rr_cn_nonce_lft(uint16_t index, struct timespec *lft)
 	return ret;
 }
 
-/** 
- * rr_mn_calc_Kbm - calculates the binding authorization key 
+/**
+ * rr_mn_calc_Kbm - calculates the binding authorization key
  * @keygen_hoa: home address of MN
  * @keygen_coa: care-of address of MN
  * @kbm: buffer for storing the key, must be at least 20 bytes
@@ -268,8 +268,8 @@ void rr_mn_calc_Kbm(uint8_t *keygen_hoa, uint8_t *keygen_coa, uint8_t *kbm)
 #endif
 }
 
-/** 
- * rr_cn_calc_Kbm - calculates the binding authorization key 
+/**
+ * rr_cn_calc_Kbm - calculates the binding authorization key
  * @home_nonce_ind: home nonce index
  * @coa_nonce_ind: care-of nonce index
  * @hoa: home address of MN
@@ -278,7 +278,7 @@ void rr_mn_calc_Kbm(uint8_t *keygen_hoa, uint8_t *keygen_coa, uint8_t *kbm)
  *
  * Returns 0 on success and BA error code on error
  **/
-int rr_cn_calc_Kbm(uint16_t home_nonce_ind, uint16_t coa_nonce_ind, 
+int rr_cn_calc_Kbm(uint16_t home_nonce_ind, uint16_t coa_nonce_ind,
 		   struct in6_addr *hoa, struct in6_addr *coa, uint8_t *kbm)
 {
 	struct nonce_holder *home_nce = NULL, *careof_nce = NULL;

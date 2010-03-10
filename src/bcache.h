@@ -30,7 +30,7 @@ struct bcentry {
 	struct timespec br_lastsent;	/* BR ratelimit */
 	int br_count;			/* BR ratelimit */
 
-	pthread_rwlock_t lock;		/* Protects the entry */ 
+	pthread_rwlock_t lock;		/* Protects the entry */
 	struct tq_elem tqe;		/* Timer queue entry for expire */
 
 	void (*cleanup)(struct bcentry *bce); /* Clean up bce data */

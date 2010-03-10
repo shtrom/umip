@@ -7,7 +7,7 @@
 #include <time.h>
 #include "mipv6.h"
 
-const struct timespec initial_bindack_timeout_ts = 
+const struct timespec initial_bindack_timeout_ts =
 { INITIAL_BINDACK_TIMEOUT, 0 };
 const struct timespec initial_dhaad_timeout_ts =
 { INITIAL_DHAAD_TIMEOUT, 0 };

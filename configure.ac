@@ -5,7 +5,7 @@ AC_PREREQ(2.57)
 AC_INIT([MIPL Mobile IPv6 for Linux], [2.0.2-umip-0.4],
 	[URL:http://www.mobile-ipv6.org/bugs/], mipv6)
 AC_DEFINE_UNQUOTED([PACKAGE_COPYRIGHT],
-	["Copyright (C) 2003-2006 Helsinki University of Technology, and others"], 
+	["Copyright (C) 2003-2006 Helsinki University of Technology, and others"],
 	[Define to the copyright statement])
 
 AC_CONFIG_SRCDIR([src/main.c])
@@ -44,7 +44,7 @@ fi
 AC_CHECK_PROG([INDENT], [indent], [indent])
 if test -z "$INDENT"; then
 	AC_MSG_WARN([
-*** indent not found in the system.  If you need to generate pmgr.c and 
+*** indent not found in the system.  If you need to generate pmgr.c and
 *** pmgr.h you need to install indent.
 ])
 fi
@@ -164,7 +164,7 @@ AC_CHECK_DECLS([IFA_F_HOMEADDRESS],,
 	[AC_MSG_ERROR([kernel headers do not support MIPv6.
 
 *** If working Linux kernel headers are not in the default include path,
-*** please use CPPFLAGS variable to specify where they can be found 
+*** please use CPPFLAGS variable to specify where they can be found
 *** (e.g. CPPFLAGS="-isystem /usr/src/linux/include")
 ])], [#include <sys/socket.h>
 #include <linux/if_addr.h>])
@@ -174,7 +174,7 @@ AC_CHECK_HEADERS([netinet/in.h netinet/ip6.h netinet/icmp6.h netinet/ip6mh.h])
 AC_CHECK_MEMBER(struct ip6_ext.ip6e_nxt, AC_DEFINE([HAVE_STRUCT_IP6_EXT],,
 		[Define to 1 if struct ip6_ext is in <netinet/ip6.h>.]),,
 		[#include <netinet/ip6.h>])
-AC_CHECK_MEMBER(struct ip6_opt_home_address.ip6oha_type, 
+AC_CHECK_MEMBER(struct ip6_opt_home_address.ip6oha_type,
 		AC_DEFINE([HAVE_STRUCT_IP6_OPT_HOME_ADDRESS],,
 		[Define to 1 if struct ip6_opt_home_address is in <netinet/ip6.h>.]),,
 		[#include <netinet/ip6.h>])

@@ -7,8 +7,8 @@
 
 struct icmp6_handler {
 	struct icmp6_handler *next;
-	void (* recv)(const struct icmp6_hdr *ih, 
-		      ssize_t len, 
+	void (* recv)(const struct icmp6_hdr *ih,
+		      ssize_t len,
 		      const struct in6_addr *src,
 		      const struct in6_addr *dst,
 		      int iif,
@@ -37,7 +37,7 @@ void *icmp6_create(struct iovec *iov, uint8_t type, uint8_t code);
 
 struct ip6_hdr;
 
-int icmp6_parse_data(struct ip6_hdr *ip6h, unsigned int len, 
+int icmp6_parse_data(struct ip6_hdr *ip6h, unsigned int len,
 		     struct in6_addr **lhoa, struct in6_addr **rhoa);
 
 #endif

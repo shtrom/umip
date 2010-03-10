@@ -16,14 +16,14 @@ int mpd_schedule_first_mps(const struct in6_addr *hoa,
 			   const struct in6_addr *ha,
 			   const struct timespec *preferred_time);
 
-static inline int mpd_trigger_mps(const struct in6_addr *hoa, 
+static inline int mpd_trigger_mps(const struct in6_addr *hoa,
 				  const struct in6_addr *ha)
 {
 	struct timespec zero = { 0, 0 };
 	return mpd_schedule_first_mps(hoa, ha, &zero);
 }
 
-void mpd_cancel_mps(const struct in6_addr *hoa, 
+void mpd_cancel_mps(const struct in6_addr *hoa,
 		    const struct in6_addr *ha);
 
 int mpd_mn_init(void);

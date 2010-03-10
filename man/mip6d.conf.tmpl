@@ -122,7 +122,7 @@ These options are used both in the Home Agent and Mobile Node:
 .fi
 
 Specifies an interface and options associated with it.  If no options
-are present, 
+are present,
 .B Interface
 can be terminated with semi-colon.  This is used for home agent to
 specify which interfaces are used for HA operation.  For the home
@@ -291,8 +291,8 @@ has the following format:
 .TP
 .BR "IPsecPolicy " "type " "UseESP" "number number" ";"
 
-Field 
-.B type 
+Field
+.B type
 can be one of HomeRegBinding, Mh, MobPfxDisc, ICMP, any, TunnelMh,
 TunnelHomeTesting, or TunnelPayload.  The any option protects all
 transport mode communication between the MN and HA.  Currently only
@@ -456,7 +456,7 @@ Indicates if all interfaces should be used for mobility.  The preference
 of these interfaces is always 1.  Unless you use dynamically created and
 named network interfaces you should normally disable this option and use
 .B Interface
-options to explicitly list the used interfaces. 
+options to explicitly list the used interfaces.
 
 Default: disabled
 
@@ -532,8 +532,8 @@ Change on reloading: Supported.
 .BR "}"
 .fi
 
-Each 
-.B MnHomeLink 
+Each
+.B MnHomeLink
 definition has a name.  This is the name (enclosed in double quotes)
 of the interface used for connecting to the physical home link.  To
 set up multiple Home Addresses on the Mobile Node, you need to define
@@ -583,10 +583,10 @@ behavior depends on the
 .B DoRouteOptimizationMN
 option.
 
-The fields for a route optimization policy entry are as follows: 
+The fields for a route optimization policy entry are as follows:
 .B address
 defines the Correspondent Node this policy applies to, if left
-undefined the uspecified address is used as a wildcard value 
+undefined the uspecified address is used as a wildcard value
 .B boolean
 sets route optimization either enabled or disabled for packets
 matching this entry.

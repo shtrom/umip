@@ -2,7 +2,7 @@
  * $Id: xfrm.c 1.250 06/05/15 18:34:56+03:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
- * 
+ *
  * Authors:
  *  USAGI Team
  *  Ville Nuorvala <vnuorval@tcs.hut.fi>
@@ -97,7 +97,7 @@ static void xfrm_sel_dump(const struct xfrm_selector *sel)
 	     sel->proto,
 	     sel->ifindex);
 }
-			 
+
 static void nlmsg_dump(int nlmsg_flags, int nlmsg_type)
 {
 	cdbg("nlmsg_flags %x\n"
@@ -153,7 +153,7 @@ static void xfrm_policy_dump(const char *msg, int nlmsg_flags, int nlmsg_type,
 		xfrm_tmpl_dump(&tmpls[i]);
 }
 
-static void xfrm_policy_id_dump(const char *msg, 
+static void xfrm_policy_id_dump(const char *msg,
 				const struct xfrm_userpolicy_id *sp_id,
 				const struct xfrm_userpolicy_type *ptype)
 {
@@ -209,7 +209,7 @@ static void xfrm_state_id_dump(const char *msg,
 
 /* Set xfrm_selector fields for MIPv6 and IPsec policies and MIPv6
  * states */
-static void set_selector(const struct in6_addr *daddr, 
+static void set_selector(const struct in6_addr *daddr,
 			 const struct in6_addr *saddr,
 			 int proto, int type, int code,
 			 __attribute__ ((unused)) int ifindex,
@@ -282,13 +282,13 @@ static void mr_set_selector(const struct prefix_list_entry *src,
 	}
 }
 
-/** 
+/**
  * xfrm_last_used - when was a binding  last used
  * @daddr: destination address (home address)
  * @saddr: source address (home address)
- * @proto: protocol. Either IPPROTO_ROUTING or IPPROTO_DSTOPTS 
+ * @proto: protocol. Either IPPROTO_ROUTING or IPPROTO_DSTOPTS
  **/
-long xfrm_last_used(const struct in6_addr *daddr, 
+long xfrm_last_used(const struct in6_addr *daddr,
 		    const struct in6_addr *saddr, int proto,
 		    const struct timespec *now)
 {
@@ -315,7 +315,7 @@ long xfrm_last_used(const struct in6_addr *daddr,
 
 	addattr_l(sn, sizeof(sbuf), XFRMA_SRCADDR, saddr,
 		  sizeof(xfrm_address_t));
-	
+
 	memset(rbuf, 0, sizeof(rbuf));
 	rn = (struct nlmsghdr *)rbuf;
 
@@ -328,7 +328,7 @@ long xfrm_last_used(const struct in6_addr *daddr,
 #define XFRMS_RTA(x)	((struct rtattr*)(((char*)(x)) + NLMSG_ALIGN(sizeof(struct xfrm_usersa_info))))
 		struct rtattr *rta_tb[XFRMA_MAX+1];
 		memset(rta_tb, 0, sizeof(rta_tb));
-		parse_rtattr(rta_tb, XFRMA_MAX, XFRMS_RTA(sa), 
+		parse_rtattr(rta_tb, XFRMA_MAX, XFRMS_RTA(sa),
 			     rn->nlmsg_len - NLMSG_LENGTH(sizeof(*sa)));
 
 		if (!rta_tb[XFRMA_LASTUSED])
@@ -342,11 +342,11 @@ long xfrm_last_used(const struct in6_addr *daddr,
 	}
 	time_used = now->tv_sec - (long)lastused;
 	XDBG("last use of binding was %ld seconds ago\n", time_used);
-	return time_used; 
+	return time_used;
 }
 
-long mn_bule_xfrm_last_used(const struct in6_addr *peer, 
-			    const struct in6_addr *hoa, 
+long mn_bule_xfrm_last_used(const struct in6_addr *peer,
+			    const struct in6_addr *hoa,
 			    const struct timespec *now)
 {
 	long dst_used, rh_used, min_used, max_used;
@@ -402,12 +402,12 @@ static int xfrm_policy_add(uint8_t type, const struct xfrm_selector *sel,
 	addattr_l(n, sizeof(buf), XFRMA_POLICY_TYPE, &ptype, sizeof(ptype));
 
 	if(num_tmpl > 0)
-		addattr_l(n, sizeof(buf), XFRMA_TMPL, 
+		addattr_l(n, sizeof(buf), XFRMA_TMPL,
 			  tmpls, sizeof(struct xfrm_user_tmpl) * num_tmpl);
 
 	if ((err = rtnl_xfrm_do(n, NULL)) < 0)
 		xfrm_policy_dump("Failed to add policy:\n",
-				 n->nlmsg_flags, n->nlmsg_type, 
+				 n->nlmsg_flags, n->nlmsg_type,
 				 pol, &ptype, tmpls, num_tmpl);
 	return err;
 }
@@ -648,7 +648,7 @@ static inline void create_trig_dstopt_tmpl(struct xfrm_user_tmpl *tmpl,
 }
 
 static void _create_rh_tmpl(struct xfrm_user_tmpl *tmpl, int mode)
-{	
+{
 	memset(tmpl, 0, sizeof(*tmpl));
 	tmpl->family = AF_INET6;
 	tmpl->id.proto = IPPROTO_ROUTING;
@@ -667,8 +667,8 @@ static void create_trig_rh_tmpl(struct xfrm_user_tmpl *tmpl)
 }
 
 /* Creates a ESP/AH/IPComp policy for protecting signaling bewteen MN
- * and HA */ 
-static void create_ipsec_tmpl(struct xfrm_user_tmpl *tmpl, uint8_t proto, 
+ * and HA */
+static void create_ipsec_tmpl(struct xfrm_user_tmpl *tmpl, uint8_t proto,
 			      int tunnel,
 			      const struct in6_addr *tdst,
 			      const struct in6_addr *tsrc,
@@ -1193,13 +1193,13 @@ static int xfrm_cn_init(void)
 
 	XDBG("Adding policies and states for CN\n");
 
-	/* Create policy for all BUs with home flag NOT set to 
+	/* Create policy for all BUs with home flag NOT set to
 	   use home address option */
 	if (cn_wildrecv_bu_pol_add())
 		return -1;
 
 	set_selector(&in6addr_any, &in6addr_any, 0, 0, 0, 0, &sel);
-	if (xfrm_state_add(&sel, IPPROTO_DSTOPTS, 
+	if (xfrm_state_add(&sel, IPPROTO_DSTOPTS,
 			   &in6addr_any, 0, XFRM_STATE_WILDRECV) < 0)
 		return -1;
 
@@ -1214,8 +1214,8 @@ static int xfrm_cn_init(void)
 		return -1;
 
 	/*
-	 * Let Neighbor Advertisement messages bypass bindings 
-	 * This policy is high priority(priory 3) not to block 
+	 * Let Neighbor Advertisement messages bypass bindings
+	 * This policy is high priority(priory 3) not to block
 	 * by the BlockPolicy during registration.
 	 */
 	set_selector(&in6addr_any, &in6addr_any,
@@ -1235,7 +1235,7 @@ static int xfrm_cn_init(void)
 static void xfrm_cn_cleanup(void)
 {
 	struct xfrm_selector sel;
-	
+
 	XDBG("Deleting policies and states for CN\n");
 
 	cn_wildrecv_bu_pol_del();
@@ -1267,7 +1267,7 @@ static int mn_ro_pol_chk(const struct home_addr_info *hai,
 	int res = MIP6_PRIO_RO_TRIG_ANY;
 
 	if (!conf.DoRouteOptimizationMN)
-		return -1; 
+		return -1;
 
 	list_for_each(l, &hai->ro_policies) {
 		struct xfrm_ro_pol *pol;
@@ -1342,7 +1342,7 @@ static int mn_bce_ro_pol_add(void *vbce, void *vhai)
 	struct home_addr_info *hai = vhai;
 	int err = 0;
 	pthread_rwlock_rdlock(&e->lock);
-	if (e->type > BCE_NONCE_BLOCK && 
+	if (e->type > BCE_NONCE_BLOCK &&
 	    e->type != BCE_HOMEREG && e->type != BCE_DAD &&
 	    mn_ro_pol_chk(hai, &e->peer_addr))
 		err = _mn_bce_ro_pol_add(&e->our_addr, &e->peer_addr);
@@ -1356,7 +1356,7 @@ static int mn_bce_ro_pol_add(void *vbce, void *vhai)
  *
  * Create IPsec policies for protection of RR signaling in MN and adds
  * user configurable policies for triggering RO.
- */ 
+ */
 
 int mn_ro_pol_add(struct home_addr_info *hai, int ifindex, int changed)
 {
@@ -1376,9 +1376,9 @@ int mn_ro_pol_add(struct home_addr_info *hai, int ifindex, int changed)
 
 	create_trig_rh_tmpl(&itmpl);
 
-	/* RO triggering policy */	
+	/* RO triggering policy */
 	list_for_each(list, &hai->ro_policies) {
-		struct xfrm_ro_pol *pol; 
+		struct xfrm_ro_pol *pol;
 		int ntmpl = 0;
 		int prio = MIP6_PRIO_RO_TRIG;
 
@@ -1457,7 +1457,7 @@ int mn_bule_ro_pol_del(void *vbule, __attribute__ ((unused)) void *viif)
  *
  * Removes IPsec policies for protection of RR signaling in MN and deletes
  * user configurable policies for triggering RO.
- */ 
+ */
 
 void mn_ro_pol_del(struct home_addr_info *hai, int ifindex, int changed)
 {
@@ -1474,7 +1474,7 @@ void mn_ro_pol_del(struct home_addr_info *hai, int ifindex, int changed)
 		bul_iterate(&hai->bul, mn_bule_ro_pol_del, &ifindex);
 
 	list_for_each(list, &hai->ro_policies) {
-		struct xfrm_ro_pol *pol; 
+		struct xfrm_ro_pol *pol;
 		pol = list_entry(list, struct xfrm_ro_pol, list);
 		if (IN6_IS_ADDR_UNSPECIFIED(&pol->cn_addr))
 			wildcard = 1;
@@ -1514,7 +1514,7 @@ int xfrm_ipsec_policy_mod(struct xfrm_userpolicy_info *sp,
 		return -1;
 }
 
-/** 
+/**
  * _ha_mn_ipsec_pol_mod - modifies wildcard and ICMP policies between HA and MN
  * @haaddr: HA's address
  * @hoa: Home address
@@ -1545,7 +1545,7 @@ static int _ha_mn_ipsec_pol_mod(const struct in6_addr *haaddr,
 	default:
 		return 0;
 	}
-	
+
 	/* outbound */
 	if (ipsec_use_ipcomp(e))
 		create_ipsec_tmpl(&tmpls[ti++], IPPROTO_COMP, 0,
@@ -1651,17 +1651,17 @@ static int xfrm_bule_bce_update(const struct in6_addr *our_addr,
 	return res;
 }
 
-/** 
- * xfrm_add_bce - add xfrm_states and xfrm_policies for a BC entry 
+/**
+ * xfrm_add_bce - add xfrm_states and xfrm_policies for a BC entry
  * @our_addr: our IPv6 address
  * @peer_addr: peer's IPv6 address
  * @coa: care-of address
- * @replace: udpate or new entry 
+ * @replace: udpate or new entry
  *
  * Adds binding cache entry to kernel for route optimization and also
  * IPsec policies for protecting MH signaling between MN and HA. Merges
  * existing xfrm_policy in case of MN-MN communication withe the one resulting
- * from binding update list entry.  
+ * from binding update list entry.
  */
 int xfrm_add_bce(const struct in6_addr *our_addr,
 		 const struct in6_addr *peer_addr,
@@ -1673,8 +1673,8 @@ int xfrm_add_bce(const struct in6_addr *our_addr,
 	/* Create policy for outbound RO data traffic */
 	set_selector(peer_addr, our_addr, 0, 0, 0, 0, &sel);
 	if (xfrm_state_add(&sel, IPPROTO_ROUTING, coa, replace, 0)){
-		/* 
-		 * WORKAROUND 
+		/*
+		 * WORKAROUND
 		 * In some cases, MN fail to add it because of the state
 		 * inserted by kernel when notifying aquire. So,update it.
 		 */
@@ -1683,8 +1683,8 @@ int xfrm_add_bce(const struct in6_addr *our_addr,
 	}
 	set_selector(our_addr, peer_addr, 0, 0, 0, 0, &sel);
 	if (xfrm_state_add(&sel, IPPROTO_DSTOPTS, coa, replace, 0)){
-		/* 
-		 * WORKAROUND 
+		/*
+		 * WORKAROUND
 		 * In some cases, MN fail to add it because of the state
 		 * inserted by kernel when notifying aquire. So,update it.
 		 */
@@ -1702,8 +1702,8 @@ int xfrm_add_bce(const struct in6_addr *our_addr,
 	return 0;
 }
 
-/** 
- * xfrm_del_bce - remove xfrm_states and xfrm_policies for a BC entry 
+/**
+ * xfrm_del_bce - remove xfrm_states and xfrm_policies for a BC entry
  * @our_addr: our IPv6 address
  * @peer_addr: peer's IPv6 address
  *
@@ -1736,7 +1736,7 @@ void xfrm_del_bce(const struct in6_addr *our_addr,
 	}
 }
 
-/** 
+/**
  * _mn_ha_ipsec_pol_mod - modifies XFRM policy
  * @haaddr: HA's address
  * @hoa: Home address
@@ -1842,7 +1842,7 @@ static int _xfrm_del_bule_data(struct bulentry *bule)
 	set_selector(&bule->peer_addr, &bule->hoa, 0, 0, 0, 0, &sel);
 	xfrm_state_del(IPPROTO_DSTOPTS,  &sel);
 
-	if (bule->home->home_reg_status != HOME_REG_NONE && 
+	if (bule->home->home_reg_status != HOME_REG_NONE &&
 	    mn_has_cn_ro_pol(bule)) {
 		struct xfrm_user_tmpl tmpl;
 		create_trig_dstopt_tmpl(&tmpl, &bule->peer_addr, &bule->hoa);
@@ -1881,7 +1881,7 @@ static int _xfrm_del_bule_data(struct bulentry *bule)
 
 static void _xfrm_del_bule_sig(struct bulentry *bule)
 {
-	if (bule->xfrm_state & BUL_XFRM_STATE_SIG) { 
+	if (bule->xfrm_state & BUL_XFRM_STATE_SIG) {
 		struct xfrm_selector sel;
 		set_selector(&bule->peer_addr, &bule->hoa, IPPROTO_MH,
 			     IP6_MH_TYPE_BU, 0, 0, &sel);
@@ -1896,7 +1896,7 @@ static void _xfrm_del_bule_sig(struct bulentry *bule)
 	bule->xfrm_state = 0;
 }
 
-void xfrm_del_bule(struct bulentry *bule) 
+void xfrm_del_bule(struct bulentry *bule)
 {
 	if (bule->xfrm_state & BUL_XFRM_STATE_DATA)
 		_xfrm_del_bule_data(bule);
@@ -1980,7 +1980,7 @@ int xfrm_post_ba_mod_bule(struct bulentry *bule)
 	struct xfrm_user_tmpl tmpls[2];
 	int prio;
 	int ret = 0;
-	
+
 	if (bule->flags & IP6_MH_BU_HOME) {
 		struct home_addr_info *hai = bule->home;
 		if (hai->home_block & HOME_LINK_BLOCK)
@@ -2055,7 +2055,7 @@ static void parse_acquire(struct nlmsghdr *msg)
 		XDBG2("xfrm_policy_out\n");
 		if (acq->id.proto == IPPROTO_DSTOPTS) {
 			hoa = (struct in6_addr *)acq->sel.saddr.a6;
-			cn = (struct in6_addr *)acq->sel.daddr.a6; 
+			cn = (struct in6_addr *)acq->sel.daddr.a6;
 			do_ro = 1;
 		} else {
 			XDBG("Unknown protocol %d in acquire", acq->id.proto);
@@ -2063,7 +2063,7 @@ static void parse_acquire(struct nlmsghdr *msg)
 	} else if (acq->policy.dir == XFRM_POLICY_IN) {
 		XDBG2("xfrm_policy_in\n");
 		if (acq->id.proto == IPPROTO_ROUTING) {
-			hoa = (struct in6_addr *)acq->sel.daddr.a6; 
+			hoa = (struct in6_addr *)acq->sel.daddr.a6;
 			cn = (struct in6_addr *)acq->sel.saddr.a6;
 			do_ro = 1;
 		} else {
@@ -2103,7 +2103,7 @@ static int parse_report(struct nlmsghdr *msg)
 		return 0;
 
 	memset(rta_tb, 0, sizeof(rta_tb));
-	parse_rtattr(rta_tb, XFRMA_MAX, XFRMRPT_RTA(rpt), 
+	parse_rtattr(rta_tb, XFRMA_MAX, XFRMRPT_RTA(rpt),
 		     msg->nlmsg_len - NLMSG_LENGTH(sizeof(*rpt)));
 
 	if (!rta_tb[XFRMA_COADDR])
@@ -2111,7 +2111,7 @@ static int parse_report(struct nlmsghdr *msg)
 
 	coaddr = (xfrm_address_t *) RTA_DATA(rta_tb[XFRMA_COADDR]);
 
-	if (rpt->sel.proto == IPPROTO_MH && 
+	if (rpt->sel.proto == IPPROTO_MH &&
 	    ntohs(rpt->sel.sport) > IP6_MH_TYPE_MAX)
 		status = IP6_MH_BES_UNKNOWN_MH;
 
@@ -2201,7 +2201,7 @@ error:
 }
 
 void xfrm_cleanup(void)
-{		
+{
 	rtnl_close(&xfrm_rth);
 	pthread_cancel(xfrm_listener);
 	pthread_join(xfrm_listener, NULL);
@@ -2309,7 +2309,7 @@ void xfrm_unblock_fwd(struct home_addr_info *hai)
 	hai->home_block &= ~NEMO_FWD_BLOCK;
 }
 
-int mn_ipsec_recv_bu_tnl_pol_add(struct bulentry *bule, int ifindex, 
+int mn_ipsec_recv_bu_tnl_pol_add(struct bulentry *bule, int ifindex,
 				 struct ipsec_policy_entry *e)
 {
 	struct xfrm_selector sel;

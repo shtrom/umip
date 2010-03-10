@@ -2,7 +2,7 @@
  * $Id: ndisc.c 1.56 06/05/06 15:15:47+03:00 anttit@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
- * 
+ *
  * Authors: Antti Tuominen <anttit@tcs.hut.fi>
  *          Ville Nuorvala <vnuorval@tcs.hut.fi>
  *
@@ -69,7 +69,7 @@ static int neigh_mod(int nl_flags, int cmd, int ifindex,
 	ndm->ndm_ifindex = ifindex;
 	ndm->ndm_state = state;
 	ndm->ndm_flags = flags;
-	ndm->ndm_type = (IN6_IS_ADDR_MULTICAST(dst) ? 
+	ndm->ndm_type = (IN6_IS_ADDR_MULTICAST(dst) ?
 			 RTN_MULTICAST : RTN_UNICAST);
 
 	addattr_l(n, sizeof(buf), NDA_DST, dst, sizeof(*dst));
@@ -123,7 +123,7 @@ void proxy_nd_iface_cleanup(int ifindex)
 	proxy_nd_iface_set(ifindex, 0);
 }
 
-int proxy_nd_start(int ifindex, struct in6_addr *target, 
+int proxy_nd_start(int ifindex, struct in6_addr *target,
 		   struct in6_addr *src, int bu_flags)
 {
 	struct in6_addr lladdr;
@@ -533,7 +533,7 @@ int ndisc_send_ns(int ifindex, const struct in6_addr *target)
 	return ndisc_send_unspec(ifindex, &dest, hdr, hdrlen, NULL, 0);
 }
 
-int ndisc_send_na(int ifindex, const struct in6_addr *src, 
+int ndisc_send_na(int ifindex, const struct in6_addr *src,
 		  const struct in6_addr *dst,
 		  const struct in6_addr *target, uint32_t flags)
 {
@@ -636,8 +636,8 @@ int ndisc_do_dad(int ifi, struct in6_addr *addr, int do_ll)
 	tv.tv_usec = 0;
 	for (;;) {
 		/* Note on portability: we assume that tv is modified to show
-		   the time left which is AFAIK true only in Linux 
-		   timeout 
+		   the time left which is AFAIK true only in Linux
+		   timeout
 		*/
 		if (select(sock+1, &rset, NULL, NULL, &tv) == 0) {
 			dbg("Dad success\n");
@@ -647,7 +647,7 @@ int ndisc_do_dad(int ifi, struct in6_addr *addr, int do_ll)
 		if (!FD_ISSET(sock, &rset))
 			continue;
 		/* We got an ICMPv6 packet */
-		ret = icmp6_recv(sock, msg, sizeof(msg), &saddr, 
+		ret = icmp6_recv(sock, msg, sizeof(msg), &saddr,
 				 &pinfo, &hoplimit);
 		if (ret < 0)
 			continue;

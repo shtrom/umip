@@ -2,7 +2,7 @@
  * $Id: mpdisc_mn.c 1.20 06/05/07 21:52:43+03:00 anttit@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
- * 
+ *
  * Authors:
  *  Ville Nuorvala <vnuorval@tcs.hut.fi>,
  *  Jaakko Laine <jola@tcs.hut.fi>
@@ -100,7 +100,7 @@ static int mpd_send_mps(struct mps_entry *e)
 	if (ih == NULL)
 		return -ENOMEM;
 
-	/* no need to worry about network byte order since 
+	/* no need to worry about network byte order since
 	   mip_ps_id only serves as an identifier */
 	ih->mip_ps_id = e->id;
 	clock_gettime(CLOCK_REALTIME, &e->lastsent);
@@ -204,7 +204,7 @@ static void mpd_recv_mpa(const struct icmp6_hdr *ih, ssize_t len,
 	struct mps_entry *e;
 	struct home_addr_info *hai;
 	struct timespec lastsent;
-	
+
 	pthread_mutex_lock(&mps_lock);
 	e = mps_get(dst, src);
 	if (e == NULL) {
@@ -229,7 +229,7 @@ static void mpd_recv_mpa(const struct icmp6_hdr *ih, ssize_t len,
 		int optlen = len - sizeof(struct icmp6_hdr);
 		while (optlen > 1) {
 			uint16_t olen = opt[1] << 3;
-			
+
 			if (olen > (unsigned int)optlen || olen == 0)
 				break;
 
@@ -241,7 +241,7 @@ static void mpd_recv_mpa(const struct icmp6_hdr *ih, ssize_t len,
 
 				pinfo = (struct nd_opt_prefix_info *) opt;
 				/* internal representation host byte order */
-				pinfo->nd_opt_pi_valid_time = 
+				pinfo->nd_opt_pi_valid_time =
 					ntohl(pinfo->nd_opt_pi_valid_time);
 				pinfo->nd_opt_pi_preferred_time =
 					ntohl(pinfo->nd_opt_pi_preferred_time);

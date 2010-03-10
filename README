@@ -5,7 +5,7 @@ MIPL Mobile IPv6 for Linux
 
   It also supports Network Mobility with the NEMO Basic Support
   implementation (RFC 3963).
-  
+
   This user space part works together with Mobile IPv6 enabled Linux
   kernels.  See INSTALL and any other documents referred there for
   installation instructions and required kernel compile options.

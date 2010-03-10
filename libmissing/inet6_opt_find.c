@@ -9,7 +9,7 @@
 #define IP6OPT_PAD1 0
 #endif
 
-int inet6_opt_find(void *extbuf, socklen_t extlen, int offset, 
+int inet6_opt_find(void *extbuf, socklen_t extlen, int offset,
 		   uint8_t type, socklen_t *lenp,
 		   void **databufp)
 {

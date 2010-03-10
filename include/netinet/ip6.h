@@ -29,7 +29,7 @@ struct ip6_opt_home_address {
 #define IP6OPT_PADN		0x1
 #endif
 #ifndef IP6OPT_HOME_ADDRESS
-#define IP6OPT_HOME_ADDRESS	0xc9	/* 11 0 01001 */ 
+#define IP6OPT_HOME_ADDRESS	0xc9	/* 11 0 01001 */
 #endif
 
 /* Type 2 Routing header for Mobile IPv6 */

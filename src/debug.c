@@ -2,7 +2,7 @@
  * $Id: debug.c 1.23 06/05/07 21:52:42+03:00 anttit@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
- * 
+ *
  * Author: Antti Tuominen <anttit@tcs.hut.fi>
  *
  * Copyright 2003-2005 Go-Core Project
@@ -66,7 +66,7 @@ void dbgprint(const char *fname, const char *fmt, ...)
         char s[1024];
         char stime[1024];
         va_list args;
- 
+
         va_start(args, fmt);
         vsprintf(s, fmt, args);
         va_end(args);
@@ -80,21 +80,21 @@ void dbgprint(const char *fname, const char *fmt, ...)
 	fflush(sdbg);
 }
 
-void debug_print_buffer(const void *data, int len, const char *fname, 
+void debug_print_buffer(const void *data, int len, const char *fname,
 			const char *fmt, ...)
-{ 
-	int i; 
+{
+	int i;
 	char s[1024];
         va_list args;
- 
+
         va_start(args, fmt);
         vsprintf(s, fmt, args);
         fprintf(sdbg, "%s: %s", fname, s);
         va_end(args);
-	for (i = 0; i < len; i++) { 
+	for (i = 0; i < len; i++) {
 		if (i % 16 == 0) fprintf(sdbg, "\n%04x: ", i);
 		fprintf(sdbg, "%02x ", ((unsigned char *)data)[i]);
-	} 
+	}
 	fprintf(sdbg, "\n\n");
 	fflush(sdbg);
 }

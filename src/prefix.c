@@ -2,7 +2,7 @@
  * $Id: prefix.c 1.9 06/05/07 21:52:43+03:00 anttit@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
- * 
+ *
  * Author: Ville Nuorvala <vnuorval@tcs.hut.fi>
  *
  * Copyright 2003-2005 Go-Core Project
@@ -31,8 +31,8 @@
 #include "prefix.h"
 #include "util.h"
 
-struct prefix_list_entry *prefix_list_get(const struct list_head *pl, 
-					  const struct in6_addr *addr, 
+struct prefix_list_entry *prefix_list_get(const struct list_head *pl,
+					  const struct in6_addr *addr,
 					  int plen)
 {
 	struct list_head *l;
@@ -81,7 +81,7 @@ int prefix_list_cmp(const struct list_head *pl1, const struct list_head *pl2)
 			p2 = list_entry(l2, struct prefix_list_entry, list);
 
 			if (p1->ple_plen != p2->ple_plen ||
-			    ipv6_pfx_cmp(&p1->ple_prefix, 
+			    ipv6_pfx_cmp(&p1->ple_prefix,
 					 &p2->ple_prefix, p1->ple_plen))
 				continue;
 			match = 1;
@@ -129,7 +129,7 @@ unsigned long mpd_curr_lft(const struct timespec *now,
 		if (tmp.tv_nsec > 0)
 			diff++;
 
-		if (lft > diff) 
+		if (lft > diff)
 			return lft - diff;
 		return 0;
 }
@@ -140,8 +140,8 @@ static const struct in6_addr dhaad_eui64_suffix = { { { 0x0,0x0,0x0,0x0,0x0,0x0,
 void dhaad_gen_ha_anycast(struct in6_addr *anycast,
 			  const struct in6_addr *pfx, int plen)
 {
-	ipv6_addr_create(anycast, 
-			 pfx, 
+	ipv6_addr_create(anycast,
+			 pfx,
 			 plen == 64 ? &dhaad_eui64_suffix : &dhaad_gen_suffix,
 			 plen);
 }

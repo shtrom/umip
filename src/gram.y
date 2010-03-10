@@ -2,7 +2,7 @@
  * $Id: gram.y 1.88 06/05/12 11:48:36+03:00 vnuorval@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
- * 
+ *
  * Authors: Antti Tuominen <anttit@tcs.hut.fi>
  *          Ville Nuorvala <vnuorval@tcs.hut.fi>
  *
@@ -54,7 +54,7 @@ struct net_iface ni = {
 	.mn_if_preference = POL_MN_IF_DEF_PREFERENCE,
 	.is_tunnel = 0,
 };
-	
+
 struct home_addr_info hai = {
 	.ro_policies = LIST_HEAD_INIT(hai.ro_policies),
 	.mob_net_prefixes = LIST_HEAD_INIT(hai.mob_net_prefixes)
@@ -262,7 +262,7 @@ topdef		: MIP6ENTITY mip6entity ';'
 		| HAMAXBINDINGLIFE NUMBER ';'
 		{
 			if ($2 > MAX_BINDING_LIFETIME) {
-				uerror("max allowed binding lifetime is %d", 
+				uerror("max allowed binding lifetime is %d",
 				       MAX_BINDING_LIFETIME);
 				return -1;
 			}
@@ -271,7 +271,7 @@ topdef		: MIP6ENTITY mip6entity ';'
 		| MNMAXHABINDINGLIFE NUMBER ';'
 		{
 			if ($2 > MAX_BINDING_LIFETIME) {
-				uerror("max allowed binding lifetime is %d", 
+				uerror("max allowed binding lifetime is %d",
 				       MAX_BINDING_LIFETIME);
 				return -1;
 			}
@@ -280,7 +280,7 @@ topdef		: MIP6ENTITY mip6entity ';'
 		| MNMAXCNBINDINGLIFE NUMBER ';'
 		{
 			if ($2 > MAX_RR_BINDING_LIFETIME) {
-				uerror("max allowed binding lifetime is %d", 
+				uerror("max allowed binding lifetime is %d",
 				       MAX_RR_BINDING_LIFETIME);
 				return -1;
 			}
@@ -330,33 +330,33 @@ topdef		: MIP6ENTITY mip6entity ';'
 		{
 			conf_parsed->MobRtrUseExplicitMode = $2;
 		}
-		| BINDINGACLPOLICY bindaclpolicy ';' 
+		| BINDINGACLPOLICY bindaclpolicy ';'
 		{
 			bae = NULL;
 		}
-		| USECNBUACK BOOL ';' 
+		| USECNBUACK BOOL ';'
 		{
 			conf_parsed->CnBuAck = $2 ? IP6_MH_BU_ACK : 0;
 		}
 		| IPSECPOLICYSET '{' ipsecpolicyset '}'
-		| MNUSEALLINTERFACES BOOL ';' 
+		| MNUSEALLINTERFACES BOOL ';'
 		{
 			conf_parsed->MnUseAllInterfaces = $2 ? POL_MN_IF_DEF_PREFERENCE : 0;
 		}
-		| MNROUTERPROBES NUMBER ';' 
+		| MNROUTERPROBES NUMBER ';'
 		{
 			conf_parsed->MnRouterProbes = $2;
 		}
-		| MNROUTERPROBETIMEOUT DECIMAL ';' 
+		| MNROUTERPROBETIMEOUT DECIMAL ';'
 		{
 			if ($2 > 0)
 				tssetdsec(conf_parsed->MnRouterProbeTimeout_ts, $2);
 		}
-		| MNDISCARDHAPARAMPROB BOOL ';' 
+		| MNDISCARDHAPARAMPROB BOOL ';'
 		{
 			conf_parsed->MnDiscardHaParamProb = $2;
 		}
-		| OPTIMISTICHANDOFF BOOL ';' 
+		| OPTIMISTICHANDOFF BOOL ';'
 		{
 			conf_parsed->OptimisticHandoff = $2;
 		}
@@ -418,7 +418,7 @@ ifaceopts	: ifaceopt
 ifaceopt	: IFTYPE mip6entity ';'
 		{
 			ni.mip6_if_entity = $2;
-		} 
+		}
 		| MNIFPREFERENCE NUMBER ';'
 		{
 			int pref = $2;
@@ -459,12 +459,12 @@ linksub		: QSTRING '{' linkdefs '}'
 			if (hai.plen == 64) {
 				struct in6_addr lladdr;
 				ipv6_addr_llocal(&hai.hoa.addr, &lladdr);
-				if (!addr_do(&lladdr, 64, 
+				if (!addr_do(&lladdr, 64,
 					     hai.if_home, NULL, NULL))
 					hai.lladdr_comp = IP6_MH_BU_LLOCAL;
 			}
 			if (IN6_IS_ADDR_UNSPECIFIED(&hai.home_prefix)) {
-				ipv6_addr_prefix(&hai.home_prefix, 
+				ipv6_addr_prefix(&hai.home_prefix,
 						 &hai.hoa.addr, hai.plen);
 				hai.home_plen = hai.plen;
 			}
@@ -496,7 +496,7 @@ linkdef		: HOMEAGENTADDRESS ADDR ';'
 		| USEALTCOA BOOL ';'
                 {
 		        hai.altcoa = $2;
-		}	  
+		}
 		| MNROPOLICY mnropolicy ';'
 		| ISMOBRTR BOOL ';'
                 {
@@ -568,7 +568,7 @@ ipsecmnaddr	: ADDR '/' prefixlen
 				uerror("out of memory");
 				return -1;
 			}
-			memset(hai, 0, sizeof(struct home_addr_info)); 
+			memset(hai, 0, sizeof(struct home_addr_info));
 			hai->hoa.addr = $1;
 			hai->plen = $3;
 			list_add_tail(&hai->list, &ipsec_ps.hoa_list);
@@ -660,7 +660,7 @@ ipsectypeval	: HOMEREGBINDING { $$ = IPSEC_POLICY_TYPE_HOMEREGBINDING; }
 		| ANY { $$ = IPSEC_POLICY_TYPE_ANY; }
 		;
 
-ipsecprotos	: 
+ipsecprotos	:
 		{
 			uerror("IPsecPolicy must set at least one protocol");
 			return -1;
@@ -671,13 +671,13 @@ ipsecprotos	:
 		;
 
 ipsecproto	: USEESP { $$ = IPSEC_PROTO_ESP; }
-		| USEAH { $$ = IPSEC_PROTO_AH; } 
-		| USEIPCOMP { $$ = IPSEC_PROTO_IPCOMP; } 
+		| USEAH { $$ = IPSEC_PROTO_AH; }
+		| USEIPCOMP { $$ = IPSEC_PROTO_IPCOMP; }
 		;
 
 ipsecreqid	: { $$[0] = $$[1] = 0; }
-		| NUMBER { $$[0] = $$[1] = $1; } 
-		| NUMBER NUMBER { $$[0] = $1; $$[1] = $2; } 
+		| NUMBER { $$[0] = $$[1] = $1; }
+		| NUMBER NUMBER { $$[0] = $1; $$[1] = $2; }
 		;
 
 xfrmaction	: { $$ = XFRM_POLICY_ALLOW; }
@@ -685,14 +685,14 @@ xfrmaction	: { $$ = XFRM_POLICY_ALLOW; }
 		;
 
 mnropolicy	: mnropolicyaddr dorouteopt
-		{ 
+		{
 			struct xfrm_ro_pol *rp;
 			rp = malloc(sizeof(struct xfrm_ro_pol));
 			if (rp == NULL) {
 				uerror("out of memory");
 				return -1;
 			}
-			memset(rp, 0, sizeof(struct xfrm_ro_pol)); 
+			memset(rp, 0, sizeof(struct xfrm_ro_pol));
 			rp->cn_addr = $1;
 			rp->do_ro = $2;
 			list_add_tail(&rp->list, &hai.ro_policies);
@@ -745,7 +745,7 @@ policymodule	: QSTRING
 		;
 
 bindaclpolval	: BOOL
-		{ 
+		{
 			if ($1)
 				$$ = IP6_MH_BAS_ACCEPTED;
 			else
@@ -761,7 +761,7 @@ bindaclpolicy	: ADDR prefixlistsub bindaclpolval
 				uerror("out of memory");
 				return -1;
 			}
-			memset(bae, 0, sizeof(struct policy_bind_acl_entry)); 
+			memset(bae, 0, sizeof(struct policy_bind_acl_entry));
 			bae->hoa = $1;
 			bae->plen = 128;
 			INIT_LIST_HEAD(&bae->mob_net_prefixes);
@@ -771,7 +771,7 @@ bindaclpolicy	: ADDR prefixlistsub bindaclpolval
 		}
 		;
 
-prefixlen	: NUMBER 
+prefixlen	: NUMBER
 		{
 			if ($1 > 128) {
 				uerror("invalid prefix length %d", $1);

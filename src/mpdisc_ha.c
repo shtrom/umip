@@ -2,7 +2,7 @@
  * $Id: mpdisc_ha.c 1.21 06/05/07 21:52:43+03:00 anttit@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
- * 
+ *
  * Authors:
  *  Ville Nuorvala <vnuorval@tcs.hut.fi>,
  *  Jaakko Laine <jola@tcs.hut.fi>
@@ -67,7 +67,7 @@ static volatile uint16_t mpa_id;
 
 static inline struct mpa_entry *mpa_get(const struct in6_addr *ha,
 					const struct in6_addr *hoa)
-					
+
 {
 	return hash_get(&mpa_hash, ha, hoa);
 }
@@ -149,16 +149,16 @@ static int mpd_get_mpa_prefixes(struct ha_interface *iface, struct iovec *iov)
 		entry = list_entry(pos, struct prefix_list_entry, list);
 
 		memcpy(&p[n], &entry->pinfo,
-		       sizeof(struct nd_opt_prefix_info));		
+		       sizeof(struct nd_opt_prefix_info));
 
-		p[n].nd_opt_pi_valid_time = 
+		p[n].nd_opt_pi_valid_time =
 			htonl(mpd_curr_lft(&now, &entry->timestamp,
 					   entry->ple_valid_time));
 
 		if (!p[n].nd_opt_pi_valid_time)
 			expired++;
 
-		p[n].nd_opt_pi_preferred_time = 
+		p[n].nd_opt_pi_preferred_time =
 			htonl(mpd_curr_lft(&now, &entry->timestamp,
 					   entry->ple_prefd_time));
 		n++;
@@ -256,7 +256,7 @@ out:
 
 static void mpd_recv_mps(const struct icmp6_hdr *ih,
 			 __attribute__ ((unused)) ssize_t len,
-			 const struct in6_addr *src, 
+			 const struct in6_addr *src,
 			 const struct in6_addr *dst,
 			 __attribute__ ((unused)) int iif,
 			 __attribute__ ((unused)) int hoplimit)
@@ -358,7 +358,7 @@ static inline void mpd_rand_adv_delay(struct timespec *delay,
 	rand_adv_delay = conf.MinMobPfxAdvInterval;
 	if (max_schedule_delay != conf.MinMobPfxAdvInterval)
 		rand_adv_delay += random() %
-			labs((long)max_schedule_delay - 
+			labs((long)max_schedule_delay -
 			     (long)conf.MinMobPfxAdvInterval);
 
 	tssetsec(*delay, rand_adv_delay);
@@ -378,7 +378,7 @@ static void mpd_send_unsol_mpa(struct tq_elem *tqe)
 	pthread_mutex_unlock(&mpa_lock);
 }
 
-static void mpd_schedule_unsol_mpa_send(struct mpa_entry *e, 
+static void mpd_schedule_unsol_mpa_send(struct mpa_entry *e,
 					struct prefix_list_entry *ple)
 {
 	struct timespec tmp;
@@ -410,9 +410,9 @@ static int mpd_prefix_changed(void *ve, void *vple)
 void mpd_handle_mpa_flags(struct ha_interface *iface, uint8_t ra_flags)
 {
 	pthread_rwlock_wrlock(&prefix_lock);
-	iface->mpa_flags = ((ra_flags & ND_RA_FLAG_MANAGED ? 
+	iface->mpa_flags = ((ra_flags & ND_RA_FLAG_MANAGED ?
 			     MIP_PA_FLAG_MANAGED : 0) |
-			    (ra_flags & ND_RA_FLAG_OTHER ? 
+			    (ra_flags & ND_RA_FLAG_OTHER ?
 			     MIP_PA_FLAG_OTHER : 0));
 	pthread_rwlock_unlock(&prefix_lock);
 
@@ -421,7 +421,7 @@ void mpd_handle_mpa_flags(struct ha_interface *iface, uint8_t ra_flags)
 static int mpa_iterate(int (* func)(void *, void *), void *arg)
 {
 	int err;
-	pthread_mutex_lock(&mpa_lock); 
+	pthread_mutex_lock(&mpa_lock);
 	err = hash_iterate(&mpa_hash, func, arg);
 	pthread_mutex_unlock(&mpa_lock);
 	return err;
@@ -465,7 +465,7 @@ int mpd_handle_pinfo(struct ha_interface *iface, struct nd_opt_prefix_info *p)
 		/* the lifetime decreases real time in the MN, so the
 		   HA needs to renew the prefix also when the advertised
 		   lifetime stays unchanged */
-		
+
 		/* if RA interval is in milliseconds, don't update entry
 		   before a noticeable change has occurred in the prefix */
 
@@ -489,9 +489,9 @@ int mpd_handle_pinfo(struct ha_interface *iface, struct nd_opt_prefix_info *p)
 		       !prefix_lft_infinite(e->ple_prefd_time)) &&
 		      p->nd_opt_pi_preferred_time + diff != e->ple_prefd_time);
 
-		if (cf || cv || cp) {    
+		if (cf || cv || cp) {
 			e->timestamp = now;
-			memcpy(&e->pinfo, p, 
+			memcpy(&e->pinfo, p,
 			       sizeof(struct nd_opt_prefix_info));
 			if (!expired)
 				status = MPD_PREFIX_MODIFIED;
@@ -537,8 +537,8 @@ void mpd_del_expired_pinfos(struct ha_interface *i)
 
 		if (e->ple_valid_time == 0) {
 			if (diff > 2 * conf.MaxMobPfxAdvInterval) {
-				/* All the MNs should have received a MPA, 
-				   so it's probably safe to remove this 
+				/* All the MNs should have received a MPA,
+				   so it's probably safe to remove this
 				   entry. */
 				list_del(&e->list);
 				free(e);

@@ -2,7 +2,7 @@
  * $Id: policy.c 1.100 06/05/07 21:52:43+03:00 anttit@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
- * 
+ *
  * Authors: Ville Nuorvala <vnuorval@tcs.hut.fi>,
  *          Henrik Petander <petander@tcs.hut.fi>
  *
@@ -71,7 +71,7 @@ int default_best_iface(__attribute__ ((unused)) const struct in6_addr *hoa,
  * @pref_coa: preferred CoA
  * @coa: suggested CoA
  *
- * Return iif if a CoA is available and store the address in @coa 
+ * Return iif if a CoA is available and store the address in @coa
  **/
 int default_best_coa(__attribute__ ((unused)) const struct in6_addr *hoa,
 		     __attribute__ ((unused)) const struct in6_addr *ha,
@@ -87,7 +87,7 @@ int default_best_coa(__attribute__ ((unused)) const struct in6_addr *hoa,
  * @remote_hoa: remote MN's home address
  * @remote_coa: remote MN's care-of address
  * @local_addr: local address
- * @bu: Binding Update message 
+ * @bu: Binding Update message
  * @suggested: suggested lifetime
  * @lifetime: granted lifetime
  *
@@ -97,7 +97,7 @@ int default_best_coa(__attribute__ ((unused)) const struct in6_addr *hoa,
 int default_max_binding_life(__attribute__ ((unused)) const struct in6_addr *remote_hoa,
 			     __attribute__ ((unused)) const struct in6_addr *remote_coa,
 			     __attribute__ ((unused)) const struct in6_addr *local_addr,
-			     const struct ip6_mh_binding_update *bu, 
+			     const struct ip6_mh_binding_update *bu,
 			     __attribute__ ((unused)) ssize_t len,
 			     __attribute__ ((unused)) const struct timespec *suggested,
 			     struct timespec *lifetime)
@@ -215,7 +215,7 @@ int default_accept_inet6_iface(int iif)
 		struct net_iface *nif;
 		nif = list_entry(list, struct net_iface, list);
 		if (nif->ifindex == iif) {
-			if (is_if_mn(nif)) 
+			if (is_if_mn(nif))
 				return nif->mn_if_preference;
 			return 0;
 		}

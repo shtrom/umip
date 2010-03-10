@@ -133,7 +133,7 @@ extern const struct in6_addr in6addr_all_routers_mc; /* ff02::2 */
 
 /* Following 4 routines are taken from include/net/ipv6.h */
 
-static inline void ipv6_addr_set(struct in6_addr *addr, 
+static inline void ipv6_addr_set(struct in6_addr *addr,
 				 uint32_t w1, uint32_t w2,
 				 uint32_t w3, uint32_t w4)
 {

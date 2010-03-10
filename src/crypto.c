@@ -2,7 +2,7 @@
  * $Id: crypto.c 1.2 06/05/05 12:16:34+03:00 anttit@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
- * 
+ *
  * Copyright 2006 Helsinki University of Technology
  *
  * MIPL Mobile IPv6 for Linux is free software; you can redistribute
@@ -244,7 +244,7 @@ static void transform(SHA1_CTX *hd, const uint8_t *data)
 	R( d, e, a, b, c, F4, K4, M(77) );
 	R( c, d, e, a, b, F4, K4, M(78) );
 	R( b, c, d, e, a, F4, K4, M(79) );
-	
+
 	/* Update chaining vars. */
 	hd->h0 += a;
 	hd->h1 += b;

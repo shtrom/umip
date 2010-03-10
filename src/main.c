@@ -2,7 +2,7 @@
  * $Id: main.c 1.67 06/05/05 19:40:57+03:00 anttit@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
- * 
+ *
  * Authors: Antti Tuominen <anttit@tcs.hut.fi>
  *          Ville Nuorvala <vnuorval@tcs.hut.fi>
  *
@@ -253,7 +253,7 @@ int main(int argc, char **argv)
 		goto cn_failed;
 	if ((is_ha() || is_mn()) && tunnelctl_init() < 0)
 		goto tunnelctl_failed;
-	if (is_ha() && ha_init() < 0) 
+	if (is_ha() && ha_init() < 0)
 		goto ha_failed;
 	if (is_mn() && mn_init() < 0)
 		goto mn_failed;

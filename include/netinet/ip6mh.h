@@ -110,7 +110,7 @@ struct ip6_mh_opt {
 } __attribute__ ((packed));
 
 /*
- * Mobility Option Data Structures 
+ * Mobility Option Data Structures
  */
 struct ip6_mh_opt_refresh_advice {
 	uint8_t		ip6mora_type;
@@ -185,7 +185,7 @@ struct ip6_mh_opt_mob_net_prefix {
 #define IP6_MH_BAS_HOME_NI_EXPIRED	136	/* Expired Home nonce index */
 #define IP6_MH_BAS_COA_NI_EXPIRED	137	/* Expired Care-of nonce index */
 #define IP6_MH_BAS_NI_EXPIRED		138	/* Expired Nonce Indices */
-#define IP6_MH_BAS_REG_NOT_ALLOWED	139	/* Registration type change 
+#define IP6_MH_BAS_REG_NOT_ALLOWED	139	/* Registration type change
 						   disallowed */
 #define IP6_MH_BAS_MR_OP_NOT_PERMITTED	140	/* MR Operation not permitted */
 #define IP6_MH_BAS_INVAL_PRFX		141	/* Invalid Prefix */

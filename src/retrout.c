@@ -2,7 +2,7 @@
  * $Id: retrout.c 1.141 06/05/07 21:52:43+03:00 anttit@tcs.hut.fi $
  *
  * This file is part of the MIPL Mobile IPv6 for Linux.
- * 
+ *
  * Authors:
  *  Henrik Petander <petander@tcs.hut.fi>
  *  Antti Tuominen <anttit@tcs.hut.fi>
@@ -56,8 +56,8 @@
 
 #if RR_DEBUG_LEVEL >= 1
 #define RRDBG dbg
-#else 
-#define RRDBG(...) 
+#else
+#define RRDBG(...)
 #endif /* RRDBG */
 
 struct rrlentry {
@@ -108,11 +108,11 @@ static int rre_co_add_hoa(struct rrlentry *cote, struct in6_addr *addr)
 
 	list_for_each(list, &cote->home_addrs) {
 		addr_c = list_entry(list, struct addr_holder, list);
-		if (IN6_ARE_ADDR_EQUAL(addr, &addr_c->addr)) 
+		if (IN6_ARE_ADDR_EQUAL(addr, &addr_c->addr))
 			return 1;
 	}
 	addr_c = malloc(sizeof(*addr_c));
-	if (!addr_c) 
+	if (!addr_c)
 		return -1;
 	addr_c->addr = *addr;
 	list_add(&addr_c->list, &cote->home_addrs);
@@ -250,7 +250,7 @@ static int rre_dump(void *entry, void *os)
 	fprintf(out, " %s %x:%x:%x:%x:%x:%x:%x:%x\n",
 		(e->type == COT_ENTRY) ? "CoA" : "HoA",
 		NIP6ADDR(&e->own1));
-	
+
 	fprintf(out, " CN  %x:%x:%x:%x:%x:%x:%x:%x\n", NIP6ADDR(&e->peer));
 
 	if (e->type == COT_ENTRY) {
@@ -351,7 +351,7 @@ static void mn_send_coti(struct in6_addr *coa, struct in6_addr *peer,
 	statistics_inc(&mipl_stat, MIPL_STATISTICS_OUT_COTI);
 }
 
-/* Resend HoTI or CoTI, if we haven't got HoT or CoT */ 
+/* Resend HoTI or CoTI, if we haven't got HoT or CoT */
 static void ti_resend(struct tq_elem *tqe)
 {
 	struct rrlentry *rre;
@@ -449,7 +449,7 @@ static void mn_rr_careofkgt_refresh(struct tq_elem *tqe)
 
 		last_used = xfrm_last_used(&rre_co->peer, &ah->addr,
 					   IPPROTO_DSTOPTS, &now);
-		
+
 		if (last_used >= 0 && last_used < MN_RO_RESTART_THRESHOLD) {
 			rre_reset(rre_co, &now);
 			mn_send_coti(&rre_co->own1, &rre_co->peer,
@@ -474,9 +474,9 @@ static inline int mn_rr_token_valid(struct rrlentry *rre, struct timespec *now)
 	return 0;
 }
 
-/** 
+/**
  * mn_rr_cond_start_hot - send HoTI, if it is necessary
- * bule: bul entry for RO binding created in start_ro  
+ * bule: bul entry for RO binding created in start_ro
  * uncond: set this to override all freshness checks and send HoTI in any case
  */
 static int mn_rr_cond_start_hot(struct bulentry *bule, int uncond)
@@ -514,7 +514,7 @@ static int mn_rr_cond_start_hot(struct bulentry *bule, int uncond)
 }
 
 /**
- * mn_rr_cond_start_cot - send CoTI, if necessary 
+ * mn_rr_cond_start_cot - send CoTI, if necessary
  * @bule: RO bul entry
  * @coa: Care-of address for CoT
  * @ifindex: interface index for CoA
@@ -553,7 +553,7 @@ static int mn_rr_cond_start_cot(struct bulentry *bule, int uncond)
 		RRDBG("Failed to add HoA to CoT entry\n");
 		return 0;
 	}
-	RRDBG("Care-of keygen token not valid, send CoTI\n"); 
+	RRDBG("Care-of keygen token not valid, send CoTI\n");
 	rre_reset(rre, &now);
 	mn_send_coti(&rre->own1, &rre->peer, rre->cookie, rre->iif);
 	rrl_update_timer(rre);
