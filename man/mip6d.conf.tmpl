@@ -62,6 +62,45 @@ Default: enabled.
 Change on reloading: supported but does not affect existing bindings.
 
 .TP
+.nf
+.BR "CnBindingPolicySet " "{"
+.BR "   peer_hoa " "[ local_addr ] " "boolean" ";"
+.BR "   ... "
+.BR "}"
+.fi
+
+The decision to accept a binding from a MN and participate in route
+optimization with it is governed on a global basis by
+.B DoRouteOptimizationCN
+parameter, i.e. which is used as the default binding policy value.
+
+The
+.B CnBindingPolicySet
+section can be used to define specific binding policies for some given
+peers. In that context, each line is dedicated to a MN. The address
+(HoA) of the MN is given as first element of the line (i.e.
+.B peer_hoa
+). The local address
+. B local_addr
+at which the Binding Update messages are expected to be received can be
+optionally specified as second argument (If we are acting as a MN, this
+will be one of our HoA). If it is not provided, the local address to which
+the BU from that MN are sent is not taken into account. The last argument
+.B boolean
+specifies if we are allowed to perform route optimization with that
+peer.
+
+Note that a MN must have at most a single entry defined in that section
+i.e. having more than one line starting with the same address is not
+allowed.
+
+Default: by default, the set is empty and the default value provided by
+.B DoRouteOptimizationCN
+configuration parameter applies for all peers.
+
+Change on reloading: not supported.
+
+.TP
 .BR "NonVolatileBindingCache " "boolean" ";"
 
 This option is currently ignored.  Binding cache is always stored in

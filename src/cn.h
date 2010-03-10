@@ -11,10 +11,17 @@ extern const struct timespec cn_brr_before_expiry_ts;
 struct ip6_mh;
 struct in6_addr_bundle;
 
+struct cn_binding_pol_entry {
+	struct list_head list;
+	struct in6_addr remote_hoa;
+	struct in6_addr local_addr;
+	int bind_policy;
+};
+
 extern void cn_recv_bu(const struct ip6_mh *mh, ssize_t len,
 		       const struct in6_addr_bundle *in, int iif);
 
-extern void cn_init(void);
+extern int  cn_init(void);
 extern void cn_cleanup(void);
 
 #endif

@@ -58,6 +58,7 @@ struct mip6_config {
 
 	/* CN options */
 	char DoRouteOptimizationCN;
+	struct list_head cn_binding_pol;
 };
 
 struct net_iface {

@@ -269,6 +269,7 @@ IsMobRtr       			{ return ISMOBRTR; }
 HaServedPrefix       	       	{ return HASERVEDPREFIX; }
 HomePrefix     			{ return HOMEPREFIX; }
 MobRtrUseExplicitMode    	{ return MOBRTRUSEEXPLICITMODE; }
+CnBindingPolicySet              { return CNBINDINGPOLICYSET; }
 internal			{ return INTERNAL; }
 
 {addr}		{

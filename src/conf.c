@@ -47,6 +47,7 @@
 #include "util.h"
 #include "mipv6.h"
 #include "mn.h"
+#include "cn.h"
 #include "xfrm.h"
 #ifdef ENABLE_VT
 #include "vt.h"
@@ -229,6 +230,7 @@ static void conf_default(struct mip6_config *c)
 
 	/* CN bindings */
 	c->DoRouteOptimizationCN = 1;
+	INIT_LIST_HEAD(&c->cn_binding_pol);
 }
 
 int conf_parse(struct mip6_config *c, int argc, char **argv)
@@ -338,6 +340,13 @@ void conf_show(struct mip6_config *c)
 	/* CN options */
 	dbg("DoRouteOptimizationCN = %s\n",
 	    CONF_BOOL_STR(c->DoRouteOptimizationCN));
+	list_for_each(list, &c->cn_binding_pol) {
+		struct cn_binding_pol_entry *pol;
+		pol = list_entry(list, struct cn_binding_pol_entry, list);
+		dbg("%x:%x:%x:%x:%x:%x:%x:%x %x:%x:%x:%x:%x:%x:%x:%x %s\n",
+		     NIP6ADDR(&pol->remote_hoa), NIP6ADDR(&pol->local_addr),
+		     pol->bind_policy ? "enabled" : "disabled" );
+	}
 }
 
 

@@ -47,6 +47,7 @@
 #include "cn.h"
 #include "conf.h"
 #include "statistics.h"
+#include "hash.h"
 
 #define MH_DEBUG_LEVEL 1
 
@@ -60,6 +61,84 @@
 
 const struct timespec cn_brr_before_expiry_ts =
 { CN_BRR_BEFORE_EXPIRY, 0 };
+
+/* For CN binding policy */
+#define CN_BINDING_POL_HASHSIZE 16 /* seems reasonable --arno */
+pthread_rwlock_t cn_binding_pol_lock;
+struct hash cn_binding_pol_hash;
+int def_cn_binding_policy = 0;
+
+/* returns 1 if binding is allowed for MN (w/ given HoA remote_hoa)
+ * and 0 otherwise. local_addr is the local address the associated BU
+ * was sent to (possibly one of our HoA if we are acting as a MN); it
+ * is taken into account in the decision */
+static int cn_binding_pol_get(const struct in6_addr *remote_hoa,
+			      const struct in6_addr *local_addr)
+{
+	int ret = def_cn_binding_policy;
+	struct cn_binding_pol_entry *pol;
+
+	pthread_rwlock_rdlock(&cn_binding_pol_lock);
+	pol = hash_get(&cn_binding_pol_hash, NULL, remote_hoa);
+	if (pol != NULL) {
+		if (IN6_ARE_ADDR_EQUAL(&pol->local_addr, &in6addr_any) ||
+		    IN6_ARE_ADDR_EQUAL(&pol->local_addr, local_addr))
+			ret = pol->bind_policy;
+	}
+	pthread_rwlock_unlock(&cn_binding_pol_lock);
+	return ret;
+}
+
+static int cn_binding_pole_cleanup(void *data,
+				   __attribute__ ((unused)) void *arg)
+{
+	struct cn_binding_pol_entry *pol = data;
+	free(pol);
+	return 0;
+}
+
+static void cn_binding_pol_cleanup(void)
+{
+	def_cn_binding_policy = 0;
+	hash_iterate(&cn_binding_pol_hash, cn_binding_pole_cleanup, NULL);
+	hash_cleanup(&cn_binding_pol_hash);
+}
+
+static int cn_binding_pol_add(struct cn_binding_pol_entry *pol)
+{
+	int err;
+	err = hash_add(&cn_binding_pol_hash, pol, NULL, &pol->remote_hoa);
+	if (!err)
+		list_del(&pol->list);
+	return err;
+}
+
+static int cn_binding_pol_init(void)
+{
+	struct list_head *list, *n;
+	int err;
+
+	pthread_rwlock_wrlock(&cn_binding_pol_lock);
+
+	if ((err = hash_init(&cn_binding_pol_hash, SINGLE_ADDR,
+			     CN_BINDING_POL_HASHSIZE)) < 0)
+		goto out;
+
+	def_cn_binding_policy = conf.DoRouteOptimizationCN;
+
+	list_for_each_safe(list, n, &conf.cn_binding_pol) {
+		struct cn_binding_pol_entry *pol;
+		pol = list_entry(list, struct cn_binding_pol_entry, list);
+		if ((err = cn_binding_pol_add(pol)) < 0) {
+			cn_binding_pol_cleanup();
+			break;
+		}
+	}
+
+out:
+	pthread_rwlock_unlock(&cn_binding_pol_lock);
+	return err;
+}
 
 static void cn_recv_dst_unreach(const struct icmp6_hdr *ih, ssize_t len,
 				__attribute__ ((unused)) const struct in6_addr *src,
@@ -296,8 +375,9 @@ void cn_recv_bu(const struct ip6_mh *mh, ssize_t len,
 		}
 	}
 
-	status = conf.DoRouteOptimizationCN ? IP6_MH_BAS_ACCEPTED
-                                            : IP6_MH_BAS_PROHIBIT;
+	status = cn_binding_pol_get(out.dst, out.src) ? IP6_MH_BAS_ACCEPTED
+		                                      : IP6_MH_BAS_PROHIBIT;
+
 	if (status >= IP6_MH_BAS_UNSPECIFIED) {
 		pkey = key;
 		goto send_nack;
@@ -365,12 +445,21 @@ static struct mh_handler cn_bu_handler =
 	.recv = cn_recv_bu,
 };
 
-void cn_init(void)
+int cn_init(void)
 {
+	int ret;
+
+	if (pthread_rwlock_init(&cn_binding_pol_lock, NULL))
+		return -1;
+	if ((ret = cn_binding_pol_init()) < 0)
+		return ret;
+
 	icmp6_handler_reg(ICMP6_DST_UNREACH, &cn_dst_unreach_handler);
 	mh_handler_reg(IP6_MH_TYPE_HOTI, &cn_hoti_handler);
 	mh_handler_reg(IP6_MH_TYPE_COTI, &cn_coti_handler);
 	mh_handler_reg(IP6_MH_TYPE_BU, &cn_bu_handler);
+
+	return 0;
 }
 
 void cn_cleanup(void)
@@ -380,4 +469,8 @@ void cn_cleanup(void)
 	mh_handler_dereg(IP6_MH_TYPE_HOTI, &cn_hoti_handler);
 	icmp6_handler_dereg(ICMP6_DST_UNREACH, &cn_dst_unreach_handler);
 	bcache_flush();
+
+	pthread_rwlock_wrlock(&cn_binding_pol_lock);
+	cn_binding_pol_cleanup();
+	pthread_rwlock_unlock(&cn_binding_pol_lock);
 }
