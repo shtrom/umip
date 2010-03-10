@@ -132,6 +132,7 @@ static void uerror(const char *fmt, ...) {
 %token		HOMEAGENTADDRESS
 %token		INITIALBINDACKTIMEOUTFIRSTREG
 %token		INITIALBINDACKTIMEOUTREREG
+%token		INITIALSOLICITTIMER
 %token		LINKNAME
 %token		HAMAXBINDINGLIFE
 %token		MNMAXHABINDINGLIFE
@@ -292,6 +293,10 @@ topdef		: MIP6ENTITY mip6entity ';'
 		| INITIALBINDACKTIMEOUTREREG DECIMAL ';'
 		{
 			tssetdsec(conf_parsed->InitialBindackTimeoutReReg_ts, $2);
+		}
+		| INITIALSOLICITTIMER DECIMAL ';'
+		{
+			tssetdsec(conf_parsed->InitialSolicitTimer_ts, $2);
 		}
 		| MNHOMELINK linksub
 		| USEMNHAIPSEC BOOL ';'

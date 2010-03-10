@@ -42,7 +42,6 @@
 
 extern const struct timespec initial_bindack_timeout_ts;
 extern const struct timespec initial_dhaad_timeout_ts;
-extern const struct timespec initial_solicit_timer_ts;
 extern const struct timespec max_bindack_timeout_ts;
 extern const struct timespec max_nonce_lifetime_ts;
 extern const struct timespec max_token_lifetime_ts;
@@ -51,7 +50,6 @@ extern const struct timespec prefix_adv_timeout_ts;
 
 #define INITIAL_BINDACK_TIMEOUT_TS initial_bindack_timeout_ts
 #define INITIAL_DHAAD_TIMEOUT_TS initial_dhaad_timeout_ts
-#define INITIAL_SOLICIT_TIMER_TS initial_solicit_timer_ts
 #define MAX_BINDACK_TIMEOUT_TS max_bindack_timeout_ts
 #define MAX_NONCE_LIFETIME_TS max_nonce_lifetime_ts
 #define MAX_TOKEN_LIFETIME_TS max_token_lifetime_ts

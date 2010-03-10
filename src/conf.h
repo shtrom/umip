@@ -37,6 +37,7 @@ struct mip6_config {
 	struct timespec MnRouterProbeTimeout_ts;
 	struct timespec InitialBindackTimeoutFirstReg_ts;
 	struct timespec InitialBindackTimeoutReReg_ts;
+	struct timespec InitialSolicitTimer_ts;
 	struct list_head home_addrs;
 	char *MoveModulePath;
 	uint16_t CnBuAck;

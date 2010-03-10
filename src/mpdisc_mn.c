@@ -149,7 +149,7 @@ static void mpd_send_first_mps(struct tq_elem *tqe)
 		struct mps_entry *e = tq_data(tqe, struct mps_entry, tqe);
 		e->id = random();
 		mpd_send_mps(e);
-		e->delay = INITIAL_SOLICIT_TIMER_TS;
+		e->delay = conf.InitialSolicitTimer_ts;
 		add_task_rel(&e->delay, &e->tqe, mpd_resend_mps);
 	}
 	pthread_mutex_unlock(&mps_lock);

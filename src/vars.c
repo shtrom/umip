@@ -11,8 +11,6 @@ const struct timespec initial_bindack_timeout_ts =
 { INITIAL_BINDACK_TIMEOUT, 0 };
 const struct timespec initial_dhaad_timeout_ts =
 { INITIAL_DHAAD_TIMEOUT, 0 };
-const struct timespec initial_solicit_timer_ts =
-{ INITIAL_SOLICIT_TIMER, 0 };
 const struct timespec max_bindack_timeout_ts =
 { MAX_BINDACK_TIMEOUT, 0 };
 const struct timespec max_nonce_lifetime_ts =

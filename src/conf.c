@@ -213,6 +213,7 @@ static void conf_default(struct mip6_config *c)
 	c->MnMaxCnBindingLife = MAX_RR_BINDING_LIFETIME;
 	tssetdsec(c->InitialBindackTimeoutFirstReg_ts, 1.5);/*seconds*/
 	tssetsec(c->InitialBindackTimeoutReReg_ts, INITIAL_BINDACK_TIMEOUT);/*seconds*/
+	tssetsec(c->InitialSolicitTimer_ts, INITIAL_SOLICIT_TIMER);/*seconds*/
 	INIT_LIST_HEAD(&c->home_addrs);
 	c->MoveModulePath = NULL; /* internal */
 	c->DoRouteOptimizationMN = 1;
@@ -315,6 +316,7 @@ void conf_show(struct mip6_config *c)
 	    tstodsec(c->InitialBindackTimeoutFirstReg_ts));
 	dbg("InitialBindackTimeoutReReg = %f\n", 
 	    tstodsec(c->InitialBindackTimeoutReReg_ts));
+	dbg("InitialSolicitTimer = %f\n", tstodsec(c->InitialSolicitTimer_ts));
 	if (c->MoveModulePath)
 		dbg("MoveModulePath = %s\n", c->MoveModulePath);
 	dbg("UseCnBuAck = %s\n", CONF_BOOL_STR(c->CnBuAck));
