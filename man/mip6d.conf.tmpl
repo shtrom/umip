@@ -596,6 +596,15 @@ be defined when using DSMIPv6. DHAAD is used if it is the unspecified address
 Default: 0.0.0.0
 
 .TP
+.BR "HomeAgentName " "fqdn" ";"
+
+The Home Agent name will be resolved if this parameter is given. If both
+HomeAgentName and HomeAgentAddress are given, the value of HomeAgentAddress
+will be used, regardless of the resolution of the fqdn. Same behavior with
+HomeAgentV4Address.
+
+
+.TP
 .BR "IsMobRtr enabled | disabled"
 
 Defines if the MN is a NEMO MR.

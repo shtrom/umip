@@ -188,6 +188,9 @@ static inline int in6_is_addr_routable_unicast(const struct in6_addr *a)
         (addr & 0x00ff0000) >> 16, \
         (addr & 0xff000000) >> 24
 
+#define IN4_IS_ADDR_UNSPECIFIED(paddr) \
+        ((paddr)->s_addr == 0)
+
 static inline int ipv6_map_addr(struct in6_addr *a6, struct in_addr *a4)
 {
 	assert(a4);
