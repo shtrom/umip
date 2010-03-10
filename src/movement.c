@@ -1196,19 +1196,87 @@ static void md_router_timeout_probe(struct tq_elem *tqe)
 	pthread_mutex_unlock(&iface_lock);
 }
 
+/* Metric used for the default route. Should not be set to less than 3 times
+   POL_MN_IF_MIN_PREFERENCE value. */
+#define DEFAULT_ROUTE_METRIC 1023
+
+/*
+ * Return 1 if new router has a strictly higher default router preference
+ * value than old one.
+ */
+static int md_router_has_strictly_higher_def_rtr_pref(struct md_router *old,
+						     struct md_router *new)
+{
+	uint8_t old_prf_flag = (old->ra_flags >> 3) & 0x03;
+	uint8_t new_prf_flag = (new->ra_flags >> 3) & 0x03;
+	int old_prf_val, new_prf_val;
+
+	/* Map flags (low, medium, high) to -1, 0, 1 */
+	old_prf_val = ((old_prf_flag >> 1) ? -1 : 1) * (old_prf_flag & 0x1);
+	new_prf_val = ((new_prf_flag >> 1) ? -1 : 1) * (new_prf_flag & 0x1);
+
+	return (new_prf_val > old_prf_val);
+}
+
+/* Given the interface preference between 1 and POL_MN_IF_MIN_PREFERENCE
+   and a router preference value (0 if none), the function returns a metric
+   to use for the default using that interface. */
+static uint32_t md_router_compute_def_route_metric(uint16_t iface_pref,
+						   uint8_t  rtr_pref)
+{
+	uint32_t metric = DEFAULT_ROUTE_METRIC;
+	metric -= 3*(POL_MN_IF_MIN_PREFERENCE - iface_pref);
+
+	if (iface_pref > POL_MN_IF_MIN_PREFERENCE ||
+	    iface_pref == 0) /* 0 should not be met */
+		iface_pref = POL_MN_IF_MIN_PREFERENCE;
+
+	if (rtr_pref > 3)
+		rtr_pref = 3;
+
+	/* "sub-modulate" with possible def rtr pref from RA */
+	switch (rtr_pref) {
+	case 1: /* High */
+		metric -= 1;
+		break;
+	case 3: /* low */
+		metric += 1;
+		break;
+	default: /* Medium and others */
+		break;
+	}
+
+	return metric;
+}
+
+
 static void md_update_router_stats(struct md_router *rtr)
 {
 	struct list_head *list;
 	struct in6_addr coa;
-
-	MDBG2("adding default route via %x:%x:%x:%x:%x:%x:%x:%x\n", 
-	      NIP6ADDR(&rtr->lladdr));
+	uint8_t rtr_pref = (rtr->ra_flags >> 3) & 0x03;
+	uint32_t metric;
+	uint16_t iface_pref = POL_MN_IF_MIN_PREFERENCE;
+	struct md_inet6_iface *iface;
 
 	neigh_add(rtr->ifindex, NUD_STALE, NTF_ROUTER,
 		  &rtr->lladdr, rtr->hwa, rtr->hwalen, 1);
 
+	/* Deal with interface preference as set by user ... */
+	if ((iface = md_get_inet6_iface(&ifaces, rtr->ifindex)) == NULL)
+		MDBG2("Iface of router we are inserting a route for is"
+		      " reachable via an unknown interface (%d)\n",
+		      ifi->ifi_index);
+	else
+		iface_pref = iface->preference;
+
+	metric = md_router_compute_def_route_metric(iface_pref, rtr_pref);
+
+	MDBG2("adding default route via %x:%x:%x:%x:%x:%x:%x:%x with metric %d\n",
+	      NIP6ADDR(&rtr->lladdr), metric);
+
 	route_add(rtr->ifindex, RT_TABLE_MAIN, RTPROT_RA,
-		  RTF_DEFAULT|RTF_ADDRCONF, 1024,
+		  RTF_DEFAULT|RTF_ADDRCONF, metric,
 		  &in6addr_any, 0, &in6addr_any, 0, &rtr->lladdr);
 	
 	list_for_each(list, &rtr->prefixes) {
@@ -1517,7 +1585,8 @@ md_check_default_router(struct md_inet6_iface *iface, struct md_router *new)
 
 	if ((old = md_get_first_router(&iface->default_rtr)) != NULL) {
 		if (!md_router_cmp(new, old)) {
-			md_update_router(new, old);
+			md_update_router(new, old); /* will free 'new' during
+						     * the update */
 			if (!tsisset(old->lifetime)) {
 				md_expire_router(iface, old, NULL);
 				__md_discover_router(iface);
@@ -1529,10 +1598,19 @@ md_check_default_router(struct md_inet6_iface *iface, struct md_router *new)
 							    iface, NULL);
 			}
 			return;
-		} 
-		if (conf.MnRouterProbes > 0) {
-			md_probe_router(old);
-			md_add_backup_router(iface, new);
+		}
+
+		if (!md_router_has_strictly_higher_def_rtr_pref(old, new)) {
+			/*
+			 * New router has not a strictly higher default router
+			 * preference value, we probe our old one if and will
+			 * fallback only if old one is not anymore available.
+			 * Otherwise, we just leave things that way.
+			 */
+			if (conf.MnRouterProbes > 0) {
+				md_probe_router(old);
+				md_add_backup_router(iface, new);
+			}
 			return;
 		}
 	}
