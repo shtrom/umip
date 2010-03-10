@@ -46,6 +46,8 @@
 #include "debug.h"
 #include "util.h"
 #include "mipv6.h"
+#include "mn.h"
+#include "xfrm.h"
 #ifdef ENABLE_VT
 #include "vt.h"
 #endif
@@ -195,7 +197,7 @@ static void conf_default(struct mip6_config *c)
 	c->vt_service = VT_DEFAULT_SERVICE;
 #endif
 	c->mip6_entity = MIP6_ENTITY_CN;
-	pmgr_init(NULL, &conf.pmgr);
+	pmgr_init(NULL, &c->pmgr);
 	INIT_LIST_HEAD(&c->net_ifaces);
 	INIT_LIST_HEAD(&c->bind_acl);
 	c->DefaultBindingAclPolicy = IP6_MH_BAS_ACCEPTED;
@@ -265,6 +267,8 @@ int conf_parse(struct mip6_config *c, int argc, char **argv)
 
 void conf_show(struct mip6_config *c)
 {
+	struct list_head *list;
+
 	/* Common options */
 	dbg("config_file = %s\n", c->config_file);
 #ifdef ENABLE_VT
@@ -278,6 +282,16 @@ void conf_show(struct mip6_config *c)
 	if (c->pmgr.so_path)
 		dbg("PolicyModulePath = %s\n", c->pmgr.so_path);
 	dbg("DefaultBindingAclPolicy = %u\n", c->DefaultBindingAclPolicy);
+	list_for_each(list, &c->bind_acl) {
+		struct policy_bind_acl_entry *acl;
+		acl = list_entry(list, struct policy_bind_acl_entry, list);
+		dbg("%x:%x:%x:%x:%x:%x:%x:%x (%d): %s\n",
+		     NIP6ADDR(&acl->hoa),
+		     acl->mnp_count,
+		     acl->bind_policy?"allow":"deny"
+		     );
+	}
+
 	dbg("NonVolatileBindingCache = %s\n",
 	    CONF_BOOL_STR(c->NonVolatileBindingCache));
 	
@@ -321,4 +335,77 @@ void conf_show(struct mip6_config *c)
 	/* CN options */
 	dbg("DoRouteOptimizationCN = %s\n",
 	    CONF_BOOL_STR(c->DoRouteOptimizationCN));
+}
+
+
+static void conf_free(struct mip6_config *c)
+{
+	struct list_head *h, *nh, *e, *ne;
+	struct home_addr_info * hai;
+
+	if (c->config_file)
+		free(c->config_file);
+
+	pmgr_close(&c->pmgr);
+
+	/* For each home_addr_info, we have to remove the intern lists mob_net_prefix and ro_policy */
+	list_for_each_safe(h, nh, &c->home_addrs)
+	{
+		hai = list_entry(h, struct home_addr_info, list);
+
+		list_del(h);
+
+		list_for_each_safe(e, ne, &hai->ro_policies)
+		{
+			list_del(e);
+			free( list_entry(e, struct xfrm_ro_pol, list) );
+		}
+
+		list_for_each_safe(e, ne, &hai->mob_net_prefixes)
+		{
+			list_del(e);
+			free( list_entry(e, struct prefix_list_entry, list) );
+		}
+
+		free(hai);
+	}
+
+	/* The other lists must have been emptied during the apply_changes_cb function */
+	free(c);
+
+}
+
+
+int conf_update(struct mip6_config *c, void (*apply_changes_cb)(struct mip6_config *, struct mip6_config *))
+{
+	/* c is a pointer to the current config.
+	   We want to update some data from c according to the changed configuration file */
+	struct mip6_config *conf_new = NULL;
+	int ret = 0;
+
+	conf_new = malloc(sizeof(*conf_new));
+	if (!conf_new)
+	{
+		perror("conf_update");
+		return -1;
+	}
+
+	conf_default(conf_new);
+
+	conf_parsed = conf_new;
+
+	if ((ret = conf_file(conf_new, c->config_file)) < 0)
+	{
+		dbg("Error in the new configuration file, changes not applied\n");
+	}
+
+	conf_parsed = c;
+
+	/* Ok now we have the new config in conf_new, we can compute the differences that we are interrested in */
+	if (!ret)
+		apply_changes_cb(c, conf_new);
+
+	conf_free(conf_new);
+
+	return ret;
 }

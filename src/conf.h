@@ -69,6 +69,7 @@ struct net_iface {
 };
 
 extern struct mip6_config conf;
+extern struct mip6_config *conf_parsed;
 
 #define MIP6_ENTITY_NO -1
 #define MIP6_ENTITY_CN 0
@@ -122,5 +123,7 @@ void conf_show(struct mip6_config *c);
 int yyparse(void);
 
 int yylex(void);
+
+int conf_update(struct mip6_config *c, void (*apply_changes_cb)(struct mip6_config *, struct mip6_config *));
 
 #endif

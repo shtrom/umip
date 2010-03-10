@@ -21,7 +21,7 @@ sbin_PROGRAMS = mip6d
 
 mip6d_SOURCES = pmgr.c pmgr.h defpath.h \
 		main.c vars.c mipv6.h \
-		conf.c conf.h \
+		conf.c conf.h conf_changes.c \
 		gram.y scan.l \
 		tqueue.c tqueue.h \
 		icmp6.c icmp6.h \

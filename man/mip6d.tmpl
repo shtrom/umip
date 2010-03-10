@@ -29,6 +29,16 @@ Node is HA
 .IP "\fB\-M, \-\-mobile-node\fP"
 Node is MN
 
+.SH SIGNALS
+
+The following signals can be sent to the daemon:
+.IP "\fB\ SIGHUP\fP"
+Reload the configuration. See
+.BR mip6d.conf (5)
+for information on supported changes.
+.IP "\fB\ SIGINT, SIGTERM\fP"
+Terminates the daemon operation.
+
 .SH FILES
 
 %etc%/mip6d.conf

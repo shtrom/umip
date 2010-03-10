@@ -315,14 +315,22 @@ void policy_cleanup(void)
 	pthread_rwlock_unlock(&policy_lock);
 }
 
-static int policy_bind_acl_add(struct policy_bind_acl_entry *acl)
+int policy_bind_acl_add(struct policy_bind_acl_entry *acl)
 {
 	int err;
 	err = hash_add(&policy_bind_acl_hash, acl, NULL, &acl->hoa);
+#if 0	/* We need to keep data in the config to be able to compare on dynamic reloading */
 	if (!err) {
 		list_del(&acl->list);
 	}
+#endif /* 0 */
 	return err;
+}
+
+int policy_bind_acl_rem(struct policy_bind_acl_entry *acl)
+{
+	hash_delete(&policy_bind_acl_hash, NULL, &acl->hoa);
+	return 0;
 }
 
 static int policy_bind_acl_config(void)

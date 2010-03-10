@@ -12,6 +12,10 @@ Below is a list of currently supported configuration options. All
 configuration lines are terminated with a semicolon.  Sub-sections are
 enclosed in '{' and '}'.  Strings are quoted with double quotes.
 
+Default value is given when available.
+
+Indication of supported dynamic changes on SIGHUP is also provided.
+
 .SH COMMON OPTIONS
 
 The file contains the following common definitions:
@@ -23,6 +27,8 @@ Mobile Node mode.
 
 Default: CN
 
+Change on reloading: No support. Daemon must be restarted.
+
 .TP
 .BR "DebugLevel "  number ";"
 
@@ -32,13 +38,16 @@ printed on the controlling tty).
 
 Default: 0
 
+Change on reloading: Partial support. Cannot detach from tty afterwards.
+
 .TP
 .BR "DoRouteOptimizationCN " "boolean" ";"
 
 Indicates if a node should participate in route optimization with a
 Mobile Node.
 
-Default: enabled
+This option is currently ignored. When the daemon is running, the peer
+always answers RO requests from other MNs.
 
 .TP
 .BR "NonVolatileBindingCache " "boolean" ";"
@@ -89,6 +98,9 @@ this interface, the interface type should be set to CN.
 Default: same as
 .B NodeConfig
 
+Change on reloading: partial support. Only new inet6 interfaces will
+use the new configuration.
+
 
 .TP
 .BR "UseMnHaIPsec " "boolean" ";"
@@ -96,6 +108,8 @@ Default: same as
 Indicates if the MN-HA MIPv6 signalling should be protected with IPsec.
 
 Default: enabled
+
+Change on reloading: no support.
 
 .TP
 .BR "KeyMngMobCapability " "boolean" ";"
@@ -105,6 +119,8 @@ enabled.  It turns on the K-bit for binding updates and binding
 acknowledgements.
 
 Default: disabled
+
+Change on reloading: supported.
 
 .TP
 .nf
@@ -125,6 +141,9 @@ options, but only one
 option.  For home agent, home agent address field contains its own
 address, and home address fields may contain any number of mobile
 nodes for which the same policy applies.
+
+Change on reloading: supported. The sets can be changed, added or removed.
+Removing rules for established bindings may have unpredicted effects.
 
 .B IPsecPolicy
 has the following format:
@@ -160,17 +179,23 @@ Limits the maximum lifetime (in seconds) for Mobile Node home registrations.
 
 Default: 262140
 
+Change on reloading: Partial support. Only affects new bindings.
+
 .TP
 .BR "SendMobPfxAdvs " "boolean" ";"
 
 Controls whether home agent sends Mobile Prefix Advertisements to
 mobile nodes in foreign networks.
 
+Change on reloading: Partial support. Only affects new bindings.
+
 .TP
 .BR "SendUnsolMobPfxAdvs " "boolean" ";"
 
 Controls whether home agent send unsolicited Mobile Prefix
 Advertisements to mobile nodes in foreign networks.
+
+Change on reloading: Partial support. Only affects new bindings.
 
 .TP
 .BR "MinMobPfxAdvInterval " "number" ";"
@@ -179,12 +204,16 @@ Sets a minimum interval (in seconds) for Mobile Prefix Advertisements.
 
 Default: 600
 
+Change on reloading: Partial support. Only affects new scheduled MPA.
+
 .TP
 .BR "MaxMobPfxAdvInterval " "number" ";"
 
 Sets a maximum interval (in seconds) for Mobile Prefix Advertisements.
 
 Default: 86400
+
+Change on reloading: Partial support. Only affects new scheduled MPA.
 
 .TP
 .BR "HaAcceptMobRtr enabled | disabled"
@@ -193,6 +222,8 @@ Indicates if the HA accepts Mobile Router bindings.
 
 Default: disabled;
 
+Change on reloading: supported.
+
 .TP
 .BR "HaServedPrefix " "prefix/length" ";"
 
@@ -200,6 +231,8 @@ Prefix is an IPv6 prefix and length is the prefix length. Defines the whole
 aggregated or extended prefix the HA serves. This option is only used for MR
 bindings and is only needed if the MRs derive their Home Addresses from their
 Mobile Network Prefixes, instead of one of the home link prefixes.
+
+Change on reloading: supported.
 
 .TP
 .BR "BindingAclPolicy " "address MNP list " "allow | deny"
@@ -219,6 +252,8 @@ a MN.
 
 Default: allow
 
+Change on reloading: Partial support. Only affects new bindings.
+
 .SH MOBILE NODE SPECIFIC OPTIONS
 
 The following definitions are ignored unless the node is configured as a MN:
@@ -230,6 +265,8 @@ Limits the maximum lifetime (in seconds) for Mobile Node home registrations.
 
 Default: 262140
 
+Change on reloading: Partial support. Only affects new bindings.
+
 .TP
 .BR "MnMaxCnBindingLife " "number" ";"
 
@@ -237,6 +274,8 @@ Limits the maximum lifetime (in seconds) for Mobile Node Correspondent
 Node registrations.
 
 Default: 420
+
+Change on reloading: Partial support. Only affects new bindings.
 
 .TP
 .BR "MnDiscardHaParamProb " "boolean" ";"
@@ -250,19 +289,25 @@ by IPsec.
 
 Default: disabled
 
+Change on reloading: Supported.
+
 .TP
 .BR "SendMobPfxSols " "boolean" ";"
 
 Controls whether mobile node sends Mobile Prefix Solicitations to the
 home network.
 
+Change on reloading: Supported.
+
 .TP
 .BR "DoRouteOptimizationMN " "boolean" ";"
 
 Indicates if the Mobile Node should initialize route optimization with
-Corresponent Nodes.
+Correspondent Nodes.
 
 Default: enabled
+
+Change on reloading: Partial support, deactivation is not supported.
 
 .TP
 .BR "MnUseAllInterfaces enabled | disabled"
@@ -275,12 +320,16 @@ options to explicitly list the used interfaces.
 
 Default: disabled
 
+Change on reloading: Same support as "Interface" directive.
+
 .TP
 .BR "MobRtrUseExplicitMode enabled | disabled"
 
 Toggles between explicit or implicit mode home registrations in the MR.
 
 Default: enabled
+
+Change on reloading: Supported.
 
 .TP
 .BR "UseCnBuAck " "boolean" ";"
@@ -289,6 +338,8 @@ Indicates if the Acknowledge bit should be set in Binding Updates sent to
 Corresponent Nodes.
 
 Default: disabled
+
+Change on reloading: Supported.
 
 .TP
 .BR "MnRouterProbes " "number" ";"
@@ -299,6 +350,8 @@ Advertisement from a new one.  If the option is set to zero, the MN
 will move to the new router straight away.
 
 Default: 0
+
+Change on reloading: Supported.
 
 .TP
 .BR "MnRouterProbeTimeout " "decimal" ";"
@@ -313,6 +366,8 @@ before proceeding with the handoff.
 
 Default: 0
 
+Change on reloading: Supported.
+
 .TP
 .BR "OptimisticHandoff  enabled | disabled"
 
@@ -324,6 +379,8 @@ BU has been sent, and does not wait for a positive acknowledgement
 before using RO or reverse tunneling.
 
 Default: disabled;
+
+Change on reloading: Supported.
 
 .TP
 .nf
@@ -343,7 +400,12 @@ set up multiple Home Addresses on the Mobile Node, you need to define
 multiple
 .B MnHomeLink
 structures.  The interface names don't have to be unique in these
-definitions.  All the home link specific definitions are detailed below: 
+definitions.
+
+Change on reloading: No support.
+The daemon has to be restarted for the changes in this directive to take effect.
+
+All the home link specific definitions are detailed below:
 
 .TP
 .BR "HomeAddress " "address/length MNP list" ";"
