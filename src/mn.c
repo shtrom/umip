@@ -2213,9 +2213,9 @@ static int mn_make_ho_verdict(const struct movement_event *me,
 		assert(me->iface != NULL);
 
 		/* See comment below for ME_COA_NEW */
-		if (conf.UseMnHaIPsec &&
-		    conf.KeyMngMobCapability &&
-		    hai->home_reg_status == HOME_REG_UNCERTAIN)
+		if (conf.UseMnHaIPsec && conf.KeyMngMobCapability &&
+		    (hai->home_reg_status == HOME_REG_UNCERTAIN ||
+		     mn_ipsec_larval_sa() > 0))
 			return MN_HO_IGNORE;
 		break;
 	case ME_RTR_BACK:
@@ -2244,10 +2244,14 @@ static int mn_make_ho_verdict(const struct movement_event *me,
 		 * is a bad idea to change our mind and select another CoA.
 		 * This leads to desync between local IKE daemon and remote
 		 * one. We must wait for the completion (or failure) of the
-		 * first registration. */
-		if (conf.UseMnHaIPsec &&
-		    conf.KeyMngMobCapability &&
-		    hai->home_reg_status == HOME_REG_UNCERTAIN)
+		 * first registration.
+		 *
+		 * Another case where we should not do that is when an ACQUIRE
+		 * is in progress (i.e. some larval SA exist), to avoid
+		 * shooting the IKE daemon in the foot */
+		if (conf.UseMnHaIPsec && conf.KeyMngMobCapability &&
+		    (hai->home_reg_status == HOME_REG_UNCERTAIN ||
+		     mn_ipsec_larval_sa() > 0))
 			return MN_HO_IGNORE;
 		break;
 	case ME_COA_EXPIRED:
