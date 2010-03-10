@@ -1031,26 +1031,248 @@ static int mn_chk_bauth(struct ip6_mh_binding_ack *ba, ssize_t len,
 	return -1;
 }
 
+static void mn_process_ha_ba(struct ip6_mh_binding_ack *ba,
+			     struct mh_options *mh_opts, struct bulentry *bule)
+{
+	struct timespec now, ba_lifetime, br_adv, mps_delay;
+	struct home_addr_info *hai = bule->home;
+	struct ip6_mh_opt_refresh_advice *bra;
+	uint16_t seqno = ntohs(ba->ip6mhba_seqno);
+
+	if ((bule->seq != seqno) &&
+	    (ba->ip6mhba_status != IP6_MH_BAS_SEQNO_BAD)) {
+		/*
+		 * In this case, ignore BA and resend BU.
+		 */
+		MDBG("Got BA with incorrect sequence number %d, "
+		     "the one sent in BU was %d\n", seqno, bule->seq);
+		goto out;
+	}
+
+	bule->do_send_bu = 0;
+	bule->consecutive_resends = 0;
+	clock_gettime(CLOCK_REALTIME, &now);
+	if (ba->ip6mhba_status >= IP6_MH_BAS_UNSPECIFIED) {
+		char err_str[MAX_BA_STATUS_STR_LEN];
+
+		if (ba->ip6mhba_status == IP6_MH_BAS_SEQNO_BAD) {
+			mh_ba_status_to_str(ba->ip6mhba_status, err_str);
+			syslog(LOG_ERR, "Received BA with error status %s. "
+			       "Resending BU w/ updated seqno\n", err_str);
+			clock_gettime(CLOCK_REALTIME, &bule->lastsent);
+			bule->seq = seqno + 1;
+			mn_get_home_lifetime(bule->home, &bule->lifetime, 0);
+			bule->callback = bu_resend;
+			pre_bu_bul_update(bule);
+			mn_send_bu_msg(bule);
+			bule->delay = conf.InitialBindackTimeoutReReg_ts;
+			bul_update_timer(bule);
+			if (conf.OptimisticHandoff)
+				post_ba_bul_update(bule);
+			goto out;
+		}
+
+		if (hai->at_home) {
+			bul_delete(bule);
+			mn_do_dad(hai, 1);
+			goto out;
+		}
+
+		mh_ba_status_to_str(ba->ip6mhba_status, err_str);
+		syslog(LOG_ERR, "Received BA with error status %s. Unable "
+		       "to register with HA. Deleting entry\n", err_str);
+
+		if (hai->use_dhaad) {
+			bule_invalidate(bule, &now, 0);
+			mn_change_ha(hai);
+		} else
+			bule_invalidate(bule, &now, 1);
+
+		goto out;
+	}
+
+	if (!bule->wait_ack) {
+		MDBG("Ignoring unexpected BA.\n");
+		goto out;
+	}
+	bule->wait_ack = 0;
+
+	tssetsec(ba_lifetime, ntohs(ba->ip6mhba_lifetime) << 2);
+	br_adv = ba_lifetime;
+	tsadd(bule->lastsent, ba_lifetime, bule->hard_expire);
+
+	if (!conf.OptimisticHandoff)
+		post_ba_bul_update(bule);
+
+	if (bule->flags & IP6_MH_BU_MR &&
+	    !(ba->ip6mhba_flags & IP6_MH_BA_MR)) {
+		if (hai->use_dhaad)
+			mn_change_ha(hai);
+		else {
+			int one = 1;
+			bul_iterate(&hai->bul, mn_dereg, &one);
+		}
+		goto out;
+	}
+	if (!tsisset(ba_lifetime)) {
+		int type = FLUSH_FAILED;
+		mn_dereg_home(hai);
+		dbg("Deleting bul entry\n");
+		bul_delete(bule);
+		/* If BA was for home registration & succesful,
+		 * send RO BUs to CNs for this home address.
+		 */
+		bul_iterate(&hai->bul, _bul_flush, &type);
+		bul_iterate(&hai->bul, mn_rr_start_handoff, NULL);
+		pthread_rwlock_unlock(&mn_lock);
+		mn_movement_event(NULL);
+		mn_block_rule_del(hai);
+		return;
+	}
+
+	/* If status of BA is 0 or 1, Binding Update is accepted. */
+	if (ba->ip6mhba_status == IP6_MH_BAS_PRFX_DISCOV){
+		mpd_trigger_mps(&bule->hoa, &bule->peer_addr);
+	} else if (hai->home_reg_status == HOME_REG_UNCERTAIN) {
+		if (tsisset(hai->hoa.timestamp)){
+			mps_delay = tsmin(hai->hoa.valid_time, ba_lifetime);
+			mpd_schedule_first_mps(&bule->hoa, &bule->peer_addr,
+					       &mps_delay);
+		} else
+			mpd_trigger_mps(&bule->hoa, &bule->peer_addr);
+	}
+
+	/* If this is our first registration (HOME_REG_UNCERTAIN), now that
+	 * our BU has been accepted by the HA, ask for IKE negotiation of
+	 * IPsec SA protecting tunneled payload if requested by user. */
+	if (hai->home_reg_status == HOME_REG_UNCERTAIN && conf.UseMnHaIPsec &&
+	    conf.KeyMngMobCapability && conf.TunnelPayloadForceSANego)
+		mn_ipsec_tnl_force_acquire(&bule->home->ha_addr,
+					   &bule->hoa, bule);
+
+	hai->home_reg_status = HOME_REG_VALID;
+
+	/* If BA was for home registration & succesful,
+	 * send RO BUs to CNs for this home address */
+	bul_iterate(&hai->bul, mn_rr_start_handoff, NULL);
+
+	/* IP6_MH_BA_KEYM  */
+	if (bule->flags & IP6_MH_BU_KEYM) {
+		if (ba->ip6mhba_flags & IP6_MH_BA_KEYM) {
+			/* Inform IKE  to send readdress msg */
+
+		} else {
+			/* Inform IKE to renegotiate SAs */
+
+			/* Remove the flag from this bule */
+			bule->flags &= ~IP6_MH_BU_KEYM;
+
+			/* Issue a warning */
+			syslog(LOG_ERR,
+		         "HA does not support IKE session surviving, "
+		         "traffic may be interrupted after movements.\n"
+			 );
+		}
+	}
+
+	bra = mh_opt(&ba->ip6mhba_hdr, mh_opts, IP6_MHOPT_BREFRESH);
+	if (bra)
+		tssetsec(br_adv, ntohs(bra->ip6mora_interval) << 2);
+
+	set_bule_lifetime(bule, &ba_lifetime, &br_adv);
+	dbg("Callback to bu_refresh after %d seconds\n", bule->delay.tv_sec);
+	bule->callback = bu_refresh;
+	bul_update_expire(bule);
+	bul_update_timer(bule);
+
+ out:
+	pthread_rwlock_unlock(&mn_lock);
+}
+
+
+static void mn_process_cn_ba(struct ip6_mh_binding_ack *ba, ssize_t len,
+			     struct mh_options *mh_opts, struct bulentry *bule)
+{
+	struct timespec now, ba_lifetime, br_adv;
+	uint16_t seqno;
+
+	/* First check authenticator */
+	if (mn_chk_bauth(ba, len, mh_opts, bule))
+		goto out;
+
+	/* Then sequence number */
+	seqno = ntohs(ba->ip6mhba_seqno);
+	if ((bule->seq != seqno) &&
+	    (ba->ip6mhba_status != IP6_MH_BAS_SEQNO_BAD)) {
+		/*
+		 * In this case, ignore BA and resend BU.
+		 */
+		MDBG("Got BA with incorrect sequence number %d, "
+		     "the one sent in BU was %d\n", seqno, bule->seq);
+		goto out;
+	}
+
+	bule->do_send_bu = 0;
+	bule->consecutive_resends = 0;
+	clock_gettime(CLOCK_REALTIME, &now);
+	if (ba->ip6mhba_status >= IP6_MH_BAS_UNSPECIFIED) {
+		if (ba->ip6mhba_status == IP6_MH_BAS_SEQNO_BAD) {
+			clock_gettime(CLOCK_REALTIME, &bule->lastsent);
+			bule->seq = seqno + 1;
+			mn_get_ro_lifetime(bule->home, &bule->lifetime, 0);
+			bule->callback = bu_resend;
+			pre_bu_bul_update(bule);
+			mn_send_bu_msg(bule);
+			bule->delay = conf.InitialBindackTimeoutReReg_ts;
+			bul_update_timer(bule);
+		} else { /* Don't resend BUs to this CN */
+			bule_invalidate(bule, &now, 1);
+		}
+	}
+
+	if (!bule->wait_ack) {
+		MDBG("unexpected BA, ignoring\n");
+		goto out;
+	}
+	bule->wait_ack = 0;
+
+	tssetsec(ba_lifetime, ntohs(ba->ip6mhba_lifetime) << 2);
+	br_adv = ba_lifetime;
+	tsadd(bule->lastsent, ba_lifetime, bule->hard_expire);
+	post_ba_bul_update(bule);
+
+	if (!tsisset(ba_lifetime)) {
+		dbg("Deleting bul entry\n");
+		bul_delete(bule);
+	}  else {
+		set_bule_lifetime(bule, &ba_lifetime, &br_adv);
+		dbg("Callback to mn_rr_check_entry after %d seconds\n",
+		    bule->delay.tv_sec);
+		bule->callback = mn_rr_check_entry;
+		bul_update_expire(bule);
+		bul_update_timer(bule);
+	}
+
+ out:
+	pthread_rwlock_unlock(&mn_lock);
+}
+
+
 static void mn_recv_ba(const struct ip6_mh *mh, ssize_t len,
 		       const struct in6_addr_bundle *in,
 		       __attribute__ ((unused)) int iif)
 {
-	struct ip6_mh_binding_ack *ba;
+	struct ip6_mh_binding_ack *ba = (struct ip6_mh_binding_ack *)mh;
 	struct mh_options mh_opts;
 	struct bulentry *bule;
-	struct timespec now, ba_lifetime, br_adv, mps_delay;
-	uint16_t seqno;
+	ssize_t ba_len = sizeof(struct ip6_mh_binding_ack);
 
 	TRACE;
 
 	statistics_inc(&mipl_stat, MIPL_STATISTICS_IN_BA);
 
-	if (len < 0 || (size_t)len < sizeof(struct ip6_mh_binding_ack) ||
-	    mh_opt_parse(mh, len,
-			 sizeof(struct ip6_mh_binding_ack), &mh_opts) < 0)
+	if (len < ba_len || mh_opt_parse(mh, len, ba_len, &mh_opts) < 0)
 	    return;
-
-	ba = (struct ip6_mh_binding_ack *)mh;
 
 	pthread_rwlock_wrlock(&mn_lock);
 	bule = bul_get(NULL, in->dst, in->src);
@@ -1059,9 +1281,9 @@ static void mn_recv_ba(const struct ip6_mh *mh, ssize_t len,
 		     "from %x:%x:%x:%x:%x:%x:%x:%x "
 		     "to home address %x:%x:%x:%x:%x:%x:%x:%x "
 		     "with coa %x:%x:%x:%x:%x:%x:%x:%x\n",
-		     NIP6ADDR(in->src),  
+		     NIP6ADDR(in->src),
 		     NIP6ADDR(in->dst),
-		     NIP6ADDR(in->local_coa != NULL ? 
+		     NIP6ADDR(in->local_coa != NULL ?
 			      in->local_coa : &in6addr_any));
 		pthread_rwlock_unlock(&mn_lock);
 		return;
@@ -1074,188 +1296,11 @@ static void mn_recv_ba(const struct ip6_mh *mh, ssize_t len,
 	    ba->ip6mhba_status);
 	dbg("Dumping corresponding BULE\n");
 	dbg_func(bule, dump_bule);
-	/* First check authenticator */
-	if (!(bule->flags & IP6_MH_BU_HOME) &&
-	    mn_chk_bauth(ba, len, &mh_opts, bule)) {
-		pthread_rwlock_unlock(&mn_lock);
-		return;
-	}
-	/* Then sequence number */
-	seqno = ntohs(ba->ip6mhba_seqno);
-	if (bule->seq != seqno) {
-		if (ba->ip6mhba_status != IP6_MH_BAS_SEQNO_BAD) {
-			/*
-			 * In this case, ignore BA and resends BU.
-			 */
-			MDBG("Got BA with incorrect sequence number %d, " 
-			     "the one sent in BU was %d\n", seqno, bule->seq);
-			pthread_rwlock_unlock(&mn_lock);
-			return;
-		}
-	}
-	bule->do_send_bu = 0;
-	bule->consecutive_resends = 0;
-	clock_gettime(CLOCK_REALTIME, &now);
-	if (ba->ip6mhba_status >= IP6_MH_BAS_UNSPECIFIED) {
-		if (ba->ip6mhba_status == IP6_MH_BAS_SEQNO_BAD) {
-			MDBG("out of sync seq nr\n");
-			clock_gettime(CLOCK_REALTIME, &bule->lastsent);
-			bule->seq = seqno + 1;
-			if (bule->flags & IP6_MH_BU_HOME)
-				mn_get_home_lifetime(bule->home,
-						     &bule->lifetime, 0);
-			else
-				mn_get_ro_lifetime(bule->home,
-						   &bule->lifetime, 0);
-			bule->callback = bu_resend;
-			pre_bu_bul_update(bule);
-			mn_send_bu_msg(bule);
-			bule->delay = conf.InitialBindackTimeoutReReg_ts;
-			bul_update_timer(bule);
-			if (bule->flags & IP6_MH_BU_HOME &&
-			    conf.OptimisticHandoff) {
-				post_ba_bul_update(bule);	
-			}
-			pthread_rwlock_unlock(&mn_lock);
-			return;
-		}
-		if (bule->flags & IP6_MH_BU_HOME) { 
-			struct home_addr_info *hai = bule->home;
-			char err_str[MAX_BA_STATUS_STR_LEN];
 
-			if (hai->at_home) {
-				bul_delete(bule);
-				mn_do_dad(hai, 1);
-				pthread_rwlock_unlock(&mn_lock);
-				return;
-			}
-
-			mh_ba_status_to_str(ba->ip6mhba_status, err_str);
-			syslog(LOG_ERR, "Received BA with error status %s. "
-			       "Unable to register with HA. Deleting entry\n",
-			       err_str);
-
-			if (hai->use_dhaad) {
-				bule_invalidate(bule, &now, 0);
-				mn_change_ha(hai);
-			} else {
-				bule_invalidate(bule, &now, 1);
-			}
-			pthread_rwlock_unlock(&mn_lock);
-			return;
-		} else {
-			/* Don't resend BUs to this CN */
-			bule_invalidate(bule, &now, 1);
-			pthread_rwlock_unlock(&mn_lock);
-			return;
-		}
-	}
-	if (bule->wait_ack) 
-		bule->wait_ack = 0;
-	else {
-		MDBG("unexpected BA, ignoring\n");
-		pthread_rwlock_unlock(&mn_lock);
-		return;
-	}
-	tssetsec(ba_lifetime, ntohs(ba->ip6mhba_lifetime) << 2);
-	br_adv = ba_lifetime;
-	tsadd(bule->lastsent, ba_lifetime, bule->hard_expire);
-	if (!(bule->flags & IP6_MH_BU_HOME) || !conf.OptimisticHandoff)
-		post_ba_bul_update(bule);
-	if (bule->flags & IP6_MH_BU_HOME) {
-		struct home_addr_info *hai = bule->home;
-		struct ip6_mh_opt_refresh_advice *bra;
-
-		if (bule->flags & IP6_MH_BU_MR &&
-		    !(ba->ip6mhba_flags & IP6_MH_BA_MR)) {
-			if (hai->use_dhaad) {
-				mn_change_ha(hai);
-			} else {
-				int one = 1;
-				bul_iterate(&hai->bul, mn_dereg, &one);
-			}
-			pthread_rwlock_unlock(&mn_lock);
-			return;
-		}
-		if (!tsisset(ba_lifetime)) {
-			int type = FLUSH_FAILED;
-			mn_dereg_home(hai);
-			bul_delete(bule);
-			/* If BA was for home registration & succesful 
-			 *  Send RO BUs to CNs for this home address.
-			 */
-			bul_iterate(&hai->bul, _bul_flush, &type);
-			bul_iterate(&hai->bul, mn_rr_start_handoff, NULL);
-			pthread_rwlock_unlock(&mn_lock);
-			mn_movement_event(NULL);
-			mn_block_rule_del(hai);
-			return;
-		}
-		/* If status of BA is 0 or 1, Binding Update is accepted. */
-		if (ba->ip6mhba_status == IP6_MH_BAS_PRFX_DISCOV){
-			mpd_trigger_mps(&bule->hoa, &bule->peer_addr);
-		}else if( hai->home_reg_status == HOME_REG_UNCERTAIN && tsisset(ba_lifetime)){
-			if(tsisset(hai->hoa.timestamp)){
-				mps_delay = tsmin(hai->hoa.valid_time, ba_lifetime);
-				mpd_schedule_first_mps(&bule->hoa, &bule->peer_addr, &mps_delay);
-			}else
-				mpd_trigger_mps(&bule->hoa, &bule->peer_addr);
-		}
-
-		/* If this is our first registration (HOME_REG_UNCERTAIN), now that
-		 * our BU has been accepted by the HA, ask for IKE negotiation of
-		 * IPsec SA protecting tunneled payload if requested by user. */
-		if (hai->home_reg_status == HOME_REG_UNCERTAIN && conf.UseMnHaIPsec &&
-		    conf.KeyMngMobCapability && conf.TunnelPayloadForceSANego)
-			mn_ipsec_tnl_force_acquire(&bule->home->ha_addr,
-						   &bule->hoa, bule);
-
-		hai->home_reg_status = HOME_REG_VALID;
-
-		/* If BA was for home registration & succesful
-		 *  Send RO BUs to CNs for this home address */
-		bul_iterate(&hai->bul, mn_rr_start_handoff, NULL);
-
-		/* IP6_MH_BA_KEYM  */
-		if (bule->flags & IP6_MH_BU_KEYM) {
-			if (ba->ip6mhba_flags & IP6_MH_BA_KEYM) {
-				/* Inform IKE  to send readdress msg */
-
-			} else {
-				/* Inform IKE to renegotiate SAs */
-
-				/* Remove the flag from this bule */
-				bule->flags &= ~IP6_MH_BU_KEYM;
-
-				/* Issue a warning */
-				syslog(LOG_ERR,
-			         "HA does not support IKE session surviving, "
-			         "traffic may be interrupted after movements.\n"
-				 );
-			}
-		}
-		bra = mh_opt(&ba->ip6mhba_hdr, &mh_opts, IP6_MHOPT_BREFRESH);
-		if (bra)
-			tssetsec(br_adv, ntohs(bra->ip6mora_interval) << 2);
-	}
-	if (!tsisset(ba_lifetime)) {
-		dbg("Deleting bul entry\n");
-		bul_delete(bule);
-	}  else {
-		set_bule_lifetime(bule, &ba_lifetime, &br_adv);
-		if (bule->flags & IP6_MH_BU_HOME) {
-			dbg("Callback to bu_refresh after %d seconds\n",
-			    bule->delay.tv_sec);
-			bule->callback = bu_refresh;
-		} else {
-			dbg("Callback to mn_rr_check_entry after %d seconds\n",
-			    bule->delay.tv_sec);
-			bule->callback = mn_rr_check_entry; 
-		}
-		bul_update_expire(bule);
-		bul_update_timer(bule);
-	}
-	pthread_rwlock_unlock(&mn_lock);
+	if (bule->flags & IP6_MH_BU_HOME)
+		mn_process_ha_ba(ba, &mh_opts, bule);
+	else
+		mn_process_cn_ba(ba, len, &mh_opts, bule);
 }
 
 static struct mh_handler mn_ba_handler = {
