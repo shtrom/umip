@@ -47,6 +47,8 @@ struct bulentry {
 	uint8_t use_alt_coa;            /* Whether to use alt. CoA option */
 	uint8_t dereg;                  /* for calculating BSA key */
 	uint8_t do_send_bu;             /* send bu / not send bu */
+	uint8_t behind_nat;             /* whether a nat was detected */
+	uint8_t udp_encap;              /* doing UDP encap */
 
 	/* Information for return routability */
 	struct retrout_info rr;

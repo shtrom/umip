@@ -5,6 +5,7 @@
 
 #include "tqueue.h"
 #include "hash.h"
+#include "nat.h"
 
 struct bcentry {
 	struct in6_addr our_addr;	/* Address to which we got BU */
@@ -13,6 +14,8 @@ struct bcentry {
 	struct in6_addr coa;		/* MN care-of address */
 	struct timespec add_time;       /* When was the binding added or modified */
 	struct timespec lifetime;      	/* lifetime sent in this BU, in seconds */
+	struct encap_info nat_info;    	/* Information for NAT traversal */
+	uint8_t behind_nat;             /* whether a nat was detected */
 	uint16_t seqno;			/* sequence number of the latest BU */
 	uint16_t flags;			/* BU flags */
 
