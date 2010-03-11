@@ -2794,6 +2794,18 @@ int xfrm_move_hoa(struct home_addr_info *hai, int oldif)
 	return ret;
 }
 
+void xfrm_mip_in_out_delete(struct in6_addr *peer_addr, struct in6_addr *our_addr)
+{
+	struct xfrm_selector sel;
+
+	set_selector(peer_addr, our_addr, 0, 0, 0, 0, &sel);
+	xfrm_mip_policy_del(&sel, XFRM_POLICY_OUT);
+	xfrm_state_del(IPPROTO_ROUTING, &sel);
+	set_selector(our_addr, peer_addr, 0, 0, 0, 0, &sel);
+	xfrm_mip_policy_del(&sel, XFRM_POLICY_IN);
+	xfrm_state_del(IPPROTO_DSTOPTS, &sel);
+}
+
 /* Install a state for telling kernel to allow UDP-encapsulated traffic
  * to be received. If the state is not installed, only MH messages and
  * IPsec messages can be received.

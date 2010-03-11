@@ -796,6 +796,8 @@ static void home_cleanup(struct bcentry *bce)
 	if (conf.UseMnHaIPsec) {
 		ha_mn_ipsec_pol_mod(&bce->our_addr, &bce->peer_addr);
 	}
+	//Kien: when a MR disconnects, erase xfrm state/policy corresponding on HA
+	xfrm_mip_in_out_delete(&bce->peer_addr, &bce->our_addr);
 }
 
 
