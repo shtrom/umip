@@ -295,6 +295,7 @@ void cn_recv_bu(const struct ip6_mh *mh, ssize_t len,
 {
 	struct mh_options mh_opts;
 	struct in6_addr_bundle out;
+	struct in6_addr coa;
 	struct ip6_mh_binding_update *bu;
 	struct ip6_mh_opt_nonce_index *non_ind;
 	struct bcentry *bce = NULL;
@@ -308,6 +309,7 @@ void cn_recv_bu(const struct ip6_mh *mh, ssize_t len,
 
 	bu = (struct ip6_mh_binding_update *)mh;
 
+	out.bind_coa = &coa;
 	if (mh_bu_parse(bu, len, in, &out, &mh_opts, &lft) < 0)
 		return;
 

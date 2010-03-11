@@ -1246,6 +1246,7 @@ int ha_recv_home_bu(const struct ip6_mh *mh, ssize_t len,
 {
 	struct mh_options mh_opts;
 	struct in6_addr_bundle out;
+	struct in6_addr coa;
 	struct ha_recv_bu_args *arg;
 	struct ip6_mh_binding_update *bu;
 	struct timespec lft;
@@ -1256,6 +1257,7 @@ int ha_recv_home_bu(const struct ip6_mh *mh, ssize_t len,
 
 	bu = (struct ip6_mh_binding_update *)mh;
 
+	out.bind_coa = &coa;
 	if (mh_bu_parse(bu, len, in, &out, &mh_opts, &lft) < 0)
 		return -EINVAL;
 

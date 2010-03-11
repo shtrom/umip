@@ -1193,6 +1193,7 @@ int mh_bu_parse(struct ip6_mh_binding_update *bu, ssize_t len,
 {
 	struct in6_addr *our_addr, *peer_addr, *remote_coa;
 	struct ip6_mh_opt_altcoa *alt_coa;
+	struct ip6_mh_opt_ipv4_coa *ipv4_coa;
 
 	MDBG("Binding Update Received\n");
 	if (len < 0 || (size_t)len < sizeof(struct ip6_mh_binding_update) ||
@@ -1210,8 +1211,11 @@ int mh_bu_parse(struct ip6_mh_binding_update *bu, ssize_t len,
 	else
 		out_addrs->remote_coa = NULL;
 
+	ipv4_coa = mh_opt(&bu->ip6mhbu_hdr, mh_opts, IP6_MHOPT_IPV4COA);
 	alt_coa = mh_opt(&bu->ip6mhbu_hdr, mh_opts, IP6_MHOPT_ALTCOA);
-	if (alt_coa)
+	if (ipv4_coa)
+		ipv6_map_addr(out_addrs->bind_coa, &ipv4_coa->ip6moic_v4coa);
+	else if (alt_coa)
 		out_addrs->bind_coa = &alt_coa->ip6moa_addr;
 	else
 		out_addrs->bind_coa = in_addrs->remote_coa;
