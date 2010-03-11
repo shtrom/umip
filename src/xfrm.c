@@ -2141,6 +2141,17 @@ int xfrm_del_bule_dsmip(struct bulentry *bule)
 	return 0;
 }
 
+void xfrm_udp_encap_delete(struct in6_addr *CoA, struct in6_addr *HoA)
+{
+	struct in_addr coa4 = { 0 }, ha4 = { 0 };
+	struct xfrm_selector sel;
+
+	ipv6_unmap_addr(CoA, &coa4.s_addr);
+	ipv6_unmap_addr(HoA, &ha4.s_addr);
+	set_v4selector(ha4, coa4, IPPROTO_UDP_ENCAPSULATION, 0, 0, 0, &sel);
+	xfrm_state_del(IPPROTO_UDP_ENCAPSULATION, &sel);
+}
+
 void xfrm_del_bule(struct bulentry *bule)
 {
 	if (bule->xfrm_state & BUL_XFRM_STATE_DATA)
@@ -2154,6 +2165,8 @@ void xfrm_del_bule(struct bulentry *bule)
 /* before sending BU, MN should insert policy/state only for BU/BA */
 int xfrm_pre_bu_add_bule(struct bulentry *bule)
 {
+	if (!is_iface_have_addr(bule->if_coa)) return 1;
+
 	struct xfrm_selector sel, sel4;
 	struct xfrm_user_tmpl tmpl[1];
 	int rsig = bule->xfrm_state & BUL_XFRM_STATE_SIG;
