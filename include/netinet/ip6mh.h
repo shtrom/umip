@@ -197,6 +197,7 @@ struct ip6_mh_opt_ipv4_nat {
 #else				/* BYTE_ORDER == LITTLE_ENDIAN */
 #define IP6_MHOPT_NAT_ENCAPS	0x0080	/* Force UDP encapsulation */
 #endif
+#define IP6_MHOPT_NO_REFRESH	0xffffffff	/* No need to refresh NAT keepalive */
 
 /*
  *     Mobility Header Message Types

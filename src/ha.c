@@ -859,6 +859,7 @@ struct ha_recv_bu_args {
 	struct in6_addr dst;
 	struct in6_addr remote_coa;
 	struct in6_addr bind_coa;
+	struct encap_info nat_info;
 	struct ip6_mh_binding_update *bu;
 	ssize_t len;
 	struct mh_options mh_opts;
@@ -902,7 +903,14 @@ restart:
 	else
 		out.bind_coa = NULL;
 	out.local_coa = NULL;
+	if (arg->nat_info.src.s_addr != INADDR_ANY)
+		out.nat_info = &arg->nat_info;
+	else
+		out.nat_info = NULL;
 
+	/* XXX DSMIP: possibility to have several MRs with the same source addr,
+	 * i.e. behind the same NAT box. We should therefore add the port as a
+	 * search parameter to bcache_get() */
 	bce = bcache_get(out.src, out.dst);
 	if (bce) {
 		if (bce->type != BCE_NONCE_BLOCK) {
@@ -1072,6 +1080,23 @@ restart:
 	bce->seqno = seqno;
 	bce->flags = bu_flags;
 	bce->lifetime = lft;
+	if (out.nat_info) {
+		memcpy(&bce->nat_info, out.nat_info, sizeof(bce->nat_info));
+		dbg("NAT information: src %u.%u.%u.%u:%d\n",
+				NIP4ADDR(&bce->nat_info.src), bce->nat_info.port);
+		dbg("CoA reported by MN %x:%x:%x:%x:%x:%x:%x:%x\n",
+				NIP6ADDR(&bce->coa));
+		struct in6_addr v4mapped_src;
+		ipv6_map_addr(&v4mapped_src, &bce->nat_info.src);
+		if (!IN6_ARE_ADDR_EQUAL(&v4mapped_src, &bce->coa)) {
+			bce->behind_nat = 1;
+		}
+		else if (!(bu_flags & IP6_MH_BU_UDP)) {
+			/* Useless to send NAT option in BA if no NAT has been detected
+			 * and MN didn't ask for UDP encapsulation */
+			out.nat_info = NULL;
+		}
+	}
 	if (new) {
 		if (out.bind_coa && IN6_IS_ADDR_V4MAPPED(out.bind_coa))
 		        tnl_addr = &conf.HaAddr4Mapped;
@@ -1284,6 +1309,8 @@ int ha_recv_home_bu(const struct ip6_mh *mh, ssize_t len,
 		arg->bind_coa = *out.bind_coa;
 	else
 		arg->bind_coa = in6addr_any;
+	if (out.nat_info)
+		memcpy(&arg->nat_info, out.nat_info, sizeof(arg->nat_info));
 	arg->bu = (struct ip6_mh_binding_update *)(arg + 1);
 	arg->len = len;
 	arg->mh_opts = mh_opts;

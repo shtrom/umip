@@ -1097,9 +1097,10 @@ static int mn_chk_bauth(struct ip6_mh_binding_ack *ba, ssize_t len,
 static void mn_process_ha_ba(struct ip6_mh_binding_ack *ba,
 			     struct mh_options *mh_opts, struct bulentry *bule)
 {
-	struct timespec now, ba_lifetime, br_adv, mps_delay;
+	struct timespec now, ba_lifetime, br_adv, mps_delay, nat_ka_refresh;
 	struct home_addr_info *hai = bule->home;
 	struct ip6_mh_opt_refresh_advice *bra;
+	struct ip6_mh_opt_ipv4_nat *nat;
 	uint16_t seqno = ntohs(ba->ip6mhba_seqno);
 
 	if ((bule->seq != seqno) &&
@@ -1268,7 +1269,30 @@ static void mn_process_ha_ba(struct ip6_mh_binding_ack *ba,
 	if (bra)
 		tssetsec(br_adv, ntohs(bra->ip6mora_interval) << 2);
 
-	set_bule_lifetime(bule, &ba_lifetime, &br_adv);
+	/* DSMIPv6 NAT detection option */
+	nat = mh_opt(&ba->ip6mhba_hdr, &mh_opts, IP6_MHOPT_NAT);
+	if (nat) {
+		if (nat->ip6moin_flags_reserved & IP6_MHOPT_NAT_ENCAPS)
+			bule->udp_encap = 1;
+		switch (nat->ip6moin_refresh) {
+		case 0:
+			tssetsec(nat_ka_refresh, NATKATIMEOUT);
+			bule->behind_nat = 1;
+			break;
+		case IP6_MHOPT_NO_REFRESH:
+			tssetsec(nat_ka_refresh, ntohl(nat->ip6moin_refresh));
+			bule->behind_nat = 0;
+			break;
+		default:
+			tssetsec(nat_ka_refresh, ntohl(nat->ip6moin_refresh));
+			bule->behind_nat = 1;
+		}
+	}
+
+	if (tsbefore(nat_ka_refresh, br_adv))
+		set_bule_lifetime(bule, &ba_lifetime, &br_adv);
+	else
+		set_bule_lifetime(bule, &ba_lifetime, &nat_ka_refresh);
 	dbg("Callback to bu_refresh after %d seconds\n", bule->delay.tv_sec);
 	bule->callback = bu_refresh;
 	bul_update_expire(bule);

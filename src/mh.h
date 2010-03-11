@@ -5,6 +5,7 @@
 
 #include <netinet/in.h>
 #include <netinet/ip6mh.h>
+#include "nat.h"
 
 #define MIP6_SEQ_GT(x,y) ((short int)(((uint16_t)(x)) - ((uint16_t)(y))) > 0)
 
@@ -18,6 +19,7 @@ struct in6_addr_bundle {
 	struct in6_addr *local_coa;
 	struct in6_addr *remote_coa;
 	struct in6_addr *bind_coa;
+	struct encap_info *nat_info;
 };
 
 struct mh_options {
@@ -60,7 +62,8 @@ void mh_send_be(struct in6_addr *dst,
 
 ssize_t mh_recv(unsigned char *msg, size_t msglen,
 		struct sockaddr_in6 *addr, struct in6_pktinfo *pkt_info,
-		struct in6_addr *hoa, struct in6_addr *rtaddr);
+		struct in6_addr *hoa, struct in6_addr *rtaddr,
+		struct encap_info *nat_info);
 
 /* Mobility header and option creation functions */
 void *mh_create(struct iovec *iov, uint8_t type);
@@ -75,6 +78,9 @@ int mh_create_opt_nonce_index(struct iovec *iov, uint16_t home_nonce,
 int mh_create_opt_auth_data(struct iovec *iov);
 
 int mh_create_opt_ipv4_coa(struct iovec *iov, struct in_addr *addr);
+
+int mh_create_opt_ipv4_nat(struct iovec *iov, struct in6_addr *coa,
+		struct encap_info *nat_info);
 
 struct list_head;
 

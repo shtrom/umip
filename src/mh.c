@@ -52,6 +52,7 @@
 #include "bcache.h"
 #include "keygen.h"
 #include "prefix.h"
+#include "nat.h"
 #include "statistics.h"
 
 #define MH_DEBUG_LEVEL 1
@@ -138,6 +139,7 @@ static void *mh_listen(__attribute__ ((unused)) void *arg)
 	struct sockaddr_in6 addr;
 	struct ip6_mh *mh;
 	struct in6_addr_bundle addrs;
+	struct encap_info nat_info;
 	ssize_t len;
 	struct mh_handler *h;
 
@@ -145,7 +147,7 @@ static void *mh_listen(__attribute__ ((unused)) void *arg)
 
 	while (1) {
 		pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
-		len = mh_recv(msg, sizeof(msg), &addr, &pktinfo, &haoa, &rta);
+		len = mh_recv(msg, sizeof(msg), &addr, &pktinfo, &haoa, &rta, &nat_info);
 		/* check if socket has closed */
 		if (len < 0)
 			break;
@@ -163,6 +165,11 @@ static void *mh_listen(__attribute__ ((unused)) void *arg)
 			addrs.local_coa = &rta;
 		} else {
 			addrs.local_coa = NULL;
+		}
+		if (nat_info.src.s_addr != INADDR_ANY) {
+			addrs.nat_info = &nat_info;
+		} else {
+			addrs.nat_info = NULL;
 		}
 		addrs.bind_coa = NULL;
 		mh = (struct ip6_mh *) msg;
@@ -466,15 +473,19 @@ int mh_create_opt_ipv4_ack(struct iovec *iov)
 /**
  * mh_create_opt_ipv4_nat - create NAT detection option
  * @iov: vector
+ * @coa: src address included in IPv4 CoA option
+ * @nat_info: src address and dst port of the IP packet as received by kernel
  *
  * Creates a NAT detection option with data set to zero.
  * Stores pointer and length in iovec vector @iov. Returns zero on success,
  * otherwise negative error value.
  **/
-int mh_create_opt_ipv4_nat(struct iovec *iov)
+int mh_create_opt_ipv4_nat(struct iovec *iov, struct in6_addr *coa,
+		struct encap_info *nat_info)
 {
 	struct ip6_mh_opt_ipv4_nat *opt;
 	size_t optlen = sizeof(struct ip6_mh_opt_ipv4_nat);
+	struct in6_addr v4mapped_src;
 
 	iov->iov_base = malloc(optlen);
 	iov->iov_len = optlen;
@@ -487,7 +498,14 @@ int mh_create_opt_ipv4_nat(struct iovec *iov)
 	opt->ip6moin_type = IP6_MHOPT_NAT;
 	opt->ip6moin_len = 6;
 
-	/* XXX Implement */
+	ipv6_map_addr(&v4mapped_src, &nat_info->src);
+	if (!IN6_ARE_ADDR_EQUAL(&v4mapped_src, coa)) {
+		opt->ip6moin_flags_reserved = IP6_MHOPT_NAT_ENCAPS;
+		/* Set suggested refresh time for NAT keepalive to default value */
+		opt->ip6moin_refresh = htonl(NATKATIMEOUT);
+	} else {
+		opt->ip6moin_refresh = IP6_MHOPT_NO_REFRESH;
+	}
 
 	return 0;
 }
@@ -988,7 +1006,8 @@ int mh_opt_parse(const struct ip6_mh *mh, ssize_t len, ssize_t offset,
  **/
 ssize_t mh_recv(unsigned char *msg, size_t msglen,
 		struct sockaddr_in6 *addr, struct in6_pktinfo *pkt_info,
-		struct in6_addr *haoaddr, struct in6_addr *rtaddr)
+		struct in6_addr *haoaddr, struct in6_addr *rtaddr,
+		struct encap_info *nat_info)
 {
 	struct ip6_mh *mh;
 	struct msghdr mhdr;
@@ -1015,6 +1034,7 @@ ssize_t mh_recv(unsigned char *msg, size_t msglen,
 
 	memset(haoaddr, 0, sizeof(*haoaddr));
 	memset(rtaddr, 0, sizeof(*rtaddr));
+	memset(nat_info, 0, sizeof(*nat_info));
 
 	statistics_inc(&mipl_stat, MIPL_STATISTICS_IN_MH);
 
@@ -1029,8 +1049,8 @@ ssize_t mh_recv(unsigned char *msg, size_t msglen,
 				printf("BUG: sin_family unexpected (%d)\n", sin.sin_family);
 				continue;
 			}
-			printf("TODO [NAT Traversal]: packet received from %u.%u.%u.%u:%d\n",
-				NIP4ADDR(&sin.sin_addr), ntohs(sin.sin_port));
+			memcpy(&nat_info->src, &sin.sin_addr, sizeof(nat_info->src));
+			nat_info->port = ntohs(sin.sin_port);
 		}
 
 		if (cmsg->cmsg_level != IPPROTO_IPV6)
@@ -1164,7 +1184,7 @@ void mh_send_ba(const struct in6_addr_bundle *addrs, uint8_t status,
 {
 	int iovlen = 1;
 	struct ip6_mh_binding_ack *ba;
-	struct iovec mh_vec[2];
+	struct iovec mh_vec[3];
 
 	MDBG("status %d, iif %d\n", status, iif);
 
@@ -1186,6 +1206,9 @@ void mh_send_ba(const struct in6_addr_bundle *addrs, uint8_t status,
 			mh_create_opt_refresh_advice(&mh_vec[iovlen++],
 						     refresh.tv_sec);
 	}
+	if (addrs->nat_info)
+		mh_create_opt_ipv4_nat(&mh_vec[iovlen++], addrs->bind_coa,
+				addrs->nat_info);
 	if (key)
 		mh_create_opt_auth_data(&mh_vec[iovlen++]);
 	mh_send(addrs, mh_vec, iovlen, key, iif);
@@ -1251,6 +1274,7 @@ int mh_bu_parse(struct ip6_mh_binding_update *bu, ssize_t len,
 	out_addrs->src = in_addrs->dst;
 	out_addrs->dst = in_addrs->src;
 	out_addrs->local_coa = NULL;
+	out_addrs->nat_info = in_addrs->nat_info;
 
 	return 0;
 }
