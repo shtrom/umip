@@ -26,6 +26,12 @@ Includes content from other files. Wildcards are supported.
 
 Example: include "/etc/mip6d.conf.d/*.conf"
 
+.B UseDhcp
+uses the internal DHCP client to detect IPv4 network attachemnts and
+configure the CoA.
+
+Default: disabled
+
 
 .TP
 .BR "NodeConfig " "CN | HA | MN" ";"
@@ -117,6 +123,7 @@ These options are used both in the Home Agent and Mobile Node:
 .BR "Interface " "name" " {"
 .BR "	MnIfPreference " "number" ";"
 .BR "	IfType " "CN | HA | MN" ";"
+.BR "	UseDhcp " "enabled | disabled" ";"
 .BR "	Tunnel " "boolean" ";"
 .B }
 .fi
