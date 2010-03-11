@@ -793,9 +793,10 @@ static int process_first_home_bu(struct bulentry *bule,
 
 	hai->home_reg_status = HOME_REG_UNCERTAIN;
 
-	if (IN6_IS_ADDR_V4MAPPED(&bule->coa))
+	if (IN6_IS_ADDR_V4MAPPED(&bule->coa)) {
 		hai->if_tunnel = hai->if_tunnel64;
-	else
+		bule->use_alt_coa = 0; /* Not needed, CoA in IPv4 CoA opt */
+	} else
 		hai->if_tunnel = hai->if_tunnel66;
 
 	if ((err = mn_tnl_state_add(hai, hai->if_tunnel, 0)) < 0)
