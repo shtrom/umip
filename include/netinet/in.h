@@ -7,6 +7,11 @@
 #define IPPROTO_MH	135	/* IPv6 Mobility Header */
 #endif
 
+#ifndef IPPROTO_UDP_ENCAPSULATION
+#define IPPROTO_UDP_ENCAPSULATION 166	/* IP or IPv6 in IP/UDP encapsulation pseudo protocol */
+#endif
+
+
 /* This section is to provide limited Advanced Socket API for IPv6
  * support in non-RFC3542-compliant environments.  Any missing
  * functions will be compiled in libmissing/libmissing.a. */

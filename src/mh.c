@@ -1022,6 +1022,17 @@ ssize_t mh_recv(unsigned char *msg, size_t msglen,
 	     cmsg = CMSG_NXTHDR(&mhdr, cmsg)) {
 		int ret = 0;
 
+		if (cmsg->cmsg_level == IPPROTO_UDP_ENCAPSULATION) {
+			struct sockaddr_in sin;
+			memcpy(&sin, CMSG_DATA(cmsg), sizeof(sin));
+			if (sin.sin_family != AF_INET) {
+				printf("BUG: sin_family unexpected (%d)\n", sin.sin_family);
+				continue;
+			}
+			printf("TODO [NAT Traversal]: packet received from %u.%u.%u.%u:%d\n",
+				NIP4ADDR(&sin.sin_addr), ntohs(sin.sin_port));
+		}
+
 		if (cmsg->cmsg_level != IPPROTO_IPV6)
 			continue;
 		switch (cmsg->cmsg_type) {
