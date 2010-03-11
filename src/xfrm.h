@@ -130,6 +130,8 @@ static inline int post_move_hoa(struct home_addr_info *hai, int oldif)
 
 void xfrm_udp_encap_delete(struct in6_addr *CoA, struct in6_addr *HoA);
 
+void xfrm_mip_in_out_delete(struct in6_addr *peer_addr, struct in6_addr *our_addr);
+
 /* The following functions are needed for NAT traversal in DSmipv6 */
 int udpencap_receive_traffic_start(struct in_addr *local, struct in_addr *sender);
 int udpencap_receive_traffic_end  (struct in_addr *local, struct in_addr *sender);
