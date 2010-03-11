@@ -437,7 +437,7 @@ md_init_coa(struct md_coa *coa, struct ifaddrmsg *ifa, struct rtattr **rta_tb,
 		/* DSMIPv6: If the address is mapped, then ifa_prefixlen
 		 * is actually the lenghth of the IPv4 address */
 		coa->plen4 = ifa->ifa_prefixlen;
-		coa->plen = 64;
+		coa->plen = 128; // this addr4 is still mapped in IP6
 	} else
 		coa->plen = ifa->ifa_prefixlen;
 	coa->scope = ifa->ifa_scope;

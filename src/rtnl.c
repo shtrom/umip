@@ -176,73 +176,42 @@ int addr_add(const struct in6_addr *addr, uint8_t plen,
 			addr, plen, flags, scope, ifindex, prefered, valid);
 }
 
-// RK TODO: this does not work yet
-int addr4_del(const struct in_addr *addr, uint8_t plen4, int ifindex)
+static int addr4_mod(const struct in_addr *addr, int plen4, int ifindex, int cmd)
 {
-	struct request {
-		struct nlmsghdr msg;
+	struct rtnl_handle rth;
+	struct {
+		struct nlmsghdr n;
 		struct ifaddrmsg ifa;
-		char payload[256];
+		char buf[256];
 	} req;
-
-	unsigned char brd_v4_coa[4];
-	uint32_t netmask = 0xffffffff;
-	unsigned long broadcast;
 	struct list_head *list;
-	struct net_iface *iface = NULL;
-	int i;
-
-	// Find the interface name
-	list_for_each(list, &conf.net_ifaces) {
-		struct net_iface *nif;
-		nif = list_entry(list, struct net_iface, list);
-		if (nif->ifindex == ifindex) {
-			iface = nif;
-		}
-	}
-
-	if (iface == NULL)
-		RTDBG("Interface %d does not exist\n", ifindex);
-
-	// Build the netmask
-	for (i = 0; i < 32-plen4; i++)
-		netmask = netmask << 1;
-
-	netmask = htonl(netmask);
-	broadcast = (addr->s_addr & netmask) | (~netmask);
-	memcpy(brd_v4_coa, &broadcast, 4);
-
-	RTDBG("address information : %d.%d.%d.%d, %d.%d.%d.%d, plen %d\n",
-		NIP4ADDR(addr), brd_v4_coa[0], brd_v4_coa[1],
-		brd_v4_coa[2], brd_v4_coa[3], plen4);
 
 	memset(&req, 0, sizeof(req));
-
-	req.msg.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifaddrmsg));
-	req.msg.nlmsg_flags = NLM_F_REQUEST;
-	req.msg.nlmsg_type = RTM_DELADDR;
-
+	req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifaddrmsg));
+	req.n.nlmsg_flags = NLM_F_REQUEST;
+	req.n.nlmsg_type = cmd;
 	req.ifa.ifa_family = AF_INET;
 	req.ifa.ifa_prefixlen = plen4;
-//	req.ifa.ifa_flags = IFA_F_PERMANENT;
 	req.ifa.ifa_index = ifindex;
+	addattr_l(&req.n, sizeof(req), IFA_LOCAL, addr, sizeof(struct in_addr));
 
-	addattr_l(&req.msg, sizeof(req), IFA_LOCAL, &addr->s_addr, 4);
-	addattr_l(&req.msg, sizeof(req), IFA_ADDRESS, &addr->s_addr, 4);
-	addattr_l(&req.msg, sizeof(req), IFA_BROADCAST, &brd_v4_coa, 4);
-//	addattr_l(&req.msg, sizeof(req), IFA_LABEL, iface->name, strlen(iface->name) + 1);
+	if (rtnl_open(&rth, 0) != 0)
+		return -1;
 
-	if (rtnl_talk(&dna_rth, &req.msg, 0, 0, NULL, NULL, NULL) < 0) {
-		RTDBG("IPv4 address could not be removed on interface %d, %s\n",
-			ifindex, iface->name);
-		return 0;
+	if (rtnl_talk(&rth, &req.n, 0, 0, NULL, NULL, NULL) < 0) {
+		RTDBG("Failed to modify address");
+		close(rth.fd);
+		return -1;
 	}
-	else
-		RTDBG("IPv4 address removed on interface %d\n", ifindex);
 
+	close(rth.fd);
 	return 0;
 }
 
+int addr4_del(const struct in_addr *addr, uint8_t plen4, int ifindex)
+{
+	return addr4_mod(addr, plen4, ifindex, RTM_DELADDR);
+}
 
 int addr_del(const struct in6_addr *addr, uint8_t plen, int ifindex)
 {
