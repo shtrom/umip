@@ -424,7 +424,17 @@ static void md_expire_inet6_iface(struct md_inet6_iface *iface)
 
 static void md_link_down(struct md_inet6_iface *iface)
 {
-	set_iface_have_addr(iface->ifindex, 0);
+	if (!all_iface_down()) {
+			//Kien: to avoid the case there are 2 events link_down between t0, t1 and (t1 - t0) is very small
+			set_iface_have_addr(iface->ifindex, 0);
+			struct list_head *l;
+			if (all_iface_down())
+				list_for_each(l, &conf.home_addrs) {
+					struct home_addr_info *hai;
+					hai = list_entry(l, struct home_addr_info, list);
+					mn_mnps_blackhole_rule_add(&hai->mob_net_prefixes);
+				}
+	}
 	MDBG2("link down on iface %s (%d)\n", iface->name, iface->ifindex);
 	md_flush_inet6_iface(iface);
 	__md_trigger_movement_event(ME_LINK_DOWN, 0, iface, NULL);
