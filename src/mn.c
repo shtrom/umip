@@ -107,6 +107,64 @@ static int pending_bas = 0;
 static void mn_send_home_bu(struct home_addr_info *hai);
 static int mn_ext_tunnel_ops(int request, int old_if, int new_if, void *data);
 
+static int mn_blackhole_rule_add(struct in6_addr *src6, int s6plen,
+		struct in6_addr *dst6, int d6plen, int prio)
+{
+	int ret = -1;
+
+	if (src6 != NULL && dst6 != NULL)
+		if ((ret = rule_add(NULL, 0, prio, RTN_BLACKHOLE,
+				src6, s6plen, dst6, d6plen, FIB_RULE_FIND_SADDR)) < 0){
+				MDBG("failed to add blackhole rule.\n");
+				return ret;
+			}
+
+	return ret;
+}
+
+static int mn_blackhole_rule_del(struct in6_addr *src6, int s6plen,
+		struct in6_addr *dst6, int d6plen, int prio)
+{
+	int ret = -1;
+
+	if (src6 != NULL && dst6 != NULL)
+		if ((ret = rule_del(NULL, 0, prio, RTN_BLACKHOLE,
+				src6, s6plen, dst6, d6plen, FIB_RULE_FIND_SADDR)) < 0){
+				MDBG("failed to del blackhole rule.\n");
+				return ret;
+			}
+
+	return ret;
+}
+
+void mn_mnps_blackhole_rule_add(struct list_head *mob_net_prefixes)
+{
+	struct list_head *l;
+	struct in_addr inaddr_any = { 0 };
+
+	list_for_each(l, mob_net_prefixes) {
+			struct prefix_list_entry *p = NULL;
+			p = list_entry(l, struct prefix_list_entry, list);
+			mn_blackhole_rule_add(&p->ple_prefix,
+					p->ple_plen, &in6addr_any, 0,
+					IP6_RULE_PRIO_MIP6_MNP_BLOCK);
+	 	}
+}
+
+void mn_mnps_blackhole_rule_del(struct list_head *mob_net_prefixes)
+{
+	struct list_head *l;
+	struct in_addr inaddr_any = { 0 };
+
+	list_for_each(l, mob_net_prefixes) {
+			struct prefix_list_entry *p = NULL;
+			p = list_entry(l, struct prefix_list_entry, list);
+			mn_blackhole_rule_del(&p->ple_prefix,
+					p->ple_plen, &in6addr_any, 0,
+					IP6_RULE_PRIO_MIP6_MNP_BLOCK);
+	 	}
+}
+
 static int mn_block_rule_del(struct home_addr_info *hai)
 {
 	int ret = -1;
@@ -836,13 +894,15 @@ static void mn_send_home_bu(struct home_addr_info *hai)
 
 	TRACE;
 
-	set_iface_have_addr(hai->primary_coa.iif, 1);
-
 	if (IN6_IS_ADDR_UNSPECIFIED(&hai->ha_addr)) {
 		MDBG("HA not set for home link\n");
 		return;
 	}
 	mn_get_home_lifetime(hai, &lifetime, 0);
+
+	int mnps_blackhole_del = 0;
+	if (all_iface_down()) mnps_blackhole_del = 1;
+	set_iface_have_addr(hai->primary_coa.iif, 1);
 
 	if ((bule = bul_get(hai, NULL, &hai->ha_addr)) == NULL) {
 		assert(!hai->at_home);
@@ -976,6 +1036,9 @@ static void mn_send_home_bu(struct home_addr_info *hai)
 		bul_delete(bule);
 		mn_do_dad(hai, 1);
 	}
+
+	if (mnps_blackhole_del)
+			mn_mnps_blackhole_rule_del(&hai->mob_net_prefixes);
 }
 
 void mn_send_cn_bu(struct bulentry *bule)
@@ -1598,6 +1661,7 @@ static void clean_home_addr_info(struct home_addr_info *hai)
 	struct flag_hoa_args arg;
 	int plen = (hai->hoa.iif == hai->if_tunnel ? 128 : hai->plen);
 
+	mn_mnps_blackhole_rule_del(&hai->mob_net_prefixes);
 	list_del(&hai->list);
 	if (hai->mob_rtr)
 		nemo_mr_rules_del(hai);

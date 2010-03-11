@@ -165,5 +165,8 @@ static inline int mn_is_at_home(struct list_head *prefixes,
 	return prefix_list_find(prefixes, home_prefix, home_plen);
 }
 
+void mn_mnps_blackhole_rule_add(struct list_head *mob_net_prefixes);
+
+void mn_mnps_blackhole_rule_del(struct list_head *mob_net_prefixes);
 
 #endif /* __MN_H__ */
