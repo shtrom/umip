@@ -45,10 +45,6 @@
 #include <linux/xfrm.h>
 #include <linux/udp.h> /* DSMIPv6: for UDP_ENCAP_IP_VANILLA */
 
-#ifndef IPPROTO_UDP_ENCAPSULATION
-#define IPPROTO_UDP_ENCAPSULATION 166
-#endif
-
 #include "debug.h"
 #include "mn.h" /* For mn_lock */
 #include "xfrm.h"
