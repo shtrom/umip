@@ -128,8 +128,12 @@ void md_trigger_movement_event(int event_type, int data, int ifindex)
 
 static inline void md_free_coa(struct md_coa *coa)
 {
+	if (conf.MnUseDsmip6 && IN6_IS_ADDR_V4MAPPED(&coa->addr))
+		xfrm_udp_encap_delete(&coa->addr, &conf.HaAddr4Mapped);
+
 	MDBG3("freeing CoA %x:%x:%x:%x:%x:%x:%x:%x on iface %d\n",
 	      NIP6ADDR(&coa->addr), coa->ifindex);
+
 	list_del(&coa->list);
 	free(coa);
 }
@@ -420,6 +424,7 @@ static void md_expire_inet6_iface(struct md_inet6_iface *iface)
 
 static void md_link_down(struct md_inet6_iface *iface)
 {
+	set_iface_have_addr(iface->ifindex, 0);
 	MDBG2("link down on iface %s (%d)\n", iface->name, iface->ifindex);
 	md_flush_inet6_iface(iface);
 	__md_trigger_movement_event(ME_LINK_DOWN, 0, iface, NULL);
@@ -437,7 +442,7 @@ md_init_coa(struct md_coa *coa, struct ifaddrmsg *ifa, struct rtattr **rta_tb,
 		/* DSMIPv6: If the address is mapped, then ifa_prefixlen
 		 * is actually the lenghth of the IPv4 address */
 		coa->plen4 = ifa->ifa_prefixlen;
-		coa->plen = 128; // this addr4 is still mapped in IP6
+		coa->plen = 128; // this addr is still mapped in IP6
 	} else
 		coa->plen = ifa->ifa_prefixlen;
 	coa->scope = ifa->ifa_scope;
@@ -463,6 +468,7 @@ static struct md_coa *md_create_coa(struct md_inet6_iface *iface,
 		MDBG3("creating CoA %x:%x:%x:%x:%x:%x:%x:%x on "
 		      "iface %s (%d)\n",
 		      NIP6ADDR(&coa->addr), iface->name, iface->ifindex);
+		add_iface_have_addr(iface->ifindex);
 	}
 	return coa;
 }

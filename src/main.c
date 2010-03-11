@@ -81,6 +81,8 @@ struct mip6_config conf;
 struct mip6_config *conf_parsed=NULL;
 struct mip6_stat mipl_stat;
 
+struct iface_ready iface_have_addr[MAX_INTERFACE_INDEX];
+
 static void terminate(void)
 {
 	/* got SIGINT, cleanup and exit */

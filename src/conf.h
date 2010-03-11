@@ -77,13 +77,21 @@ struct net_iface {
 	struct dhcp_dna_control_s *dhcp_ctrl;
 };
 
+struct iface_ready {
+	char have_addr;
+	int iif;
+};
+
 extern struct mip6_config conf;
 extern struct mip6_config *conf_parsed;
+
+extern struct iface_ready iface_have_addr[];
 
 #define MIP6_ENTITY_NO -1
 #define MIP6_ENTITY_CN 0
 #define MIP6_ENTITY_MN 1
 #define MIP6_ENTITY_HA 2
+#define MAX_INTERFACE_INDEX 256
 
 static inline int is_cn(void)
 {
@@ -128,6 +136,14 @@ static inline int is_if_ha(struct net_iface *i)
 int conf_parse(struct mip6_config *c, int argc, char **argv);
 
 void conf_show(struct mip6_config *c);
+
+void set_iface_have_addr(int iif, char value);
+
+char is_iface_have_addr(int iif);
+
+void add_iface_have_addr(int iif);
+
+char all_iface_down();
 
 int yyparse(void);
 

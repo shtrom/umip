@@ -431,3 +431,43 @@ int conf_update(struct mip6_config *c, void (*apply_changes_cb)(struct mip6_conf
 
 	return ret;
 }
+
+void set_iface_have_addr(int iif, char value) {
+	for (int k = 0; k < MAX_INTERFACE_INDEX; k++)
+		if (iface_have_addr[k].iif == iif) {
+			iface_have_addr[k].have_addr = value;
+			break;
+		}
+	return;
+}
+
+char is_iface_have_addr(int iif) {
+	for (int k = 0; k < MAX_INTERFACE_INDEX; k++)
+		if (iface_have_addr[k].iif == iif)
+			return iface_have_addr[k].have_addr;
+	return 0;
+}
+
+void add_iface_have_addr(int iif) {
+	for (int k = 0; k < MAX_INTERFACE_INDEX; k++)
+		if (iface_have_addr[k].iif == iif) return;
+		else
+			if (iface_have_addr[k].iif == 0) {
+				iface_have_addr[k].iif = iif;
+				break;
+			}
+	return;
+}
+
+char all_iface_down() {
+	char ret = 1;
+	for (int k = 0; k < MAX_INTERFACE_INDEX; k++)
+		if (iface_have_addr[k].iif == 0) break;
+		else
+			if (iface_have_addr[k].have_addr) {
+				ret = 0;
+				break;
+			}
+	return ret;
+}
+

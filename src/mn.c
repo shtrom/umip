@@ -316,6 +316,8 @@ static struct icmp6_handler mn_param_prob_handler = {
 
 static int mn_send_bu_msg(struct bulentry *bule)
 {
+	if (!is_iface_have_addr(bule->if_coa)) return 0;
+
 	struct ip6_mh_binding_update *bu;
 
 	struct iovec iov[IP6_MHOPT_MAX+1];
@@ -833,6 +835,8 @@ static void mn_send_home_bu(struct home_addr_info *hai)
 	movement_t type_movement = MIP6_TYPE_MOVEMENT_UNKNOWN;
 
 	TRACE;
+
+	set_iface_have_addr(hai->primary_coa.iif, 1);
 
 	if (IN6_IS_ADDR_UNSPECIFIED(&hai->ha_addr)) {
 		MDBG("HA not set for home link\n");
@@ -1690,6 +1694,8 @@ static int conf_home_addr_info(struct home_addr_info *conf_hai)
 
 	if  ((hai = hai_copy(conf_hai)) == NULL)
 		goto err;
+
+	ipv6_map_addr(&conf.HaAddr4Mapped, &hai->ha_addr4);
 
 	if (hai->mob_rtr) {
 		MDBG("is Mobile Router\n");
@@ -2880,6 +2886,10 @@ int mn_init(void)
 		syslog(LOG_ERR,
 		       "MN can't use both DoRouteOptimizationMN and TunnelPayload IPsecPolicy");
 		return -1;
+	}
+	for (int i = 0; i < MAX_INTERFACE_INDEX; i++) {
+		iface_have_addr[i].have_addr = 0;
+		iface_have_addr[i].iif = 0;
 	}
 	if (pthread_rwlock_init(&mn_lock, NULL))
 		return -1;
