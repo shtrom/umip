@@ -286,7 +286,6 @@ static struct mip6_tnl *__tunnel64_add(struct in6_addr *local,
 
 	memset(tnl, 0, sizeof(struct mip6_tnl));
 	tnl->users = 1;
-	tnl->sittun = 1;
 
 	tnl->parm4.iph.version = 4;
 	tnl->parm4.iph.ihl = 5;
@@ -340,7 +339,7 @@ static struct mip6_tnl *__tunnel64_add(struct in6_addr *local,
 	     NIP4ADDR2(tnl->parm4.iph.saddr),
 	     NIP4ADDR2(tnl->parm4.iph.daddr),
 	     tnl->users);
-
+	tnl->sittun = 1;
 	return tnl;
 err:
 	free(tnl);
@@ -359,7 +358,6 @@ static struct mip6_tnl *__tunnel_add(struct in6_addr *local,
 
 	memset(tnl, 0, sizeof(struct mip6_tnl));
 	tnl->users = 1;
-	tnl->sittun = 0;
 	tnl->parm.proto = IPPROTO_IPV6;
 	tnl->parm.flags = IP6_TNL_F_MIP6_DEV|IP6_TNL_F_IGN_ENCAP_LIMIT;
 	tnl->parm.hop_limit = 64;
@@ -404,7 +402,7 @@ static struct mip6_tnl *__tunnel_add(struct in6_addr *local,
 	     tnl->parm.name, tnl->ifindex,
 	     NIP6ADDR(&tnl->parm.laddr), NIP6ADDR(&tnl->parm.raddr),
 	     tnl->users);
-
+	tnl->sittun = 0;
 	return tnl;
 err:
 	free(tnl);
@@ -507,7 +505,6 @@ static int __tunnel64_mod(struct mip6_tnl *tnl,
 	ipv6_unmap_addr(remote, &parm.iph.daddr);
 	parm.link = link;
 	parm.iph.frag_off = htons(IP_DF);
-	tnl->sittun = 1;
 
 	strcpy(ifr.ifr_name, tnl->parm4.name);
 	ifr.ifr_ifru.ifru_data = (void *)&parm;
@@ -529,6 +526,7 @@ static int __tunnel64_mod(struct mip6_tnl *tnl,
 	     tnl->parm4.name, tnl->ifindex,
 	     NIP4ADDR2(parm.iph.saddr),
 	     NIP4ADDR2(parm.iph.daddr));
+	tnl->sittun = 1;
 	return tnl->ifindex;
 }
 
@@ -547,7 +545,6 @@ static int __tunnel_mod(struct mip6_tnl *tnl,
 	parm.laddr = *local;
 	parm.raddr = *remote;
 	parm.link = link;
-	tnl->sittun = 0;
 
 	strcpy(ifr.ifr_name, tnl->parm.name);
 	ifr.ifr_ifru.ifru_data = (void *)&parm;
@@ -568,8 +565,8 @@ static int __tunnel_mod(struct mip6_tnl *tnl,
 	     "to %x:%x:%x:%x:%x:%x:%x:%x\n",
 	     tnl->parm.name, tnl->ifindex, NIP6ADDR(&tnl->parm.laddr),
 	     NIP6ADDR(&tnl->parm.raddr));
+	tnl->sittun = 0;
 	return tnl->ifindex;
-
 }
 
 
