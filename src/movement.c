@@ -805,11 +805,15 @@ static void __md_discover_router(struct md_inet6_iface *iface)
 		tssetsec(exp_in, iface->devconf[DEVCONF_RTR_SOLICIT_INTERVAL]);
 		add_task_rel(&exp_in, &iface->tqe, md_discover_router);
 	}
-	if (md_is_link_up(iface) && (iface->router_solicits > 1) &&
-	    !(iface->dhcp_status)) {
-/*                dna_reachability_check(iface->index);*/
-		iface->dhcp_status |= DHCP_RUNNING;
-                dhcp_configuration(iface);
+
+/*                TODO : dna_reachability_check(iface->index);*/
+	// Perform DHCP config whatever the number of RS have been sent.
+	// TODO: BU for IPv4 CoA should only be sent after 1 RS have been sent
+	// (ie iface->router_solicits > 1) to give the priority to the IPv6 CoA
+	if (md_is_link_up(iface) && !(iface->dhcp_status)) {
+		MDBG("Trying to run DHCP config on iface %s (%d)\n",
+			iface->name, iface->ifindex);
+		trigger_dhcp_configuration(iface);
 	}
 }
 

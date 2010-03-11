@@ -7,6 +7,7 @@
 #include <net/if.h>
 #include "list.h"
 #include "pmgr.h"
+#include "dhcp_dna.h"
 
 struct mip6_config {
 	/* Common options */
@@ -73,6 +74,7 @@ struct net_iface {
 	int mip6_if_entity;
 	int mn_if_preference;
 	int is_tunnel;
+	struct dhcp_dna_control_s *dhcp_ctrl;
 };
 
 extern struct mip6_config conf;

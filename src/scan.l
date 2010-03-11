@@ -278,6 +278,7 @@ CnBindingPolicySet              { return CNBINDINGPOLICYSET; }
 MnUseDsmip6			{ return MNUSEDSMIP6; }
 HaAcceptDsmip6			{ return HAACCEPTDSMIP6; }
 internal			{ return INTERNAL; }
+UseDhcp				{ return IFUSEDHCP; }
 
 {addr}		{
 			int i;

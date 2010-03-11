@@ -202,6 +202,7 @@ static void uerror(const char *fmt, ...) {
 %token          CNBINDINGPOLICYSET
 %token		MNUSEDSMIP6
 %token		HAACCEPTDSMIP6
+%token		IFUSEDHCP
 
 %token		INV_TOKEN
 
@@ -426,6 +427,15 @@ ifacedef	: QSTRING ifacesub
 		| HOMEAGENTADDRESS4 ADDR4 ';'
 		{
 			ipv6_map_addr(&conf.HaAddr4Mapped, &$2);
+		}
+		| IFUSEDHCP BOOL ';'
+		{
+			ni.dhcp_ctrl = malloc(sizeof(struct dhcp_dna_control_s));
+			if (ni.dhcp_ctrl == NULL) {
+				uerror("out of memory");
+				return -1;
+			}
+			memset(ni.dhcp_ctrl, 0, sizeof(*ni.dhcp_ctrl));
 		}
 		;
 

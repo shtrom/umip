@@ -257,6 +257,8 @@ int main(int argc, char **argv)
 		goto ha_failed;
 	if (is_mn() && mn_init() < 0)
 		goto mn_failed;
+	if (is_mn() && dhcp_dna_init() < 0)
+		goto mn_failed;
 #ifdef ENABLE_VT
 	if (vt_start(conf.vt_hostname, conf.vt_service) < 0)
 		goto vt_start_failed;
