@@ -786,9 +786,8 @@ static void create_udpencaps_tmpl(struct xfrm_user_tmpl *utmpl,
 	/* For the state */
 	memset(etmpl, 0, sizeof(*etmpl));
 	etmpl->encap_type = UDP_ENCAP_IP_VANILLA;
-/* 	srand(time(NULL)); */
-	etmpl->encap_sport = htons(667);/* htons(1024 + (int) (65535.0*(rand()/(RAND_MAX + 1.0)))); */
-	etmpl->encap_dport = htons(666);/* htons(DSMIP_UDP_DPORT); */
+	etmpl->encap_sport = htons(DSMIP_UDP_DPORT);
+	etmpl->encap_dport = htons(DSMIP_UDP_DPORT);
 }
 
 /* Creates a ESP/AH/IPComp policy for protecting signaling bewteen MN
@@ -2781,3 +2780,105 @@ int xfrm_move_hoa(struct home_addr_info *hai, int oldif)
 
 	return ret;
 }
+
+/* Install a state for telling kernel to allow UDP-encapsulated traffic
+ * to be received. If the state is not installed, only MH messages and
+ * IPsec messages can be received.
+ */
+int udpencap_receive_traffic_start(struct in_addr *local, struct in_addr *sender)
+{
+	struct xfrm_selector sel;
+	struct xfrm_encap_tmpl etmpl;
+
+	memset(&etmpl, 0, sizeof(etmpl));
+
+ 	set_v4selector(*local, *sender, IPPROTO_UDP_ENCAPSULATION, 0, 0, 0, &sel);
+
+	return xfrm_state_encap_add(&sel, IPPROTO_UDP_ENCAPSULATION, &etmpl,
+				 0 /* create */, 0, &sel);
+
+}
+
+/* Remove the state installed in previous function */
+int udpencap_receive_traffic_end  (struct in_addr *local, struct in_addr *sender)
+{
+	struct xfrm_selector sel;
+
+	set_v4selector(*local, *sender, IPPROTO_UDP_ENCAPSULATION, 0, 0, 0, &sel);
+
+	return xfrm_state_del(IPPROTO_UDP_ENCAPSULATION, &sel);
+}
+
+
+/* Install a state and policy to encapsulate some kind of traffic into IPv4/UDP.
+ * Note that TLV is not implemented yet. Maybe put it into the usersa_info flags?
+ */
+int udpencap_encap_out_traffic_start( /* Selector for traffic to encapsulate */
+				struct in6_addr *local,
+				int lpreflen,
+				struct in6_addr *dest,
+				int dpreflen,
+				int proto,
+				int type,
+				/* Outer ip and udp */
+				struct in_addr *src,
+				int sport,
+				struct in_addr *dst,
+				int dport,
+				/* Policy */
+				int prio)
+{
+	struct xfrm_selector traffic_sel, encap_sel;
+	struct xfrm_user_tmpl tmpl;
+	struct xfrm_encap_tmpl etmpl;
+	int ret;
+
+	/* Create the state */
+	create_udpencaps_tmpl(&tmpl, &etmpl, *dst, *src);
+	etmpl.encap_sport = htons(sport);
+	etmpl.encap_dport = htons(dport);
+
+	set_selector(dest, local, proto, type, 0, 0, &traffic_sel);
+	traffic_sel.prefixlen_d = dpreflen;
+	traffic_sel.prefixlen_s = lpreflen;
+
+ 	set_v4selector(*dst, *src, IPPROTO_UDP_ENCAPSULATION, 0, 0, 0, &encap_sel);
+
+	ret = xfrm_state_encap_add(&traffic_sel, IPPROTO_UDP_ENCAPSULATION, &etmpl,
+				 0 /* create */, 0, &encap_sel);
+	if (ret < 0)
+		return ret;
+
+	/* Create the policy */
+	return xfrm_mip_policy_add(&traffic_sel, 0 /* create */, XFRM_POLICY_OUT,
+					XFRM_POLICY_ALLOW, prio, &tmpl, 1);
+}
+
+/* Remove state and policy installed in previous function */
+int udpencap_encap_out_traffic_end( /* Selector for traffic to encapsulate */
+				struct in6_addr *local,
+				int lpreflen,
+				struct in6_addr *dest,
+				int dpreflen,
+				int proto,
+				int type,
+				/* Outer ip and udp */
+				struct in_addr *src,
+				struct in_addr *dst)
+{
+	struct xfrm_selector traffic_sel, encap_sel;
+	int ret;
+
+	set_selector(dest, local, proto, type, 0, 0, &traffic_sel);
+	traffic_sel.prefixlen_d = dpreflen;
+	traffic_sel.prefixlen_s = lpreflen;
+
+ 	set_v4selector(*dst, *src, IPPROTO_UDP_ENCAPSULATION, 0, 0, 0, &encap_sel);
+
+	ret = xfrm_mip_policy_del(&traffic_sel, XFRM_POLICY_OUT);
+	if (ret < 0)
+		return ret;
+
+	return xfrm_state_del(IPPROTO_UDP_ENCAPSULATION, &encap_sel);
+}
+

@@ -128,4 +128,33 @@ static inline int post_move_hoa(struct home_addr_info *hai, int oldif)
 	return xfrm_move_hoa(hai, oldif);
 }
 
+/* The following functions are needed for NAT traversal in DSmipv6 */
+int udpencap_receive_traffic_start(struct in_addr *local, struct in_addr *sender);
+int udpencap_receive_traffic_end  (struct in_addr *local, struct in_addr *sender);
+
+int udpencap_encap_out_traffic_start( /* Selector for traffic to encapsulate */
+				struct in6_addr *local,
+				int lpreflen,
+				struct in6_addr *dest,
+				int dpreflen,
+				int proto,
+				int type,
+				/* Outer ip and udp */
+				struct in_addr *src,
+				int sport,
+				struct in_addr *dst,
+				int dport,
+				/* Policy */
+				int prio);
+int udpencap_encap_out_traffic_end( /* Selector for traffic to encapsulate */
+				struct in6_addr *local,
+				int lpreflen,
+				struct in6_addr *dest,
+				int dpreflen,
+				int proto,
+				int type,
+				/* Outer ip and udp */
+				struct in_addr *src,
+				struct in_addr *dst);
+
 #endif /* __XFRM_H__ */
