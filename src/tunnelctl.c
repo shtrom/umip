@@ -622,6 +622,13 @@ int tunnel_add(struct in6_addr *local,
 		return -1;
 	}
 
+	/* Preethi N <prenatar@cisco.com>:
+	 * Support for v4-v4 handovers in DSMIP
+	 * Avoid creating tunnel for a specific link number.
+	 * This makes it easier to handle v4-v4 handovers
+	 */
+        link = 0;
+
 	pthread_mutex_lock(&tnl_lock);
 	if ((tnl = hash_get(&tnl_hash, local, remote)) != NULL) {
 		tnl->users++;

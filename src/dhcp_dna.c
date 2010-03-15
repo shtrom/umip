@@ -105,6 +105,12 @@ dhcp_dna_init(void)
   struct list_head *l;
   struct dhcp_dna_control_s *dhcp_ctrl;
 
+  /* Preethi N <prenatar@cisco.com>
+   * Support external DCHP client in DSMIP
+   * Test if dhcp_listen() thread must be started
+   */
+  int start_dhcp_listener = 0;
+
   list_for_each(l, &conf.net_ifaces) {
 	struct net_iface *iface;
 
@@ -131,12 +137,25 @@ dhcp_dna_init(void)
 		dhcp_ctrl->clientid[DHCP_OPT_LEN] = 7;
 		dhcp_ctrl->clientid[DHCP_OPT_DATA] = 1;
 		memcpy(dhcp_ctrl->clientid + 3, dhcp_ctrl->arp, 6);
+
+		start_dhcp_listener = 1;
+	}
+	else {
+		fprintf(stderr, "dhcp_dna: DHCP disabled for interface: %d (%s)\n", iface->ifindex, iface->name);
 	}
 
   }
 
-  if (pthread_create(&dhcp_listener, NULL, dhcp_listen, NULL))
-    return -1;
+  /* Preethi N <prenatar@cisco.com>
+   * Support external DCHP client in DSMIP
+   */
+  if (start_dhcp_listener) {
+	if (pthread_create(&dhcp_listener, NULL, dhcp_listen, NULL))
+    		return -1;
+  }
+  else {
+	fprintf(stderr, "dhcp_dna: dhcp_listen thread NOT started\n");
+  }
 
   return 0;
 }

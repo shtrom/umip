@@ -2269,6 +2269,17 @@ int xfrm_pre_bu_add_bule(struct bulentry *bule)
 
 		/* We are doing Home Registration, and we are in IPv4-only network (DSMIPv6) */
 		/* We don't have DestOpt in BU and RH in BA. We use UDP encapsulation instead */
+
+                /* Preethi N <prenatar@cisco.com>:
+		 * Sleep to avoid race conditions between external DHCP
+		 * client and setting xfrm policies here.
+		 * If xfrm policies are set too soon, then the BUs
+		 * are not UDP encapsulated
+		 * Ref: http://ml.nautilus6.org/pipermail/dsmip/2009-December/000358.html
+                 */
+                XDBG("DSMIP: sleeping before adding XFRM policies\n");
+                usleep(5000000);
+
 		XDBG("Updating UDP encaps. policies and states for MN\n");
 
 		XDBG("flag state : %x, %x\n", bule->xfrm_state, BUL_XFRM_STATE_SIG_DSMIP);

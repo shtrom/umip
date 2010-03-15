@@ -31,6 +31,15 @@ dhcp_configuration(struct md_inet6_iface *);
 void
 dhcp_link_down(struct md_inet6_iface *);
 
+/* Preethi N <prenatar@cisco.com>
+ * Support external DCHP client in DSMIP
+ * dsmip_v4coa_add must be visible to movement.c 
+ */
+struct ifaddrmsg;
+struct rtattr;
+int 
+dsmip_v4coa_add(struct ifaddrmsg *, struct rtattr *[], void *);
+
 /* udhcp imported, rfc related defines */
 
 #define DHCP_INIT_SELECTING	0
