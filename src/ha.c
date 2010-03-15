@@ -60,6 +60,7 @@
 #include "ndisc.h"
 #include "prefix.h"
 #include "statistics.h"
+#include "hoa4.h"
 
 #define HA_DEBUG_LEVEL 1
 
@@ -1696,30 +1697,4 @@ void ha_cleanup(void)
 		free(current);
 		current = next;
 	}
-}
-
-inline char is_hoa4enabled(struct in_addr *addr4)
-{
-	if (addr4 == NULL) return 0;
-	struct hoa4_mnp4 *current = conf.mnpv4;
-	while (current != NULL) {
-		if(ip_equal(&current->hoa4, addr4))
-			return current->hoa4_enabled_by_MR;
-		current = current->next;
-	}
-	return 0;
-}
-
-char set_hoa4enabled(struct in_addr *addr4, char hoa4enabled)
-{
-	if (addr4 == NULL) return 0;
-	struct hoa4_mnp4 *current = conf.mnpv4;
-	while (current != NULL) {
-		if (ip_equal(&current->hoa4, addr4)) {
-			current->hoa4_enabled_by_MR = hoa4enabled;
-			return 1;
-		}
-		current = current->next;
-	}
-	return 0;
 }

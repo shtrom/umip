@@ -54,6 +54,7 @@
 #include "prefix.h"
 #include "nat.h"
 #include "statistics.h"
+#include "hoa4.h"
 
 #define MH_DEBUG_LEVEL 1
 
