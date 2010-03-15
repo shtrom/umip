@@ -29,7 +29,10 @@ struct bulentry {
 	struct tq_elem tqe;             /* Timer queue entry */
 	struct in6_addr peer_addr;      /* CN / HA address */
 	struct in6_addr hoa;
-	struct in6_addr coa;		/* care-of address of the sent BU */
+	struct in6_addr coa;		/* care-of address of the sentBU */
+    /* SMN */
+	struct in_addr coa4;            /* IPv4 CoA */
+    /* EMN */
 	int if_coa;
 	int if_tunnel;			/* Tunnel iface for the BCE */
 	int if_tunnel4;			/* 4/4 or 6/4 tunnel iface for the BCE */
@@ -45,7 +48,9 @@ struct bulentry {
 	int consecutive_resends;	/* Number of consecutive BU's resent */
 	int8_t coa_changed;
 	uint8_t wait_ack;      		/* WAIT / READY */
-	uint8_t xfrm_state;
+	/* SHA SMN */
+	uint32_t xfrm_state;
+	/* EHA EMN */
 	uint8_t use_alt_coa;            /* Whether to use alt. CoA option */
 	uint8_t dereg;                  /* for calculating BSA key */
 	uint8_t do_send_bu;             /* send bu / not send bu */
@@ -88,7 +93,7 @@ enum {
 #define BUL_XFRM_STATE_SIG_DSMIP 0x4	/* DSMIPv6: Set if UDP encaps. is set for signaling */
 #define BUL_XFRM_STATE_DATA6 0x8	/* DSMIPv6: set when states for IPv6
 					 * only are set*/
-
+#define BUL_XFRM_STATE_DATA_DSMIP 0x10	/* DSMIPv6: Set if UDP encaps. is set for signaling */
 struct bulentry *bul_get(struct home_addr_info *hinfo,
 			 const struct in6_addr *our_addr,
 			 const struct in6_addr *peer_addr);

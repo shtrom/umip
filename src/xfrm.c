@@ -700,7 +700,13 @@ static int xfrm_state_del(int proto, const struct xfrm_selector *sel)
 
 	sa_id = NLMSG_DATA(n);
 	/* State src and dst addresses */
-	memcpy(sa_id->daddr.a6, sel->daddr.a6, sizeof(sel->daddr.a6));
+	/* SHA */
+	if (sel->family == AF_INET6)
+		memcpy(sa_id->daddr.a6, sel->daddr.a6, sizeof(sa_id->daddr.a6));
+	else
+		memcpy(&sa_id->daddr.a4, &sel->daddr.a4, sizeof(sa_id->daddr.a4));
+	/* EHA */
+
 	sa_id->family = sel->family;
 	sa_id->proto = proto;
 
@@ -1893,6 +1899,50 @@ int xfrm_add_bce(const struct in6_addr *our_addr,
 	return 0;
 }
 
+/* SHA */
+int xfrm_add_bce_nat(struct bcentry *bce)
+{
+	struct in_addr ha4;
+	ipv6_unmap_addr(&conf.HaAddr4Mapped, &ha4.s_addr);
+
+	if (udpencap_encap_out_traffic_start(&in6addr_any,0,
+					&bce->peer_addr,128,
+					&inaddr_any, 0,
+					&bce->peer_addr4, 32,
+					0,
+					0,
+					&ha4,
+					DSMIP_UDP_DPORT,
+					&bce->nat_info.src,
+					(int) bce->nat_info.port,
+					MIP6_PRIO_HOME_SIG) < 0)
+	return -1;
+
+	if (udpencap_receive_traffic_start(&ha4,
+					&bce->nat_info.src))
+		return -1;
+
+	return 0;
+}
+void xfrm_del_bce_nat(struct bcentry *bce)
+{
+	struct in_addr ha4;
+	ipv6_unmap_addr(&conf.HaAddr4Mapped, &ha4.s_addr);
+
+	udpencap_encap_out_traffic_end(&in6addr_any,0,
+				&bce->peer_addr,128,
+				&inaddr_any, 0,
+				&bce->peer_addr4, 32,
+				0,
+				0,
+				&ha4,
+				&bce->nat_info.src);
+
+	udpencap_receive_traffic_end(&ha4,
+				&bce->nat_info.src);
+}
+/* EHA */
+
 /**
  * xfrm_del_bce - remove xfrm_states and xfrm_policies for a BC entry
  * @our_addr: our IPv6 address
@@ -2129,15 +2179,57 @@ int xfrm_del_bule_dsmip(struct bulentry *bule)
 	xfrm_sel4_dump(&sel);
 	xfrm_state_del(IPPROTO_UDP_ENCAPSULATION, &sel);
 
+	/* SHA SNMd */
 	/* Delete policy */
 	/*	set_selector(&bule->home->ha_addr, &bule->last_coa, IPPROTO_MH,
 		     IP6_MH_TYPE_BU, 0, 0, &sel);
 		     xfrm_mip_policy_del(&sel, XFRM_POLICY_OUT); */
+	/* EHA EMNd */
 
 	bule->xfrm_state &= ~BUL_XFRM_STATE_SIG_DSMIP;
 
 	XDBG("Successfully removed UDP encaps. policies and states (%x)\n",
 		bule->xfrm_state);
+	/* SHA SMNc */
+	if(!(bule->xfrm_state & BUL_XFRM_STATE_DATA_DSMIP)
+	   || !conf.MnUseDsmip6) {
+	  XDBG("No need to remove UDP data encaps. policies and states\n");
+	  return 0;
+	}
+	/* EHA EMNc */
+	udpencap_encap_out_traffic_end( /* Selector for traffic to encapsulate */
+				       &bule->hoa,
+				       128,
+				       &in6addr_any,
+				       0,
+				       &bule->home->hoa.addr4,
+				       32,
+				       &inaddr_any,
+				       0,
+				       0,
+				       0,
+				       &v4coa,
+				       &bule->home->ha_addr4);
+
+	udpencap_receive_traffic_end(&v4coa,
+				     &bule->home->ha_addr4);
+	/* SMN */
+	/* delete policy for data traffic */
+	set_selector(&bule->peer_addr, &bule->hoa, 0, 0, 0,
+		       bule->home->if_tunnel, &sel);
+
+	xfrm_mip_policy_del(&sel, XFRM_POLICY_OUT);
+	/* And for signaling */
+	set_selector(&bule->peer_addr, &bule->hoa, IPPROTO_MH, IP6_MH_TYPE_BU, 0, 0, &sel);
+
+	xfrm_mip_policy_del(&sel, XFRM_POLICY_OUT);
+
+
+	set_selector(&bule->hoa, &bule->peer_addr, IPPROTO_MH, IP6_MH_TYPE_BACK, 0,
+		     0, &sel);
+	xfrm_mip_policy_del(&sel, XFRM_POLICY_IN);
+	/* EMN */
+
 	return 0;
 }
 
@@ -2156,10 +2248,13 @@ void xfrm_del_bule(struct bulentry *bule)
 {
 	if (bule->xfrm_state & BUL_XFRM_STATE_DATA)
 		_xfrm_del_bule_data(bule);
-	_xfrm_del_bule_sig(bule);
-
+	/* SMN */
+	if (!(bule->xfrm_state & BUL_XFRM_STATE_SIG_DSMIP))
+	 	_xfrm_del_bule_sig(bule);
+	else
+	/* EMN */
 	/* DSMIPv6: delete DSMIP-related signaling if any */
-	xfrm_del_bule_dsmip(bule);
+		xfrm_del_bule_dsmip(bule);
 }
 
 /* before sending BU, MN should insert policy/state only for BU/BA */
@@ -2172,6 +2267,8 @@ int xfrm_pre_bu_add_bule(struct bulentry *bule)
 	int rsig = bule->xfrm_state & BUL_XFRM_STATE_SIG;
 	int rdata = bule->xfrm_state & BUL_XFRM_STATE_DATA;
 	int rdata6 = bule->xfrm_state & BUL_XFRM_STATE_DATA6;
+	int rsig_nat = bule->xfrm_state & BUL_XFRM_STATE_SIG_DSMIP;
+	int rdata_nat = bule->xfrm_state & BUL_XFRM_STATE_DATA_DSMIP;
 	int prio;
 	int exist = 0;
 
@@ -2280,13 +2377,15 @@ int xfrm_pre_bu_add_bule(struct bulentry *bule)
                 XDBG("DSMIP: sleeping before adding XFRM policies\n");
                 usleep(5000000);
 
-		XDBG("Updating UDP encaps. policies and states for MN\n");
-
-		XDBG("flag state : %x, %x\n", bule->xfrm_state, BUL_XFRM_STATE_SIG_DSMIP);
-		if (bule->xfrm_state & BUL_XFRM_STATE_SIG_DSMIP) {
-	        	XDBG("[DSMIP BUG] UDP encaps. policies and states already set\n");
-			return -1;
+		/* SMN */
+		if (rsig_nat){
+			XDBG("Deleting old UDP encaps. state for MN\n");
+			set_v4selector(bule->home->ha_addr4, bule->coa4,
+				       0, 0, 0, 0, &sel4);
+			xfrm_state_del(IPPROTO_UDP_ENCAPSULATION, &sel4);
 		}
+		XDBG("Adding UDP encaps. policies and states for MN\n");
+		/* EMN */
 
 		ipv6_unmap_addr(&bule->coa, &v4coa.s_addr);
 
@@ -2302,17 +2401,28 @@ int xfrm_pre_bu_add_bule(struct bulentry *bule)
 		set_selector(&bule->peer_addr, &bule->hoa, IPPROTO_MH, IP6_MH_TYPE_BU, 0, 0, &sel);
 
 		/* Add the policy */
-		if (xfrm_mip_policy_add(&sel, rsig, XFRM_POLICY_OUT,
+		if (xfrm_mip_policy_add(&sel, rsig_nat, XFRM_POLICY_OUT,
 					XFRM_POLICY_ALLOW, MIP6_PRIO_HOME_SIG, &tmpl[0], 1))
 			return -1;
 
 		/* Add the state */
 		set_selector(&bule->peer_addr, &bule->hoa, IPPROTO_MH, 0, 0, 0, &sel);
+		/* XXX: Update doesn't seem to work, so we delete the old
+		   one first if it exists and add the new one
+		*/
 		ret = xfrm_state_encap_add(&sel, IPPROTO_UDP_ENCAPSULATION, &etmpl,
-					 0 /* create */, 0, &sel4);
+					   0 /* update ?*/, 0, &sel4);
 
-		if (!ret)
-		  bule->xfrm_state |= BUL_XFRM_STATE_SIG_DSMIP;
+		if (!ret) {
+			bule->xfrm_state |= BUL_XFRM_STATE_SIG_DSMIP;
+			/* SNM */
+			if (rdata_nat) {
+				bule->xfrm_state |= BUL_XFRM_STATE_DATA_DSMIP;
+				XDBG("DSMIP DATA flag state already set, should delete policy and state for data\n");
+			} else
+				XDBG("DSMIP DATA flag not set, new UDP tunneling entry\n");
+			/* EMN */
+		}
 
 	#ifdef __DSMIP_DEBUG__
 		XDBG("flag state (post-call) : %x, %x\n", bule->xfrm_state, BUL_XFRM_STATE_SIG_DSMIP);
@@ -2360,25 +2470,84 @@ int xfrm_post_ba_mod_bule(struct bulentry *bule)
 			return 0;
 		}
 	}
-	prio = (bule->flags & IP6_MH_BU_HOME ?
-		MIP6_PRIO_HOME_DATA : MIP6_PRIO_RO_BULE_DATA);
-	set_selector(&bule->peer_addr, &bule->hoa, 0, 0, 0,
-		     bule->home->if_tunnel, &sel);
-	create_dstopt_tmpl(&tmpls[0], &bule->peer_addr, &bule->hoa);
-	ret = xfrm_mip_policy_add(&sel, 1, XFRM_POLICY_OUT,
-				   XFRM_POLICY_ALLOW, prio, tmpls, 1);
-	if (ret)
-		XDBG("failed to insert outbound policy\n");
+	if (bule->xfrm_state & BUL_XFRM_STATE_SIG_DSMIP) {
+		struct in_addr v4coa = {0};
+		if (bule->xfrm_state & BUL_XFRM_STATE_DATA_DSMIP) {
+			XDBG("Deleting old UDP encaps. policies and states for MN\n");
+			udpencap_encap_out_traffic_end( /* Selector for traffic to encapsulate */
+						&bule->hoa,
+						128,
+						&in6addr_any,
+						0,
+						&bule->home->hoa.addr4,
+						32,
+						&inaddr_any,
+						0,
+						0,
+						0,
+						&bule->coa4,
+						&bule->home->ha_addr4);
 
-	/* XXX: inbound is missed??? */
-	create_rh_tmpl(&tmpls[0]);
-	set_selector(&bule->hoa, &bule->peer_addr, 0, 0, 0,
-		     0, &sel);
-	ret = xfrm_mip_policy_add(&sel, 1, XFRM_POLICY_IN,
-				   XFRM_POLICY_ALLOW, prio, tmpls, 1);
-	if (ret)
-		XDBG("failed to insert inbound policy\n");
+			udpencap_receive_traffic_end(&bule->coa4,
+						&bule->home->ha_addr4);
+		}
 
+		/* We don't have DestOpt in BU and RH in BA.
+		 * We use UDP encapsulation instead */
+		XDBG("Adding new UDP encaps. policies and states for MN\n");
+		ipv6_unmap_addr(&bule->coa, &v4coa.s_addr);
+		memcpy(&bule->coa4, &v4coa, sizeof(bule->coa4));
+
+		udpencap_encap_out_traffic_start( /* Selector for traffic to encapsulate */
+				&bule->hoa,
+				128,
+				&in6addr_any,
+				0,
+				&bule->home->hoa.addr4,
+				32,
+				&inaddr_any,
+				0,
+				0,
+				0,
+				/* Outer ip and udp */
+				&v4coa,
+				0,
+				&bule->home->ha_addr4,
+				0,
+				/* Policy */
+				MIP6_PRIO_HOME_DATA);
+		udpencap_receive_traffic_start(&v4coa,
+					       &bule->home->ha_addr4);
+
+		bule->xfrm_state |= BUL_XFRM_STATE_DATA_DSMIP;
+		/* Add policy and state for BU */
+		/* Encapsulation src=v4coa, dst=ha4 */
+		/* NOTE: for the BA, we must open a UDP socket and set some sockopts on it */
+
+
+	} else if (!(bule->xfrm_state & BUL_XFRM_STATE_SIG_DSMIP)) {
+		prio = (bule->flags & IP6_MH_BU_HOME ?
+					MIP6_PRIO_HOME_DATA : MIP6_PRIO_RO_BULE_DATA);
+		set_selector(&bule->peer_addr, &bule->hoa, 0, 0, 0,
+					bule->home->if_tunnel, &sel);
+		create_dstopt_tmpl(&tmpls[0], &bule->peer_addr, &bule->hoa);
+		ret = xfrm_mip_policy_add(&sel, 1, XFRM_POLICY_OUT,
+					XFRM_POLICY_ALLOW, prio, tmpls, 1);
+		if (ret)
+			XDBG("failed to insert outbound policy\n");
+
+		/* XXX: inbound is missed??? */
+		create_rh_tmpl(&tmpls[0]);
+		set_selector(&bule->hoa, &bule->peer_addr, 0, 0, 0,
+				0, &sel);
+		ret = xfrm_mip_policy_add(&sel, 1, XFRM_POLICY_IN,
+						XFRM_POLICY_ALLOW, prio, tmpls, 1);
+		if (ret)
+			XDBG("failed to insert inbound policy\n");
+
+	} else {
+		XDBG("DSMIP nat traversal policies already exist, not doing anything\n");
+	}
 	return ret;
 }
 
@@ -2825,10 +2994,13 @@ int udpencap_receive_traffic_start(struct in_addr *local, struct in_addr *sender
 {
 	struct xfrm_selector sel;
 	struct xfrm_encap_tmpl etmpl;
+	struct xfrm_user_tmpl tmpl;
 
 	memset(&etmpl, 0, sizeof(etmpl));
 
  	set_v4selector(*local, *sender, IPPROTO_UDP_ENCAPSULATION, 0, 0, 0, &sel);
+
+	create_udpencaps_tmpl(&tmpl, &etmpl, *local, *sender);
 
 	return xfrm_state_encap_add(&sel, IPPROTO_UDP_ENCAPSULATION, &etmpl,
 				 0 /* create */, 0, &sel);
@@ -2836,7 +3008,7 @@ int udpencap_receive_traffic_start(struct in_addr *local, struct in_addr *sender
 }
 
 /* Remove the state installed in previous function */
-int udpencap_receive_traffic_end  (struct in_addr *local, struct in_addr *sender)
+int udpencap_receive_traffic_end  (const struct in_addr *local, const struct in_addr *sender)
 {
 	struct xfrm_selector sel;
 
@@ -2845,24 +3017,27 @@ int udpencap_receive_traffic_end  (struct in_addr *local, struct in_addr *sender
 	return xfrm_state_del(IPPROTO_UDP_ENCAPSULATION, &sel);
 }
 
-
 /* Install a state and policy to encapsulate some kind of traffic into IPv4/UDP.
  * Note that TLV is not implemented yet. Maybe put it into the usersa_info flags?
  */
 int udpencap_encap_out_traffic_start( /* Selector for traffic to encapsulate */
-				struct in6_addr *local,
-				int lpreflen,
-				struct in6_addr *dest,
-				int dpreflen,
-				int proto,
-				int type,
-				/* Outer ip and udp */
-				struct in_addr *src,
-				int sport,
-				struct in_addr *dst,
-				int dport,
-				/* Policy */
-				int prio)
+		const struct in6_addr *local,
+		int lpreflen,
+		const struct in6_addr *dest,
+		int dpreflen,
+		const struct in_addr *loc4,
+		int lpreflen4,
+		const struct in_addr *dest4,
+		int dpreflen4,
+		int proto,
+		int type,
+		/* Outer ip and udp */
+		const struct in_addr *src,
+		int sport,
+		const struct in_addr *dst,
+		int dport,
+		/* Policy */
+		int prio)
 {
 	struct xfrm_selector traffic_sel, encap_sel;
 	struct xfrm_user_tmpl tmpl;
@@ -2871,50 +3046,90 @@ int udpencap_encap_out_traffic_start( /* Selector for traffic to encapsulate */
 
 	/* Create the state */
 	create_udpencaps_tmpl(&tmpl, &etmpl, *dst, *src);
-	etmpl.encap_sport = htons(sport);
-	etmpl.encap_dport = htons(dport);
+	if (sport)
+		etmpl.encap_sport = htons(sport);
+	if (dport)
+		etmpl.encap_dport = htons(dport);
 
+	set_selector(&in6addr_any, &in6addr_any, 0, 0, 0, 0, &traffic_sel);
+	traffic_sel.prefixlen_d = 0;
+	traffic_sel.prefixlen_s = 0;
+
+	set_v4selector(*dst, *src, 0, 0, 0, 0, &encap_sel);
+
+	ret = xfrm_state_encap_add(&traffic_sel, IPPROTO_UDP_ENCAPSULATION, &etmpl,
+			0 /* create */, 0, &encap_sel);
+	if (ret < 0)
+		return ret;
 	set_selector(dest, local, proto, type, 0, 0, &traffic_sel);
 	traffic_sel.prefixlen_d = dpreflen;
 	traffic_sel.prefixlen_s = lpreflen;
 
- 	set_v4selector(*dst, *src, IPPROTO_UDP_ENCAPSULATION, 0, 0, 0, &encap_sel);
-
-	ret = xfrm_state_encap_add(&traffic_sel, IPPROTO_UDP_ENCAPSULATION, &etmpl,
-				 0 /* create */, 0, &encap_sel);
+	/* Create the policy */
+	ret = xfrm_mip_policy_add(&traffic_sel, 0 /* create */, XFRM_POLICY_OUT,
+			XFRM_POLICY_ALLOW, prio, &tmpl, 1);
 	if (ret < 0)
 		return ret;
+	if (dest4 && loc4) {
+		set_v4selector(*dest4, *loc4, 0, 0, 0, 0, &traffic_sel);
+		traffic_sel.prefixlen_d = dpreflen4;
 
-	/* Create the policy */
-	return xfrm_mip_policy_add(&traffic_sel, 0 /* create */, XFRM_POLICY_OUT,
-					XFRM_POLICY_ALLOW, prio, &tmpl, 1);
+		traffic_sel.prefixlen_s = lpreflen4;
+		ret = xfrm_mip_policy_add(&traffic_sel, 0 /* create */, XFRM_POLICY_OUT,
+				XFRM_POLICY_ALLOW, prio, &tmpl, 1);
+		if (ret < 0)
+			return ret;
+	}
+	return ret;
 }
 
 /* Remove state and policy installed in previous function */
 int udpencap_encap_out_traffic_end( /* Selector for traffic to encapsulate */
-				struct in6_addr *local,
-				int lpreflen,
-				struct in6_addr *dest,
-				int dpreflen,
-				int proto,
-				int type,
-				/* Outer ip and udp */
-				struct in_addr *src,
-				struct in_addr *dst)
+		const struct in6_addr *local,
+		int lpreflen,
+		const struct in6_addr *dest,
+		int dpreflen,
+		const struct in_addr *loc4,
+		int lpreflen4,
+		const struct in_addr *dest4,
+		int dpreflen4,
+		int proto,
+		int type,
+		/* Outer ip and udp */
+		const struct in_addr *src,
+		const struct in_addr *dst)
 {
 	struct xfrm_selector traffic_sel, encap_sel;
 	int ret;
 
+	set_selector(&in6addr_any, &in6addr_any, 0, 0, 0, 0, &traffic_sel);
+	traffic_sel.prefixlen_d = 0;
+	traffic_sel.prefixlen_s = 0;
+	set_v4selector(*dst, *src, 0, 0, 0, 0, &encap_sel);
+
+	ret =  xfrm_state_del(IPPROTO_UDP_ENCAPSULATION, &encap_sel);
+	if (ret < 0)
+		return ret;
+
 	set_selector(dest, local, proto, type, 0, 0, &traffic_sel);
 	traffic_sel.prefixlen_d = dpreflen;
 	traffic_sel.prefixlen_s = lpreflen;
-
- 	set_v4selector(*dst, *src, IPPROTO_UDP_ENCAPSULATION, 0, 0, 0, &encap_sel);
 
 	ret = xfrm_mip_policy_del(&traffic_sel, XFRM_POLICY_OUT);
 	if (ret < 0)
 		return ret;
 
-	return xfrm_state_del(IPPROTO_UDP_ENCAPSULATION, &encap_sel);
-}
+	if (dest4 && loc4) {
+		set_v4selector(*dest4, *loc4, 0, 0, 0, 0, &traffic_sel);
+		traffic_sel.prefixlen_d = dpreflen4;
+		traffic_sel.prefixlen_s = lpreflen4;
 
+		ret = xfrm_mip_policy_del(&traffic_sel, XFRM_POLICY_OUT);
+		if (ret < 0)
+			return ret;
+
+		return 0;
+	}
+	XDBG("ipv4 addresses missing\n");
+	return -1;
+}

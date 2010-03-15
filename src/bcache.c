@@ -269,7 +269,10 @@ static int __bcache_start(struct bcentry *bce)
 	      bce->type == BCE_HOMEREG ? bce->lifetime : tmp,
 	      expires);
 	add_task_abs(&expires, &bce->tqe, _expire);
-	xfrm_add_bce(&bce->our_addr, &bce->peer_addr, &bce->coa, 0);
+	/* SHA */
+	if (!bce->behind_nat)
+	/* EHA */
+		xfrm_add_bce(&bce->our_addr, &bce->peer_addr, &bce->coa, 0);
 	return 0;
 }
 
@@ -337,9 +340,19 @@ int bcache_update_expire(struct bcentry *bce)
 	}
 	tsadd(expires, bce->add_time, expires);
 	add_task_abs(&expires, &bce->tqe, _expire);
-	xfrm_add_bce(&bce->our_addr, &bce->peer_addr, &bce->coa, 1);
-	printf("pure v6 address %x:%x:%x:%x:%x:%x:%x:%x, adding xfrm states\n", NIP6ADDR(&bce->coa));
-
+	/* SHA */
+	/* If we move to v6 network we need to create or update the xfrm route optimization state */
+	if (!IN6_IS_ADDR_V4MAPPED(&bce->coa)) {
+		/* Update XFRM state, if we move from v6 to v6 and create it in v4 to v6 */
+		xfrm_add_bce(&bce->our_addr, &bce->peer_addr, &bce->coa,!IN6_IS_ADDR_V4MAPPED(&bce->old_coa));
+		printf("Non NATted IP address %x:%x:%x:%x:%x:%x:%x:%x, adding xfrm states\n", NIP6ADDR(&bce->coa));
+	} else if (!IN6_IS_ADDR_V4MAPPED(&bce->old_coa)) {
+		/* v6 to v4 case */
+		xfrm_del_bce(&bce->our_addr, &bce->peer_addr);
+	} else{
+		/* v4 to v4 case handled in ha.c */
+	}
+	/* EHA */
 	return 0;
 }
 
@@ -386,8 +399,14 @@ static void bce_delete(struct bcentry *bce, int flush)
 	pthread_rwlock_wrlock(&bce->lock);
 	if (bce->type != BCE_DAD) {
 		del_task(&bce->tqe);
-		if ((bce->type != BCE_NONCE_BLOCK) && (!(IN6_IS_ADDR_V4MAPPED(&bce->coa))))
-			xfrm_del_bce(&bce->our_addr, &bce->peer_addr);
+		/* SHA */
+		if ((bce->type != BCE_NONCE_BLOCK)) {
+			if(!IN6_IS_ADDR_V4MAPPED(&bce->coa) && !bce->behind_nat)
+				xfrm_del_bce(&bce->our_addr, &bce->peer_addr);
+			else if (bce->behind_nat)
+				xfrm_del_bce_nat(bce);
+		}
+		/* EHA */
 	}
 	if (bce->cleanup)
 		bce->cleanup(bce);

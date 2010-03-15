@@ -16,6 +16,9 @@ struct bcentry {
 	struct timespec add_time;       /* When was the binding added or modified */
 	struct timespec lifetime;      	/* lifetime sent in this BU, in seconds */
 	struct encap_info nat_info;    	/* Information for NAT traversal */
+    /* SHA */
+	struct in_addr ha4;
+	/* EHA */
 	uint8_t behind_nat;             /* whether a nat was detected */
 	uint16_t seqno;			/* sequence number of the latest BU */
 	uint16_t flags;			/* BU flags */

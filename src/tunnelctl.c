@@ -320,7 +320,7 @@ int tunnel_del(int ifindex,
 	       void *data)
 {
 	struct mip6_tnl *tnl;
-	int res;
+	int res = -1;
 
 	pthread_mutex_lock(&tnl_lock);
 	if ((tnl = get_tnl(ifindex)) == NULL) {

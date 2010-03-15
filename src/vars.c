@@ -31,3 +31,5 @@ const char loopback_dev_name[] = "lo";
 
 const struct in6_addr in6addr_all_nodes_mc = IN6ADDR_ALL_NODES_MC_INIT;
 const struct in6_addr in6addr_all_routers_mc = IN6ADDR_ALL_ROUTERS_MC_INIT;
+
+const struct in_addr inaddr_any = {0};

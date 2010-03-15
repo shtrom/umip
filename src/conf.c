@@ -214,7 +214,9 @@ static void conf_default(struct mip6_config *c)
 	/* MN options */
 	c->MnMaxHaBindingLife = MAX_BINDING_LIFETIME;
 	c->MnMaxCnBindingLife = MAX_RR_BINDING_LIFETIME;
-	tssetdsec(c->InitialBindackTimeoutFirstReg_ts, 1.5);/*seconds*/
+	/* SMN */
+	tssetdsec(c->InitialBindackTimeoutFirstReg_ts, 3);/*seconds*/
+	/* EMN */
 	tssetsec(c->InitialBindackTimeoutReReg_ts, INITIAL_BINDACK_TIMEOUT);/*seconds*/
 	tssetsec(c->InitialSolicitTimer_ts, INITIAL_SOLICIT_TIMER);/*seconds*/
 	INIT_LIST_HEAD(&c->home_addrs);

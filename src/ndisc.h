@@ -37,10 +37,11 @@ void proxy_nd_iface_init(int ifindex);
 
 void proxy_nd_iface_cleanup(int ifindex);
 
-int proxy_nd_start(int ifindex, struct in6_addr *target,
+int proxy_nd_start(int ifindex, struct in6_addr *target, struct in_addr *target4,
 		   struct in6_addr *src, int bu_flags);
 
-void proxy_nd_stop(int ifindex, struct in6_addr *target, int bu_flags);
+void proxy_nd_stop(int ifindex, struct in6_addr *target, struct in_addr *target4,
+		   int bu_flags);
 
 int neigh_add(int ifindex, uint16_t state, uint8_t flags,
 	      struct in6_addr *dst, uint8_t *hwa, int hwalen,
@@ -48,9 +49,9 @@ int neigh_add(int ifindex, uint16_t state, uint8_t flags,
 
 int neigh_del(int ifindex, struct in6_addr *dst);
 
-int pneigh_add(int ifindex, uint8_t flags, struct in6_addr *dst);
+int pneigh_add(int ifindex, uint8_t flags, void *dst_addr, int addr_family);
 
-int pneigh_del(int ifindex, struct in6_addr *dst);
+int pneigh_del(int ifindex, void *dst_Addr, int addr_family);
 
 
 #endif
