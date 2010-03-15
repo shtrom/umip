@@ -9,7 +9,8 @@
 
 struct bcentry {
 	struct in6_addr our_addr;	/* Address to which we got BU */
-	struct in6_addr peer_addr;	/* MN home address */
+	struct in6_addr peer_addr;	/* MN home address IPv6 */
+	struct in_addr peer_addr4;	/* MN home address IPv4 */
 	struct in6_addr old_coa;	/* Previous care-of address */
 	struct in6_addr coa;		/* MN care-of address */
 	struct timespec add_time;       /* When was the binding added or modified */
@@ -24,7 +25,8 @@ struct bcentry {
 	uint16_t type;     		/* Entry type */
 	uint16_t nemo_type;    		/* NEMO registration type */
 	int unreach;			/* ICMP dest unreach count */
-	int tunnel;			/* Tunnel interface index */
+	int tunnel;			/* 6/6 or 6/4 tunnel interface index */
+	int tunnel4;			/* 4/4 or 4/6 tunnel interface index */
 	int link;			/* Home link interface index */
 
 	int id;				/* For testing */
@@ -38,7 +40,8 @@ struct bcentry {
 
 	void (*cleanup)(struct bcentry *bce); /* Clean up bce data */
 
-	struct list_head mob_net_prefixes;
+	struct list_head mob_net_prefixes;	/* Mobile network prefixes v6*/
+	struct net_prefix4 *mob_net_prefixes4;	/* Mobile network prefixes v4*/
 };
 
 #define BCE_NONCE_BLOCK 0

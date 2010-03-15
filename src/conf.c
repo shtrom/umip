@@ -46,6 +46,8 @@
 #include "debug.h"
 #include "util.h"
 #include "mipv6.h"
+#include "ha.h"
+#include "prefix.h"
 #include "mn.h"
 #include "cn.h"
 #include "xfrm.h"
@@ -221,6 +223,7 @@ static void conf_default(struct mip6_config *c)
 	c->SendMobPfxSols = 1;
 	c->OptimisticHandoff = 0;
 	c->MnUseDsmip6 = 0;
+	c->MnSupportIPv4Traffic = 0;
 
 	/* HA options */
 	c->SendMobPfxAdvs = 1;
@@ -235,6 +238,7 @@ static void conf_default(struct mip6_config *c)
 	/* CN bindings */
 	c->DoRouteOptimizationCN = 1;
 	INIT_LIST_HEAD(&c->cn_binding_pol);
+	c->mnpv4 = NULL;
 }
 
 int conf_parse(struct mip6_config *c, int argc, char **argv)
@@ -276,6 +280,9 @@ void conf_show(struct mip6_config *c)
 {
 	struct list_head *list;
 	struct in_addr addr4 = { 0 };
+
+	struct hoa4_mnp4 *current = conf.mnpv4;
+	struct net_prefix4 *curmnp4;
 
 	/* Common options */
 	dbg("config_file = %s\n", c->config_file);
@@ -334,6 +341,7 @@ void conf_show(struct mip6_config *c)
 	dbg("MobRtrUseExplicitMode = %s\n",
 	    CONF_BOOL_STR(c->MobRtrUseExplicitMode));
 	dbg("MnUseDsmip6 = %s\n", CONF_BOOL_STR(c->MnUseDsmip6));
+	dbg("MnSupportIPv4Traffic = %s\n", CONF_BOOL_STR(c->MnSupportIPv4Traffic));
 
 	/* HA options */
 	dbg("SendMobPfxAdvs = %s\n", CONF_BOOL_STR(c->SendMobPfxAdvs));
@@ -346,6 +354,19 @@ void conf_show(struct mip6_config *c)
 	dbg("HaAcceptDsmip6 = %s\n", CONF_BOOL_STR(c->HaAcceptDsmip6));
 	ipv6_unmap_addr(&c->HaAddr4Mapped, &addr4.s_addr);
 	dbg("HomeAgentV4Address = %d.%d.%d.%d\n", NIP4ADDR(&addr4));
+	while (current != NULL) {
+		dbg("HoAv4 = %d.%d.%d.%d comes with these MNPv4s: ", NIP4ADDR(&current->hoa4));
+		curmnp4 = current->mob_net_prefixes4;
+		while (curmnp4 != NULL) {
+			printf("%d.%d.%d.%d", NIP4ADDR(&curmnp4->prefix4));
+			if (curmnp4->next != NULL ) printf(" --- ");
+			curmnp4 = curmnp4->next;
+		}
+		current = current->next;
+		printf("\n");
+	}
+	current = NULL;
+	curmnp4 = NULL;
 
 	/* CN options */
 	dbg("DoRouteOptimizationCN = %s\n",
@@ -470,4 +491,3 @@ char all_iface_down() {
 			}
 	return ret;
 }
-

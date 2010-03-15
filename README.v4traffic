@@ -1,0 +1,185 @@
+UMIP-DSMIP-v4TRAFFIC: an IPv4 traffic support implementation for 
+UMIP-NEPL and UMIP-DSMIP.
+
+Orange Labs - MOBINET Project
+-----------------------------
+
+IPv4 traffic support implementation for UMIP-DSMIP is developed by
+- Duc Kien NGUYEN < kien.duc-nguyen@univ-paris8.fr >
+- Nassim KOBEISSY < nassim.kobeissy@gmail.com >
+
+IPv4 traffic support implementation for UMIP-NEPL is developed by 
+- Duc Kien NGUYEN < kien.duc-nguyen@univ-paris8.fr >
+
+
+Release Notes:
+- 20081021: First release for UMIP-NEPL 0.4 and UMIP-DSMIP 0.1
+
+Released under the GPLv2 license. See the COPYING file included with 
+this release.
+
+
+1. About UMIP-DSMIP-v4TRAFFIC
+-----------------------------
+
+UMIP-DSMIP-v4TRAFFIC implementation aims at extending UMIP-NEPL and 
+UMIP-DSMIP to support IPv4 traffic in the mobile network and on the 
+mobile node, in both of IPv6 and IPv4 network.
+
+The basic features are:
+- the possibility to use an IPv4 Home Address on the mobile node, 
+- the possibility to use the IPv4 MNPs in the mobile network.
+
+
+a. Disclaimer
+-------------
+
+This release has been tested and showed stability in some scenarios; 
+however, you may encounter bugs, and performance issues while 
+operating it. Some parts of the code also need to be re-written.
+
+The draft concerning the IPv4 Mobile Network Prefix option is already 
+expired (http://tools.ietf.org/html/draft-shima-nemo-v4prefix-01), 
+we thus decided don't put IPv4 MNPs in the BU at this moment. 
+In waiting for an official discussion, IPv4 MNPs are read from the 
+configuration file on HA.
+
+Except from this short documentation, the only place so far to find 
+interesting information is the code itself: take some time to read 
+and understand what the UMIP-DSMIP-v4TRAFFIC patch do.
+
+
+b. Features
+-----------
+
+The current state of UMIP-DSMIP-v4TRAFFIC implements:
+- the possibility to register an IPv4 HoA, add and move it between 
+  tunnels,
+- the possibility to use the IPv4 MNPs in the mobile network with 
+  both of IPv4 CoA and IPv6 CoA.
+
+UMIP-DSMIP-v4TRAFFIC does NOT implement (yet):
+- UDP encapsulation of the data when a NAT is detected,
+- the possibility to connect the HA behind a NAT device,
+- (to complete) the possibility to use an IPv4 Home Address on the 
+  mobile node.
+
+
+c. Known Bugs
+-------------
+
+We are aware of the following problems:
+- After n handovers, the MR can not take an address in IPv4-only 
+  network because of a bug from UMIP-DSMIP "dhcp_dna: socket call 
+  failed: Too many open files"
+- And certainly many others not listed here ...
+
+
+3. How to setup UMIP-DSMIP-v4TRAFFIC
+--------------------------------
+
+a. Overview of the release
+--------------------------
+
+  umip-dsmip-v4traffic-20081021
+    |
+    |
+    +-- patches-for-dsmip_v0.1-bugs: a set of patches to fix some
+    |                          bugs in UMIP-DSMIP v0.1
+    |
+    +-- umip-dsmip-v4traffic-20081021: a patch to enable IPv4 traffic 
+                               support for UMIP-DSMIP, apply to
+                               UMIP-DSMIP v0.1
+
+b. Sample testbed
+-----------------
+
+The following topology can be a good starting point to test the
+UMIP-DSMIP-v4TRAFFIC implementation:
+
+
+                                Home Link (IPv6 and IPv4)   
+                              ------------- 
+                                    |
+                                    | 
+                                    HA                              
+                                    |                                 
+    -----------------               |              -----------------
+    |      FN1      |----AR1------------- AR2 -----|      FN4      |
+    |  (IPv4-only)  |     |                |       |(IPv6 and IPv4)|
+    -----------------     |                |       -----------------
+                          |                |                        
+                    -------------     ------------- 
+                    |    FN2    |     |   FN3 
+                    |(IPv4-only)|     |(IPv6-only)
+                    -------------     -------------
+             <----->     |     <----->           <----->
+                     ____MR____  
+                      | ...  | 
+                    MNPv4  MNPv6
+
+
+
+d. Kernel setup for the MR and the HA
+-------------------------------------
+
+See the guide from DSMIPv6/README.
+
+
+
+e. Userland setup for the MR and the HA
+---------------------------------------
+
+Install DSMIPv6 then apply the set of patches available in 
+umip-dsmip-0.1-patches, from 01 (first) to 05 (last) to fix 
+some bugs in UMIP-DSMIP 0.1.
+
+Compile the UMIP daemon as explained in the NEPL Howto. The special
+option "--enable-tlv" could be given at the "configure" time to enable
+the processing of TLV UDP encapsulation. Note that TLV UDP encapsulation
+is not completely supported yet).
+
+In addition to the usual UMIP-DSMIP required fields, the configuration 
+file must set the following ones:
+
+- For the Home Agent:
+
+    HaAcceptIPv4Traffic <HoA IPv4 address> (MNP IPv4 list);
+    # Example :    
+    # HomeV4Address 192.168.1.17/24 (192.168.17.0/24, 10.0.1.0/24);
+
+- For the MR:
+
+    MnSupportIPv4Traffic enabled;
+    MnHomeLink <interface> {
+       [...]
+       HomeV4Address <HoA IPv4 address> (MNP IPv4 list);
+       # Example : 
+       # HomeV4Address 192.168.1.17/24 (192.168.17.0/24, 10.0.1.0/24);
+       [...]
+    }
+
+
+4. Operating UMIP-DSMIP-v4TRAFFIC
+---------------------------------
+
+If the MR moves in IPv6-only networks, the usual NEMO Basic Support 
+protocol is operated. An IPv6/IPv4-in-IPv6 tunnel is then built 
+between the MR and the HA. 
+All the IPv6/IPv4 traffic from the MR or the nodes in the Mobile 
+Network is sent through this tunnel up to the HA.
+
+If both IPv6 and IPv4 are operated in the network, IPv6 is always
+preferred. 
+
+When moving to IPv4 only networks, an IPv4 CoA is configured on the
+interface of the MR using DHCP. A BU encapsulated in UDP is sent to 
+the HA for registration, replied with a BA encapsulated in UDP. 
+An IPv6-in-IPv4 SIT tunnel and an IPv4-in-IPv4 IPIP is then built 
+between the MR and the HA. 
+All the IPv6/IPv4 traffic from the MR or the nodes in the Mobile
+Network is sent through this tunnel up to the HA.
+
+Handovers between different interfaces located in different networks 
+are not supported in all cases. You may experience performance issues
+with such scenario.

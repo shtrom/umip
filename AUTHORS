@@ -21,3 +21,12 @@ following people:
 DSMIPv6 implementation from Nautilus6/WIDE Project (http://www.nautilus6.org)
 - KUNTZ Romain <kuntz(at)sfc.wide.ad.jp>
 - LORCHAT Jean <lorchat(at)sfc.wide.ad.jp>
+
+IPv4 traffic support implementation for UMIP-DSMIP is developed
+as part of Orange Labs/MOBINET project by
+- Duc Kien NGUYEN < kien.duc-nguyen@univ-paris8.fr >
+- Nassim KOBEISSY < nassim.kobeissy@gmail.com >
+
+IPv4 traffic support implementation for UMIP-NEPL is developed
+as part of Orange Labs/MOBINET project by 
+- Duc Kien NGUYEN < kien.duc-nguyen@univ-paris8.fr >

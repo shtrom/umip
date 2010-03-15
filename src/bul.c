@@ -38,6 +38,10 @@
 #include "xfrm.h"
 #include "debug.h"
 #include "retrout.h"
+#include "tunnelctl.h"
+#include "rtnl.h"
+#include "conf.h"
+
 #ifdef ENABLE_VT
 #include "vt.h"
 #endif
@@ -63,6 +67,8 @@ struct bulentry *create_bule(const struct in6_addr *hoa,
 		bule->hoa = *hoa;
 		bule->last_coa = *hoa;
 		bule->peer_addr = *cn_addr;
+		bule->if_tunnel = 0;
+		bule->if_tunnel4 = 0;
 		INIT_LIST_HEAD(&bule->tqe.list);
 		bule->seq = random();
 	}
@@ -79,6 +85,7 @@ void dump_bule(void *bule, void *os)
 {
 	struct bulentry *e = (struct bulentry *)bule;
 	FILE *out = (FILE *)os;
+	uint32_t a4 = 0;
 
 	if (e->type == BUL_ENTRY)
 		fprintf(out, "== BUL_ENTRY ==\n");
@@ -91,10 +98,25 @@ void dump_bule(void *bule, void *os)
 
 	fprintf(out, "Home address    %x:%x:%x:%x:%x:%x:%x:%x\n",
 		NIP6ADDR(&e->hoa));
+
+	if (!IN6_IS_ADDR_V4MAPPED(&e->coa))
 	fprintf(out, "Care-of address %x:%x:%x:%x:%x:%x:%x:%x\n",
 		NIP6ADDR(&e->coa));
+	else {
+		ipv6_unmap_addr(&e->coa, &a4);
+		fprintf(out, "Care-of address %d:%d:%d:%d\n",
+			NIP4ADDR((struct in_addr *)&a4));
+	}
+
+	if (!IN6_IS_ADDR_V4MAPPED(&e->peer_addr))
 	fprintf(out, "CN address      %x:%x:%x:%x:%x:%x:%x:%x\n",
 		NIP6ADDR(&e->peer_addr));
+	else {
+		ipv6_unmap_addr(&e->peer_addr, &a4);
+		fprintf(out, "CN address    %d:%d:%d:%d\n",
+			NIP4ADDR((struct in_addr *)&a4));
+	}
+
 	fprintf(out, " lifetime = %ld, ", e->lifetime.tv_sec);
 	fprintf(out, " delay = %ld\n", tstomsec(e->delay));
 	fprintf(out, " flags: ");

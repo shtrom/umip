@@ -42,6 +42,14 @@
 #include "hash.h"
 #include "util.h"
 
+#define HASH_DEBUG_LEVEL 3
+
+#if HASH_DEBUG_LEVEL >= 1
+#define HDBG dbg
+#else
+#define HDBG(x...)
+#endif
+
 /* Hash entry */
 
 struct hash_entry {

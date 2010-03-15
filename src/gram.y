@@ -51,6 +51,7 @@
 #include "util.h"
 #include "ipsec.h"
 #include "rtnl.h"
+#include "bul.h"
 
 struct net_iface ni = {
 	.mip6_if_entity = MIP6_ENTITY_NO,
@@ -60,7 +61,8 @@ struct net_iface ni = {
 
 struct home_addr_info hai = {
 	.ro_policies = LIST_HEAD_INIT(hai.ro_policies),
-	.mob_net_prefixes = LIST_HEAD_INIT(hai.mob_net_prefixes)
+	.mob_net_prefixes = LIST_HEAD_INIT(hai.mob_net_prefixes),
+	.mnp4_count = 0,
 };
 
 LIST_HEAD(prefixes);
@@ -76,6 +78,10 @@ int mv_prefixes(struct list_head *list)
 	}
 	return res;
 }
+
+struct hoa4_mnp4 *hoa41_Nmnp4 = NULL;
+
+struct net_prefix4 *HAmnp4 = NULL;
 
 struct policy_bind_acl_entry *bae = NULL;
 struct cn_binding_pol_entry *cnbpol = NULL;
@@ -135,6 +141,7 @@ static void uerror(const char *fmt, ...) {
 %token		DOROUTEOPTIMIZATIONCN
 %token		DOROUTEOPTIMIZATIONMN
 %token		HOMEADDRESS
+%token      HOMEADDRESS4
 %token		HOMEAGENTADDRESS
 %token		HOMEAGENTADDRESS4
 %token		HOMEAGENTNAME
@@ -195,13 +202,16 @@ static void uerror(const char *fmt, ...) {
 %token		MNDISCARDHAPARAMPROB
 %token		OPTIMISTICHANDOFF
 %token		HOMEPREFIX
+%token		HOMEPREFIX4
 %token		HAACCEPTMOBRTR
 %token		ISMOBRTR
 %token		HASERVEDPREFIX
 %token		MOBRTRUSEEXPLICITMODE
 %token          CNBINDINGPOLICYSET
 %token		MNUSEDSMIP6
+%token		MNSUPPORTIPV4TRAFFIC
 %token		HAACCEPTDSMIP6
+%token		MNP4
 %token		IFUSEDHCP
 
 %token		INV_TOKEN
@@ -214,9 +224,10 @@ static void uerror(const char *fmt, ...) {
 
 %type <addr>	mnropolicyaddr
 %type <bool>	dorouteopt
-%type <num>	bindaclpolval
-%type <num>	prefixlen
-%type <num>	mip6entity
+%type <num>		bindaclpolval
+%type <num>		prefixlen
+%type <num>		prefixlen4
+%type <num>		mip6entity
 %type <bool>	xfrmaction
 
 %%
@@ -437,6 +448,37 @@ ifacedef	: QSTRING ifacesub
 			}
 			memset(ni.dhcp_ctrl, 0, sizeof(*ni.dhcp_ctrl));
 		}
+		| MNSUPPORTIPV4TRAFFIC BOOL ';'
+		{
+			conf.MnSupportIPv4Traffic = $2;
+		}
+		| MNP4 ADDR4 HAprefixlistsub4 ';'
+		{
+			hoa41_Nmnp4 = malloc(sizeof(struct hoa4_mnp4));
+			if (hoa41_Nmnp4 == NULL) {
+				uerror("out of memory");
+				return -1;
+			}
+			hoa41_Nmnp4->hoa4 = $2;
+			hoa41_Nmnp4->mob_net_prefixes4 = HAmnp4;
+			hoa41_Nmnp4->next = NULL;
+			hoa41_Nmnp4->hoa4_enabled_by_MR = 0;
+			hoa41_Nmnp4->mnp4_count = 0;
+			
+			struct net_prefix4 *current4 = hoa41_Nmnp4->mob_net_prefixes4;
+			while (current4 != NULL) {
+				current4 = current4->next;
+				hoa41_Nmnp4->mnp4_count ++;
+			} 
+		
+			struct hoa4_mnp4 *current = conf.mnpv4;
+			if (conf.mnpv4 != NULL) {
+				while (current->next != NULL) current = current->next;
+				current->next = hoa41_Nmnp4;
+			} 
+			else conf.mnpv4 = hoa41_Nmnp4;
+			HAmnp4 = NULL;
+		}	
 		;
 
 ifacesub	: '{' ifaceopts '}'
@@ -573,6 +615,7 @@ linkdef		: HOMEAGENTADDRESS ADDR ';'
 			freeaddrinfo(res);
 		}
 		| HOMEADDRESS homeaddress ';'
+		| HOMEADDRESS4 homeaddress4 ';'
 		| USEALTCOA BOOL ';'
                 {
 		        hai.altcoa = $2;
@@ -584,9 +627,14 @@ linkdef		: HOMEAGENTADDRESS ADDR ';'
 				hai.mob_rtr = IP6_MH_BU_MR;
 		}
 		|  HOMEPREFIX ADDR '/' prefixlen ';'
-                {
+        {
 			ipv6_addr_prefix(&hai.home_prefix, &$2, $4);
 			hai.home_plen = $4;
+		}
+		|  HOMEPREFIX4 ADDR4 '/' prefixlen4 ';'
+        {
+			ipv4_addr_prefix(&hai.home_prefix4, &$2, $4);
+			hai.home_plen4 = $4;
 		}
 		;
 
@@ -600,6 +648,18 @@ homeaddrdef	: ADDR '/' prefixlen
 		{
 			hai.hoa.addr = $1;
 			hai.plen = $3;
+		}
+		;
+
+homeaddress4    : homeaddrdef4 prefixlistsub4
+        {
+        }
+        ;
+
+homeaddrdef4    : ADDR4 '/' prefixlen4
+       	{
+			hai.hoa.addr4 = $1;
+			hai.plen4 = $3;
 		}
 		;
 
@@ -928,6 +988,74 @@ prefixlistentry	: ADDR '/' prefixlen
 			p->ple_prefix = $1;
 			p->ple_plen = $3;
 			list_add_tail(&p->list, &prefixes);
+		}
+		;
+
+prefixlen4 : NUMBER
+        {
+			if ($1 > 32) {
+				uerror("invalid prefix length %d", $1);
+				return -1;
+			}
+			$$ = $1;
+		}
+		;
+prefixlistsub4	:
+		| '(' prefixlist4 ')'
+		;
+
+prefixlist4	: prefixlstentry4
+		| prefixlist4 ',' prefixlstentry4
+		;
+
+prefixlstentry4 : ADDR4 '/' prefixlen4
+		{
+			struct net_prefix4 *next = malloc(sizeof(struct net_prefix4));
+			if (next == NULL) {
+				fprintf(stderr, "%s: out of memory\n", 
+					__FUNCTION__);
+				return -1;
+			}
+			next->prefix4 = $1;
+			next->plen4 = $3;
+			next->next = NULL;
+			if (hai.mnp4_count) {
+				struct net_prefix4 *current_prefix4 = hai.mob_net_prefixes4;
+				for (int i = 0; i < hai.mnp4_count - 1; i++) 
+					current_prefix4 = current_prefix4->next;
+				current_prefix4->next = next;		
+			} else 
+				hai.mob_net_prefixes4 = next;
+			hai.mnp4_count ++;
+			}
+		;
+		
+HAprefixlistsub4	:
+		| '(' HAprefixlist4 ')'
+		;
+
+HAprefixlist4	: HAprefixlstentry4
+		| HAprefixlist4 ',' HAprefixlstentry4
+		;
+
+HAprefixlstentry4 : ADDR4 '/' prefixlen4
+		{			
+			struct net_prefix4 *next = malloc(sizeof(struct net_prefix4));
+			if (next == NULL) {
+				fprintf(stderr, "%s: out of memory\n", 
+					__FUNCTION__);
+				return -1;
+			}
+			next->prefix4 = $1;
+			next->plen4 = $3;
+			next->next = NULL;
+			
+			struct net_prefix4 *current = HAmnp4;
+			if (HAmnp4 != NULL) {
+				while (current->next != NULL) current = current->next;
+				current->next = next;
+			} 
+			else HAmnp4 = next;
 		}
 		;
 %%

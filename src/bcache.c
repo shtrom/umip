@@ -180,6 +180,7 @@ void bcache_free(struct bcentry *bce)
 	 * pool. */
 	pthread_rwlock_destroy(&bce->lock);
 	prefix_list_free(&bce->mob_net_prefixes);
+	prefix4_list_free(&bce->mob_net_prefixes4);
 	free(bce);
 }
 

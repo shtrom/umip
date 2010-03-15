@@ -30,6 +30,15 @@
 
 #include "prefix.h"
 #include "util.h"
+#include "debug.h"
+
+#define MN_DEBUG_LEVEL 1
+
+#if MN_DEBUG_LEVEL >= 1
+#define MDBG dbg
+#else
+#define MDBG(...)
+#endif
 
 struct prefix_list_entry *prefix_list_get(const struct list_head *pl,
 					  const struct in6_addr *addr,
@@ -113,6 +122,34 @@ int prefix_list_copy(const struct list_head *pl1, struct list_head *pl2)
 	return res;
 }
 
+int prefix4_list_copy(const struct net_prefix4 *src, struct net_prefix4 **dst)
+{
+	int res = 0;
+	if ((*dst) != NULL) prefix4_list_free(&(*dst));
+	struct net_prefix4 *current_dst = NULL, *current_src = src;
+	while (current_src != NULL) {
+		if (current_dst == NULL) {
+			current_dst = malloc(sizeof(struct net_prefix4));
+			(*dst) = current_dst;
+		} else {
+			current_dst->next = malloc(sizeof(struct net_prefix4));
+			current_dst = current_dst->next;
+		}
+		if (current_dst == NULL) {
+					prefix4_list_free(&(*dst));
+					return -1;
+		}
+		memcpy(&current_dst->prefix4, &current_src->prefix4, sizeof(struct in_addr));
+		current_dst->plen4 = current_src->plen4;
+		current_dst->next = NULL;
+		current_src = current_src->next;
+		res ++;
+	}
+	current_dst = NULL;
+	current_src = NULL;
+	return res;
+}
+
 unsigned long mpd_curr_lft(const struct timespec *now,
 			   const struct timespec *tstamp,
 			   unsigned long lft)
@@ -144,4 +181,16 @@ void dhaad_gen_ha_anycast(struct in6_addr *anycast,
 			 pfx,
 			 plen == 64 ? &dhaad_eui64_suffix : &dhaad_gen_suffix,
 			 plen);
+}
+
+void prefix4_list_free(struct net_prefix4 **p)
+{
+	if (*p == NULL) return;
+	struct net_prefix4 *next, *current = *p;
+	while (current != NULL) {
+		next = current->next;
+		free(current);
+		current = next;
+	}
+	*p = NULL;
 }

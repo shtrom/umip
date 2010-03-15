@@ -250,6 +250,16 @@ uint16_t in6_cksum(const struct in6_addr *src, const struct in6_addr *dst,
 		   const void *data, socklen_t datalen, uint8_t nh);
 
 /*
+ * Compare two IPv4 addresses
+ *
+ * return 1 on equality, 0 otherwise.
+ */
+static inline int ip_equal(const struct in_addr *ipa, const struct in_addr *ipb)
+{
+	return memcmp(ipa, ipb, sizeof(struct in_addr)) == 0;
+}
+
+/*
  * XXX: These may be missing on kernel header because either kernel is not
  * ready or should be removed since kernel will never support it.
  */

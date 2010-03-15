@@ -31,6 +31,8 @@ struct bulentry {
 	struct in6_addr hoa;
 	struct in6_addr coa;		/* care-of address of the sent BU */
 	int if_coa;
+	int if_tunnel;			/* Tunnel iface for the BCE */
+	int if_tunnel4;			/* 4/4 or 6/4 tunnel iface for the BCE */
 	int type;                       /* BUL / NON_MIP_CN / UNREACH  */
 	uint16_t seq;			/* sequence number of the latest BU */
 	uint16_t flags;			/* BU send flags */

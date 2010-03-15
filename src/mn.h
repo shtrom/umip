@@ -52,8 +52,11 @@ struct ha_candidate_list {
 #define	NEMO_FWD_BLOCK	0x10
 
 struct mn_addr {
+	struct list_head list;
 	struct in6_addr addr;
+	struct in_addr addr4;
 	int iif;
+	int iif4;
 	struct timespec timestamp;
 	struct timespec valid_time;
 	struct timespec preferred_time;
@@ -67,13 +70,16 @@ struct home_addr_info {
 	struct list_head list;
 	struct mn_addr hoa; /* Home address */
 	uint8_t plen;
+	uint8_t plen4;
 	uint8_t home_reg_status;
 	uint8_t home_block;
 	uint8_t use_dhaad;
 	uint16_t lladdr_comp;
 	uint8_t at_home;
 	uint8_t home_plen;
+	uint8_t home_plen4;
 	struct in6_addr home_prefix;
+	struct in_addr home_prefix4;
 	struct hash bul; /* Binding Update List */
 	struct mn_addr primary_coa;
 	struct list_head ro_policies;
@@ -82,16 +88,20 @@ struct home_addr_info {
 	struct in_addr ha_addr4;
 	int pend_ba;
 	int verdict;
-	int if_tunnel;		/* DSMIPv6: current used tunnel */
+	int if_tunnel;		/* DSMIPv6: current used v6 tunnel - 66 or 64 */
+	int if_tunnel4;		/* MNPv4: current used v4 tunnel - 44 or 46 */
 	int if_tunnel64;	/* DSMIPv6: v6/v6 tunnel */
 	int if_tunnel66;	/* DSMIPv6: v6/v4 tunnel */
+	int if_tunnel44;    /* MNPv4: v4/v4 tunnel */
 	int if_home;
 	int if_block;
 	uint8_t altcoa;
 	uint16_t mob_rtr;
 	char name[IF_NAMESIZE];
 	int mnp_count;
+	int mnp4_count;
 	struct list_head mob_net_prefixes;
+	struct net_prefix4 *mob_net_prefixes4;
 };
 
 enum {
@@ -141,6 +151,10 @@ struct movement_event;
 /* Interface to movement detection */
 int mn_movement_event(struct movement_event *event);
 
+static void bule_invalidate(struct bulentry *e,
+			    struct timespec *timestamp,
+			    int block);
+
 struct nd_opt_prefix_info;
 int mn_update_home_prefix(struct home_addr_info *hai,
 			  const struct timespec *mps_sent,
@@ -165,8 +179,12 @@ static inline int mn_is_at_home(struct list_head *prefixes,
 	return prefix_list_find(prefixes, home_prefix, home_plen);
 }
 
-void mn_mnps_blackhole_rule_add(struct list_head *mob_net_prefixes);
+void mn_mnps_blackhole_rule_add(struct list_head *mob_net_prefixes,
+		struct net_prefix4 *mob_net_prefixes4,
+		int mnp4_count);
 
-void mn_mnps_blackhole_rule_del(struct list_head *mob_net_prefixes);
+void mn_mnps_blackhole_rule_del(struct list_head *mob_net_prefixes,
+		struct net_prefix4 *mob_net_prefixes4,
+		int mnp4_count);
 
 #endif /* __MN_H__ */
