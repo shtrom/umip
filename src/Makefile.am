@@ -49,7 +49,8 @@ mip6d_SOURCES = pmgr.c pmgr.h defpath.h \
 		proc_sys.c proc_sys.h \
 		prefix.c prefix.h \
 		ipsec.c ipsec.h \
-		dhcp_dna.c dhcp_dna.h
+		dhcp_dna.c dhcp_dna.h \
+		hoa4.h hoa4.c
 
 if ENABLE_VT
 mip6d_SOURCES += vt.c vt.h

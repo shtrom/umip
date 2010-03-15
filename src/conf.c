@@ -48,6 +48,7 @@
 #include "mipv6.h"
 #include "ha.h"
 #include "prefix.h"
+#include "hoa4.h"
 #include "mn.h"
 #include "cn.h"
 #include "xfrm.h"

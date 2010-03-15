@@ -48,6 +48,7 @@
 #include "policy.h"
 #include "xfrm.h"
 #include "prefix.h"
+#include "hoa4.h"
 #include "util.h"
 #include "ipsec.h"
 #include "rtnl.h"
