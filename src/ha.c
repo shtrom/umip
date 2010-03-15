@@ -854,6 +854,31 @@ static int home_tnl_chg(int old_if, int new_if, struct home_tnl_ops_parm *p)
 						p->bce->tunnel, mnp) < 0)
 				return -1;
 		}
+
+                /* Preethi N <prenatar@cisco.com>
+		 * Support for v4-v4 handovers in DSMIP
+                 * If old_coa != coa, then MN did a handover
+		 * Delete route to the old_coa, and add route to coa
+		 */
+                if (IN6_IS_ADDR_V4MAPPED(old_coa) &&
+                        (!IN6_ARE_ADDR_EQUAL(old_coa, coa))) {
+
+                        if (route_del(old_if, RT6_TABLE_MAIN,
+                              IP6_RT_PRIO_MIP6_FWD,
+                                NULL, 0, old_coa, 128, NULL) < 0) {
+
+                                dbg("DSMIP: deleting v4 old_coa failed\n");
+                                return -1;
+                        }
+                        if (route_add(old_if, RT6_TABLE_MAIN,
+                              RTPROT_MIP, 0, IP6_RT_PRIO_MIP6_FWD,
+                                NULL, 0, coa, 128, NULL) < 0) {
+
+                                dbg("DSMIP: adding new v4 coa failed\n");
+                                return -1;
+                        }
+                } /* End Preethi N, 03/2010 */
+
 	} else {
 		home_tnl_del(old_if, new_if, p);
 		if (home_tnl_add(old_if, new_if, p) < 0)

@@ -706,6 +706,40 @@ static int process_new_addr_v4(struct ifaddrmsg *ifa, struct rtattr **rta_tb)
 
   res = process_new_addr(ifa_v6, rta_tb_v6);
 
+  /* Preethi N <prenatar@cisco.com>
+   * Support external DCHP client in DSMIP
+   * If UseDhcp was disabled for this interface, 
+   * perform related v4 CoA processing such as addr_do
+   * and dsmip_v4coa_add as done in dhcp_configuration()
+   */
+  if (conf.MnUseDsmip6) {
+	struct list_head *l;
+	struct net_iface *iface;
+
+	list_for_each(l, &conf.net_ifaces) {
+		iface = list_entry(l, struct net_iface, list);
+		if (iface->ifindex == ifa->ifa_index) {
+			if (iface->dhcp_ctrl) {
+				MDBG3("DSMIP: UseDhcp enabled for interface: %d\n", ifa->ifa_index);
+				break;
+			}
+			else {
+				struct in6_addr *local_v4_coa_v6 = (struct in6_addr *)RTA_DATA(rta_tb_v6[IFA_ADDRESS]);
+				int err = 0;
+				MDBG3("DSMIP: UseDhcp disabled; process CoA %x:%x:%x:%x:%x:%x:%x:%x on interface %d\n", 
+					NIP6ADDR(local_v4_coa_v6), ifa->ifa_index);
+				if ((err = addr_do(local_v4_coa_v6, 128, ifa->ifa_index, NULL, dsmip_v4coa_add)) < 0) {
+					MDBG3("DSMIP Warning: unable to set v4mapped address on interface, error %d\n", err);
+				}
+
+			}
+
+		}
+
+	}
+
+  }
+
   md_map_free(ifa_v6, rta_tb_v6);
 
   return res;
