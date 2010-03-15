@@ -40,6 +40,24 @@ int tunnel_del(int ifindex,
 				     void *data),
 	       void *data);
 
+int tunnel4_add(struct in6_addr *local,
+	       struct in6_addr *remote,
+	       int link,
+	       int (*ext_tunnel_ops)(int request,
+				     int old_if,
+				     int new_if,
+				     void *data),
+	       void *data);
+
+int tunnel4_mod(int ifindex,
+	       struct in6_addr *local,
+	       struct in6_addr *remote,
+	       int link,
+	       int (*ext_tunnel_ops)(int request,
+				     int old_if,
+				     int new_if,
+				     void *data),
+	       void *data);
 
 int tunnelctl_init(void);
 

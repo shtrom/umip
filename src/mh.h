@@ -20,6 +20,8 @@ struct in6_addr_bundle {
 	struct in6_addr *remote_coa;
 	struct in6_addr *bind_coa;
 	struct encap_info *nat_info;
+	struct in_addr *hoa4;
+	int plen4;
 };
 
 struct mh_options {
@@ -78,6 +80,12 @@ int mh_create_opt_nonce_index(struct iovec *iov, uint16_t home_nonce,
 int mh_create_opt_auth_data(struct iovec *iov);
 
 int mh_create_opt_ipv4_coa(struct iovec *iov, struct in_addr *addr);
+
+/*Mobility Header for IPv4 Home address */
+int mh_create_opt_ipv4_hoa(struct iovec *iov, struct in_addr *addr, int plen);
+
+/*Mobility Header for IPv4 Home address Acknowledgement */
+int mh_create_opt_ipv4_ack(struct iovec *iov, struct in_addr *addr, int plen, uint8_t status);
 
 int mh_create_opt_ipv4_nat(struct iovec *iov, struct in6_addr *coa,
 		struct encap_info *nat_info);

@@ -49,6 +49,7 @@ struct mip6_config {
 	char SendMobPfxSols;
 	char OptimisticHandoff;
 	char MnUseDsmip6;
+	char MnSupportIPv4Traffic;
 
 	/* HA options */
 	char HaAcceptMobRtr;
@@ -60,6 +61,8 @@ struct mip6_config {
 	struct list_head nemo_ha_served_prefixes;
 	char HaAcceptDsmip6;
 	struct in6_addr HaAddr4Mapped;
+	int home_plen4;
+	struct hoa4_mnp4 *mnpv4;
 
 	/* CN options */
 	char DoRouteOptimizationCN;

@@ -61,6 +61,14 @@
 #include "prefix.h"
 #include "statistics.h"
 
+#define HA_DEBUG_LEVEL 1
+
+#if HA_DEBUG_LEVEL >= 1
+#define MDBG dbg
+#else
+#define MDBG(...)
+#endif /* MDBG */
+
 static pthread_mutex_t bu_worker_mutex;
 static volatile unsigned long bu_worker_count = 0;
 static pthread_cond_t cond;
@@ -564,6 +572,19 @@ static void nemo_ha_del_mnp_routes(struct list_head *old_mnps,
 	}
 }
 
+static void nemo_ha_del_mnp4_routes(struct net_prefix4 *old_mnps,
+				   struct net_prefix4 *new_mnps,
+				   int ifindex, int all)
+{
+	struct in_addr inaddr_any = { 0 };
+	struct net_prefix4 *current = old_mnps;
+	while (current != NULL) {
+		route4_del(ifindex, RT6_TABLE_MIP6,
+					&inaddr_any, 0, &current->prefix4, current->plen4, NULL);
+		current = current->next;
+	}
+}
+
 static int nemo_ha_add_mnp_routes(struct list_head *old_mnps,
 				  struct list_head *new_mnps,
 				  int ifindex, int all)
@@ -579,6 +600,21 @@ static int nemo_ha_add_mnp_routes(struct list_head *old_mnps,
 			      0, IP6_RT_PRIO_MIP6_FWD,
 			      NULL, 0, &p->ple_prefix, p->ple_plen, NULL) < 0)
 			return -1;
+	}
+	return 0;
+}
+
+static int nemo_ha_add_mnp4_routes(struct net_prefix4 *old_mnps,
+				  struct net_prefix4 *new_mnps,
+				  int ifindex, int all)
+{
+	struct in_addr inaddr_any = { 0 };
+	struct net_prefix4 *current = new_mnps;
+	while (current != NULL) {
+		if (route4_add(ifindex, RT6_TABLE_MIP6, 0,
+					      &inaddr_any, 0, &current->prefix4, current->plen4, NULL) < 0)
+			return -1;
+		current = current->next;
 	}
 	return 0;
 }
@@ -626,6 +662,30 @@ static int home_tnl_del(int old_if, int new_if, struct home_tnl_ops_parm *p)
 	return 0;
 }
 
+static int home_tnl4_del(int old_if, int new_if, struct home_tnl_ops_parm *p)
+{
+	struct in_addr inaddr_any = { 0 }, *peer_addr4;
+
+	assert(old_if);
+
+	peer_addr4 = &p->bce->peer_addr4;
+
+	if (conf.UseMnHaIPsec) {
+	//TODO
+	}
+	/* delete HoA route */
+	MDBG("Deleting old default route in table %d\n", RT6_TABLE_MIP6);
+	route4_del(old_if, RT6_TABLE_MIP6,
+			&inaddr_any, 0, peer_addr4, 32, NULL);
+	/* delete MNPv4 routes */
+	nemo_ha_del_mnp4_routes(p->bce->mob_net_prefixes4,
+			p->bce->mob_net_prefixes4, old_if, 1);
+	/* update tunnel interface */
+	p->bce->tunnel4 = new_if;
+
+	return 0;
+}
+
 static int home_tnl_add(int old_if, int new_if, struct home_tnl_ops_parm *p)
 {
 	const struct in6_addr *our_addr, *peer_addr, *coa, *old_coa;
@@ -660,14 +720,14 @@ static int home_tnl_add(int old_if, int new_if, struct home_tnl_ops_parm *p)
 		goto err;
 	}
 	/* DSMIPv6: add v4 CoA route */
-	if (coa && IN6_IS_ADDR_V4MAPPED(coa)) {
+	/*if (coa && IN6_IS_ADDR_V4MAPPED(coa)) {
 		if (route_add(new_if, RT6_TABLE_MAIN,
 			      RTPROT_MIP, 0, IP6_RT_PRIO_MIP6_FWD,
 				NULL, 0, coa, 128, NULL) < 0) {
 			p->ba_status = IP6_MH_BAS_INSUFFICIENT;
 			goto err;
 		}
-	}
+	}*/
 	/* add SP entry */
 	if (conf.UseMnHaIPsec) {
 		if (ha_ipsec_tnl_pol_add(our_addr, peer_addr,
@@ -693,6 +753,44 @@ static int home_tnl_add(int old_if, int new_if, struct home_tnl_ops_parm *p)
 	return 0;
 err:
 	home_tnl_del(new_if, old_if, p);
+	return -1;
+}
+
+static int home_tnl4_add(int old_if, int new_if, struct home_tnl_ops_parm *p)
+{
+	struct in_addr inaddr_any = { 0 }, *peer_addr4;
+
+	assert(new_if);
+
+	peer_addr4 = &p->bce->peer_addr4;
+
+	/* update tunnel interface */
+	p->bce->tunnel4 = new_if;
+
+	/* add MNP routes */
+	if (nemo_ha_add_mnp4_routes(p->bce->mob_net_prefixes4,
+			p->bce->mob_net_prefixes4, new_if, 1) < 0) {
+		if (p->bce->nemo_type == BCE_NEMO_EXPLICIT)
+			p->ba_status = IP6_MH_BAS_INVAL_PRFX;
+		else
+			p->ba_status = IP6_MH_BAS_FWDING_FAILED;
+		goto err;
+	}
+	/* add HoA route */
+	MDBG("Adding route in table %d via iface %d\n", RT6_TABLE_MIP6, new_if);
+	if (route4_add(new_if, RT6_TABLE_MIP6,
+		      0, &inaddr_any, 0, peer_addr4, 32, NULL) < 0) {
+		p->ba_status = IP6_MH_BAS_INSUFFICIENT;
+		goto err;
+	}
+
+	/* add SP entry */
+	if (conf.UseMnHaIPsec) {
+	//TODO
+	}
+	return 0;
+err:
+	home_tnl4_del(new_if, old_if, p);
 	return -1;
 }
 
@@ -763,6 +861,40 @@ static int home_tnl_chg(int old_if, int new_if, struct home_tnl_ops_parm *p)
 	return 0;
 }
 
+static int home_tnl4_chg(int old_if, int new_if, struct home_tnl_ops_parm *p)
+{
+	assert(old_if && new_if);
+
+	if (old_if == new_if) {
+		/*
+		const struct in6_addr *our_addr, *peer_addr, *coa, *old_coa;
+
+		our_addr = &p->bce->our_addr;
+		peer_addr = &p->bce->peer_addr;
+		coa = &p->bce->coa;
+		old_coa = &p->bce->old_coa;
+
+		if interface hasn't changed, at least check if the
+		   MR's MNPs have changed */
+		// TODO : to implement when the MNPv4s are in BU, at this moment all the MNPv4 are in configuration file
+
+		/* migrate */
+		/*
+		//TODO : MNPv4 for MnHaIPsec
+		if (conf.UseMnHaIPsec &&
+		    !IN6_ARE_ADDR_EQUAL(old_coa, coa) &&
+		    ha_ipsec_tnl_update(our_addr, peer_addr, coa, old_coa,
+					p->bce->tunnel, mnp) < 0) {
+			return -1;
+		}*/
+	} else {
+		home_tnl4_del(old_if, new_if, p);
+		if (home_tnl4_add(old_if, new_if, p) < 0)
+			return -1;
+	}
+	return 0;
+}
+
 static int home_tnl_ops(int request, int old_if, int new_if, void *data)
 {
 	struct home_tnl_ops_parm *p = data;
@@ -777,8 +909,22 @@ static int home_tnl_ops(int request, int old_if, int new_if, void *data)
 	return res;
 }
 
+static int home_tnl4_ops(int request, int old_if, int new_if, void *data)
+{
+	struct home_tnl_ops_parm *p = data;
+	int res = -1;
+	if (request == SIOCADDTUNNEL)
+		res = home_tnl4_add(old_if, new_if, p);
+	else if (request == SIOCCHGTUNNEL)
+		res = home_tnl4_chg(old_if, new_if, p);
+	else if (request == SIOCDELTUNNEL)
+		res = home_tnl4_del(old_if, new_if, p);
+	return res;
+}
+
 static void home_cleanup(struct bcentry *bce)
 {
+
 	mpd_cancel_mpa(&bce->our_addr, &bce->peer_addr);
 
 	if (bce->link > 0) {
@@ -792,12 +938,19 @@ static void home_cleanup(struct bcentry *bce)
 			.ba_status = IP6_MH_BAS_ACCEPTED
 		};
 		tunnel_del(bce->tunnel, home_tnl_ops, &p);
+		if (bce->tunnel4 > 0)
+			tunnel4_del(bce->tunnel4, home_tnl4_ops, &p);
 	}
 	if (conf.UseMnHaIPsec) {
 		ha_mn_ipsec_pol_mod(&bce->our_addr, &bce->peer_addr);
 	}
 	//Kien: when a MR disconnects, erase xfrm state/policy corresponding on HA
 	xfrm_mip_in_out_delete(&bce->peer_addr, &bce->our_addr);
+
+	set_hoa4enabled(&bce->peer_addr4, 0);
+
+	prefix_list_free(&bce->mob_net_prefixes);
+	prefix4_list_free(&bce->mob_net_prefixes4);
 }
 
 
@@ -862,6 +1015,8 @@ struct ha_recv_bu_args {
 	struct in6_addr remote_coa;
 	struct in6_addr bind_coa;
 	struct encap_info nat_info;
+	struct in_addr hoa4;
+	int plen4;
 	struct ip6_mh_binding_update *bu;
 	ssize_t len;
 	struct mh_options mh_opts;
@@ -884,18 +1039,27 @@ static void *ha_recv_bu_worker(void *varg)
 	/* TODO : get addr from config file or hai list */
 	struct in6_addr *tnl_addr;
 	int tunnel_if_index = 0;
+	int tunnel4_if_index = 0;
+	struct hoa4_mnp4 *current;
+	struct in_addr ha4 = { 0 };
 
 	pthread_dbg("thread started");
 restart:
 	home_ifindex = 0;
 	new = 0;
 	ba_flags = 0;
+	status = IP6_MH_BAS_UNSPECIFIED;
+	bce = NULL;
 	lft = arg->lft;
 	iif = arg->iif;
 	bu_flags = arg->bu->ip6mhbu_flags;
 	seqno = ntohs(arg->bu->ip6mhbu_seqno);
 	out.src = &arg->src;
 	out.dst = &arg->dst;
+	if (is_hoa4enabled(&arg->hoa4)){
+		out.hoa4 = &arg->hoa4;
+		out.plen4 = arg->plen4;
+	}
 	if (!IN6_IS_ADDR_UNSPECIFIED(&arg->remote_coa))
 		out.remote_coa = &arg->remote_coa;
 	else
@@ -915,6 +1079,7 @@ restart:
 	 * search parameter to bcache_get() */
 	bce = bcache_get(out.src, out.dst);
 	if (bce) {
+		if (is_hoa4enabled(&arg->hoa4)) bce->peer_addr4 = arg->hoa4;
 		if (bce->type != BCE_NONCE_BLOCK) {
 			/* H-bit or R-bit mismatch, flags changed */
 			if ((bce->flags ^ bu_flags) &
@@ -976,6 +1141,12 @@ restart:
 				status = IP6_MH_BAS_INSUFFICIENT;
 				goto send_nack;
 			}
+			if (is_hoa4enabled(out.hoa4)) {
+				ipv6_unmap_addr(&conf.HaAddr4Mapped, &ha4.s_addr);
+				route4_add(bce->link, RT6_TABLE_MIP6, 0,
+							&ha4, 32, &bce->peer_addr4, 32,
+							NULL);
+			}
 		}
 		if (bce && !IN6_IS_ADDR_V4MAPPED(&bce->coa)
 		    && out.bind_coa && IN6_IS_ADDR_V4MAPPED(out.bind_coa)) {
@@ -985,6 +1156,12 @@ restart:
 			     	 	NULL) < 0) {
 				status = IP6_MH_BAS_INSUFFICIENT;
 				goto send_nack;
+			}
+			if (is_hoa4enabled(out.hoa4)) {
+				ipv6_unmap_addr(&conf.HaAddr4Mapped, &ha4.s_addr);
+				route4_del(bce->link, RT6_TABLE_MIP6,
+							&ha4, 32, &bce->peer_addr4, 32,
+							NULL);
 			}
 		}
 	} else if (!tsisset(lft)) {
@@ -1012,6 +1189,7 @@ restart:
 					   out.src, arg->bu, arg->len);
 	if (status >= IP6_MH_BAS_UNSPECIFIED)
 		goto send_nack;
+
 	/* lifetime may be further decreased by local policy */
 	if (conf.pmgr.max_binding_life(out.dst, out.bind_coa, out.src,
 				       arg->bu, arg->len, &lft, &tmp)) {
@@ -1025,6 +1203,7 @@ restart:
 			status = IP6_MH_BAS_INSUFFICIENT;
 			goto send_nack;
 		}
+		if (is_hoa4enabled(out.hoa4)) bce->peer_addr4 = *out.hoa4;
 		bce->our_addr = *out.src;
 		bce->peer_addr = *out.dst;
 		bce->coa = *out.bind_coa;
@@ -1033,6 +1212,7 @@ restart:
 		bce->type = BCE_DAD;
 		bce->cleanup = NULL;
 		bce->link = home_ifindex;
+		bce->mob_net_prefixes4 = NULL;
 
 		if (bcache_add_homereg(bce) < 0) {
 			free(bce);
@@ -1113,11 +1293,36 @@ restart:
 				status = IP6_MH_BAS_INSUFFICIENT;
 			goto send_nack;
 		}
+
+		if (is_hoa4enabled(out.hoa4)) {
+			current = conf.mnpv4;
+			while (current != NULL) {
+				if (ip_equal(&current->hoa4, out.hoa4)) {
+					/* Now copy the MNPv4 list in the BCE */
+					prefix4_list_copy(current->mob_net_prefixes4, &bce->mob_net_prefixes4);
+					break;
+				}
+				current = current->next;
+			}
+			current = NULL;
+
+			if (out.bind_coa && IN6_IS_ADDR_V4MAPPED(out.bind_coa)) {
+				if ((tunnel4_if_index = tunnel4_add(tnl_addr, out.bind_coa, 0,
+								   home_tnl4_ops, &p)) < 0) {
+					status = IP6_MH_BAS_INSUFFICIENT;
+					goto send_nack;
+				}
+			} else {
+				if (home_tnl4_add(tunnel4_if_index, tunnel_if_index, &p) < 0) {
+					status = IP6_MH_BAS_INSUFFICIENT;
+					goto send_nack;
+				}
+				tunnel4_if_index = tunnel_if_index;
+			}
+		}
 		/* Now save the MNP list in the BCE */
 		list_splice(&p.mob_net_prefixes, &bce->mob_net_prefixes);
-
 		bce->cleanup = home_cleanup;
-
 		if (out.bind_coa && !IN6_IS_ADDR_V4MAPPED(out.bind_coa)) {
 			if (route_add(bce->link, RT6_TABLE_MIP6,
 						RTPROT_MIP, 0, IP6_RT_PRIO_MIP6_OUT,
@@ -1138,7 +1343,6 @@ restart:
 	} else {
 		bce->old_coa = bce->coa;
 		bce->coa = *out.bind_coa;
-
 		if (out.bind_coa && IN6_IS_ADDR_V4MAPPED(out.bind_coa))
 		        tnl_addr = &conf.HaAddr4Mapped;
 		else
@@ -1152,9 +1356,55 @@ restart:
 				status = IP6_MH_BAS_INSUFFICIENT;
 			goto send_nack;
 		}
-		/* Now update the MNP list in the BCE */
+
+		if (is_hoa4enabled(out.hoa4)) {
+			if (out.bind_coa && IN6_IS_ADDR_V4MAPPED(out.bind_coa)) {
+				if (!IN6_IS_ADDR_V4MAPPED(&bce->old_coa)) {
+					if ((tunnel4_if_index = tunnel4_add(tnl_addr, out.bind_coa, 0,
+									   home_tnl4_ops, &p)) < 0) {
+						status = IP6_MH_BAS_INSUFFICIENT;
+						goto send_nack;
+					}
+				} else {
+					if ((tunnel4_if_index = tunnel4_mod(bce->tunnel4, tnl_addr, out.bind_coa, 0,
+												   home_tnl4_ops, &p)) < 0) {
+						status = IP6_MH_BAS_INSUFFICIENT;
+						goto send_nack;
+					}
+				}
+			} else {
+				tunnel4_if_index = bce->tunnel4;
+				if (home_tnl4_chg(bce->tunnel4, tunnel_if_index, &p) < 0) {
+					status = IP6_MH_BAS_INSUFFICIENT;
+					goto send_nack;
+				}
+				if (IN6_IS_ADDR_V4MAPPED(&bce->old_coa))
+					tunnel4_del(tunnel4_if_index, home_tnl4_ops, &p);
+				tunnel4_if_index = tunnel_if_index;
+				bce->tunnel4 = tunnel4_if_index;
+			}
+		}
+
+		if (tsisset(lft)) {
 		prefix_list_free(&bce->mob_net_prefixes);
 		list_splice(&p.mob_net_prefixes, &bce->mob_net_prefixes);
+		}
+
+//		if (is_hoa4enabled(out.hoa4)) {
+//			/* Now update the MNP4 list in the BCE */
+//			prefix4_list_free(&bce->mob_net_prefixes4);
+//			current = conf.mnpv4;
+//			while (current != NULL) {
+//				if (ip_equal(&current->hoa4, out.hoa4)) {
+//					/* Now copy the MNPv4 list in the BCE */
+//					bce->mob_net_prefixes4 = NULL;
+//					prefix4_list_copy(current->mob_net_prefixes4, &bce->mob_net_prefixes4);
+//					break;
+//				}
+//				current = current->next;
+//			}
+//			current = NULL;
+//		}
 
 		bcache_update_expire(bce);
 	}
@@ -1209,8 +1459,9 @@ restart:
 		 * have a binding before sending this Binding Update,
 		 * discard the connections to the home address. */
 	}
- 	if (status < IP6_MH_BAS_UNSPECIFIED && bu_flags & IP6_MH_BU_MR)
- 		ba_flags |= IP6_MH_BA_MR;
+	if (status < IP6_MH_BAS_UNSPECIFIED
+	    && bu_flags & IP6_MH_BU_MR)
+		ba_flags |= IP6_MH_BA_MR;
 
 	if (!(arg->flags & HA_BU_F_SKIP_BA)) {
 		if (IN6_IS_ADDR_V4MAPPED(out.bind_coa))
@@ -1221,6 +1472,26 @@ restart:
 
 	if (new && tsisset(lft))
 		mpd_start_mpa(&bce->our_addr, &bce->peer_addr);
+	/*
+out:
+         pthread_mutex_lock(&bu_worker_mutex);
+         if (!list_empty(&bu_worker_list)) {
+                 struct list_head *l = bu_worker_list.next;
+                 list_del(l);
+                 free(arg);
+                 arg = list_entry(l, struct ha_recv_bu_args, list);
+                 pthread_mutex_unlock(&bu_worker_mutex);
+                 goto restart;
+         }
+         if (--bu_worker_count == 0)
+                 pthread_cond_signal(&cond);
+
+         if (arg->flags & HA_BU_F_THREAD_JOIN)
+                 *(arg->statusp) = status;
+         free(arg);
+         pthread_mutex_unlock(&bu_worker_mutex);
+         pthread_exit(NULL);
+*/
 out:
 	pthread_mutex_lock(&bu_worker_mutex);
 	if (!list_empty(&bu_worker_list)) {
@@ -1238,6 +1509,7 @@ out:
 	free(arg);
 	pthread_mutex_unlock(&bu_worker_mutex);
 	pthread_exit(NULL);
+
 send_nack:
 	if (bce) {
 		bcache_release_entry(bce);
@@ -1313,6 +1585,10 @@ int ha_recv_home_bu(const struct ip6_mh *mh, ssize_t len,
 		arg->bind_coa = in6addr_any;
 	if (out.nat_info)
 		memcpy(&arg->nat_info, out.nat_info, sizeof(arg->nat_info));
+	if (is_hoa4enabled(out.hoa4)) {
+		arg->hoa4 = *out.hoa4;
+		arg->plen4 = out.plen4;
+	}
 	arg->bu = (struct ip6_mh_binding_update *)(arg + 1);
 	arg->len = len;
 	arg->mh_opts = mh_opts;
@@ -1381,6 +1657,11 @@ int ha_init(void)
 		     IP6_RULE_PRIO_MIP6_FWD, RTN_UNICAST,
 		     &in6addr_any, 0, &in6addr_any, 0, 0) < 0)
 		return -1;
+	struct in_addr inaddr_any = { 0 };
+	if (rule4_add(NULL, RT6_TABLE_MIP6,
+		     IP6_RULE_PRIO_MIP6_FWD, RTN_UNICAST,
+		     &inaddr_any, 0, &inaddr_any, 0, 0) < 0)
+		return -1;
 	icmp6_handler_reg(ND_ROUTER_ADVERT, &ha_ra_handler);
 	ha_discover_routers(); /* Let's gather RA */
 	ha_proxy_nd_init();
@@ -1401,6 +1682,44 @@ void ha_cleanup(void)
 	rule_del(NULL, RT6_TABLE_MIP6,
 		 IP6_RULE_PRIO_MIP6_FWD, RTN_UNICAST,
 		 &in6addr_any, 0, &in6addr_any, 0, 0);
+	struct in_addr inaddr_any = { 0 };
+	rule4_del(NULL, RT6_TABLE_MIP6,
+			 IP6_RULE_PRIO_MIP6_FWD, RTN_UNICAST,
+			 &inaddr_any, 0, &inaddr_any, 0, 0);
 	mpd_ha_cleanup();
 	dhaad_ha_cleanup();
+	// free MNPv4 list in conf
+	struct hoa4_mnp4 *next, *current = conf.mnpv4;
+	while (current != NULL) {
+		next = current->next;
+		prefix4_list_free(&current->mob_net_prefixes4);
+		free(current);
+		current = next;
+	}
+}
+
+inline char is_hoa4enabled(struct in_addr *addr4)
+{
+	if (addr4 == NULL) return 0;
+	struct hoa4_mnp4 *current = conf.mnpv4;
+	while (current != NULL) {
+		if(ip_equal(&current->hoa4, addr4))
+			return current->hoa4_enabled_by_MR;
+		current = current->next;
+	}
+	return 0;
+}
+
+char set_hoa4enabled(struct in_addr *addr4, char hoa4enabled)
+{
+	if (addr4 == NULL) return 0;
+	struct hoa4_mnp4 *current = conf.mnpv4;
+	while (current != NULL) {
+		if (ip_equal(&current->hoa4, addr4)) {
+			current->hoa4_enabled_by_MR = hoa4enabled;
+			return 1;
+		}
+		current = current->next;
+	}
+	return 0;
 }

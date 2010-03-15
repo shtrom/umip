@@ -35,6 +35,7 @@
 #include <linux/types.h>
 #include <linux/ipv6_route.h>
 
+#include "xfrm.h"
 #include "debug.h"
 #include "icmp6.h"
 #include "util.h"
@@ -106,11 +107,26 @@ static void __md_trigger_movement_event(int event_type, int data,
 	e.iface = iface;
 	e.coa = coa;
 
-	MDBG2("strategy %d type %d iface %s (%d) "
-	      "CoA %x:%x:%x:%x:%x:%x:%x:%x\n",
-	      e.md_strategy, e.event_type,
-	      e.iface->name, e.iface->ifindex,
-	      NIP6ADDR(e.coa ? &e.coa->addr : &in6addr_any));
+	if (!e.coa) MDBG2("strategy %d type %d iface %s (%d) "
+		      "CoA %x:%x:%x:%x:%x:%x:%x:%x\n",
+		      e.md_strategy, e.event_type,
+		      e.iface->name, e.iface->ifindex,
+		      NIP6ADDR(&in6addr_any));
+	else if (!IN6_IS_ADDR_V4MAPPED(&e.coa->addr))
+			MDBG2("strategy %d type %d iface %s (%d) "
+			  "CoA %x:%x:%x:%x:%x:%x:%x:%x\n",
+			  e.md_strategy, e.event_type,
+			  e.iface->name, e.iface->ifindex,
+			  NIP6ADDR(&e.coa->addr));
+		else {
+			uint32_t a4 = 0;
+			ipv6_unmap_addr(&e.coa->addr, &a4);
+			MDBG2("strategy %d type %d iface %s (%d) "
+			  "CoA %d:%d:%d:%d\n",
+			  e.md_strategy, e.event_type,
+			  e.iface->name, e.iface->ifindex,
+			  NIP4ADDR((struct in_addr *)&a4));
+		}
 
 	mn_movement_event(&e);
 }
@@ -128,11 +144,11 @@ void md_trigger_movement_event(int event_type, int data, int ifindex)
 
 static inline void md_free_coa(struct md_coa *coa)
 {
-	if (conf.MnUseDsmip6 && IN6_IS_ADDR_V4MAPPED(&coa->addr))
+	if (!IN6_IS_ADDR_V4MAPPED(&coa->addr))
+		MDBG3("freeing CoA %x:%x:%x:%x:%x:%x:%x:%x on iface %d\n",
+				NIP6ADDR(&coa->addr), coa->ifindex);
+	else if (conf.MnUseDsmip6) 
 		xfrm_udp_encap_delete(&coa->addr, &conf.HaAddr4Mapped);
-
-	MDBG3("freeing CoA %x:%x:%x:%x:%x:%x:%x:%x on iface %d\n",
-	      NIP6ADDR(&coa->addr), coa->ifindex);
 
 	list_del(&coa->list);
 	free(coa);
@@ -153,6 +169,9 @@ static void md_flush_coa(struct md_coa *coa)
 		if (IN6_IS_ADDR_V4MAPPED(&coa->addr)) {
 			struct in_addr addr;
 			ipv6_unmap_addr(&coa->addr, &addr.s_addr);
+                        MDBG2("deleting CoA %d.%d.%d.%d on iface %d\n",
+					NIP4ADDR((struct in_addr *)&addr),
+					coa->ifindex);
 			addr4_del(&addr, coa->plen4, coa->ifindex);
 		}
 
@@ -247,9 +266,17 @@ static void md_free_inet6_iface(struct md_inet6_iface *iface)
 
 static void md_expire_coa(struct md_inet6_iface *iface, struct md_coa *coa)
 {
+	uint32_t a4 = 0;
+
 	list_del(&coa->list);
+	if (!IN6_IS_ADDR_V4MAPPED(&coa->addr))
 	MDBG2("expiring CoA %x:%x:%x:%x:%x:%x:%x:%x on iface %s (%d)\n",
 	      NIP6ADDR(&coa->addr), iface->name, iface->ifindex);
+	else {
+		ipv6_unmap_addr(&coa->addr, &a4);
+		MDBG2("expiring CoA %d:%d:%d:%d on iface %s (%d)\n",
+				NIP4ADDR((struct in_addr *)&a4), iface->name, iface->ifindex);
+	}
 	list_add_tail(&coa->list, &iface->expired_coas);
 }
 
@@ -425,15 +452,15 @@ static void md_expire_inet6_iface(struct md_inet6_iface *iface)
 static void md_link_down(struct md_inet6_iface *iface)
 {
 	if (!all_iface_down()) {
-			//Kien: to avoid the case there are 2 events link_down between t0, t1 and (t1 - t0) is very small
-			set_iface_have_addr(iface->ifindex, 0);
-			struct list_head *l;
-			if (all_iface_down())
-				list_for_each(l, &conf.home_addrs) {
-					struct home_addr_info *hai;
-					hai = list_entry(l, struct home_addr_info, list);
-					mn_mnps_blackhole_rule_add(&hai->mob_net_prefixes);
-				}
+		//Kien: to avoid the case there are 2 events link_down between t0, t1 and (t1 - t0) is very small
+		set_iface_have_addr(iface->ifindex, 0);
+		struct list_head *l;
+		if (all_iface_down())
+			list_for_each(l, &conf.home_addrs) {
+				struct home_addr_info *hai;
+				hai = list_entry(l, struct home_addr_info, list);
+				mn_mnps_blackhole_rule_add(&hai->mob_net_prefixes, hai->mob_net_prefixes4, hai->mnp4_count);
+			}
 	}
 	MDBG2("link down on iface %s (%d)\n", iface->name, iface->ifindex);
 	md_flush_inet6_iface(iface);
@@ -452,7 +479,7 @@ md_init_coa(struct md_coa *coa, struct ifaddrmsg *ifa, struct rtattr **rta_tb,
 		/* DSMIPv6: If the address is mapped, then ifa_prefixlen
 		 * is actually the lenghth of the IPv4 address */
 		coa->plen4 = ifa->ifa_prefixlen;
-		coa->plen = 128; // this addr is still mapped in IP6
+		coa->plen = 128; // this addr4 is still mapped in IP6
 	} else
 		coa->plen = ifa->ifa_prefixlen;
 	coa->scope = ifa->ifa_scope;
@@ -720,8 +747,16 @@ static int process_del_addr(struct ifaddrmsg *ifa, struct rtattr **rta_tb)
 
 	int res = 0;
 
+	uint32_t a4 = 0;
+
+	if (!IN6_IS_ADDR_V4MAPPED(addr))
 	MDBG3("deleted address %x:%x:%x:%x:%x:%x:%x:%x on iface %d\n",
 	      NIP6ADDR(addr), ifa->ifa_index);
+	else {
+		ipv6_unmap_addr(addr, &a4);
+		MDBG3("deleted address %d:%d:%d:%d on iface %d\n",
+				NIP4ADDR((struct in_addr *)&a4), ifa->ifa_index);
+	}
 
 	if (ifa->ifa_scope != RT_SCOPE_UNIVERSE ||
 	    !in6_is_addr_routable_unicast(addr))

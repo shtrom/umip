@@ -32,6 +32,12 @@ struct prefix_list_entry
 #define ple_prefix pinfo.nd_opt_pi_prefix
 };
 
+struct net_prefix4 {
+	struct in_addr prefix4;
+	uint8_t plen4;
+	struct net_prefix4 *next;
+};
+
 static inline void ipv6_addr_prefix(struct in6_addr *pfx,
 				    const struct in6_addr *addr,
 				    int plen)
@@ -50,6 +56,20 @@ static inline void ipv6_addr_prefix(struct in6_addr *pfx,
 		o++;
 	}
 	memset(pfx->s6_addr + o, 0, 16 - o);
+}
+
+static int ipv4_addr_prefix(struct in_addr *pfx,
+				    const struct in_addr *addr,
+				    int plen4)
+{
+	 unsigned int mask = 0;
+	 if (plen4 < 0 || plen4 > 32) return -1;
+	 for (int i = 0; i < plen4; i++){
+	     mask >>= 1;
+	     mask |= (1 << 31);
+	 }
+	 pfx->s_addr = addr->s_addr & htonl(mask);
+	 return 0;
 }
 
 static inline void ipv6_addr_create(struct in6_addr *addr,
@@ -103,10 +123,13 @@ static inline void prefix_list_free(struct list_head *pl)
 	}
 }
 
+void prefix4_list_free(struct net_prefix4 **);
+
 struct prefix_list_entry *
 prefix_list_get(const struct list_head *, const struct in6_addr *, int);
 int prefix_list_cmp(const struct list_head *, const struct list_head *);
 int prefix_list_copy(const struct list_head *, struct list_head *);
+int prefix4_list_copy(const struct net_prefix4 *src, struct net_prefix4 **dst);
 
 static inline int  prefix_list_find(const struct list_head *pl,
 				    const struct in6_addr *addr, int plen)

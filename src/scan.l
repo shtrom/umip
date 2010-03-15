@@ -217,6 +217,7 @@ DebugLogFile			{ return DEBUGLOGFILE; }
 DoRouteOptimizationCN		{ return DOROUTEOPTIMIZATIONCN; }
 DoRouteOptimizationMN		{ return DOROUTEOPTIMIZATIONMN; }
 HomeAddress			{ return HOMEADDRESS; }
+HomeV4Address       { return HOMEADDRESS4; }
 HomeAgentAddress		{ return HOMEAGENTADDRESS; }
 HomeAgentV4Address		{ return HOMEAGENTADDRESS4; }
 HomeAgentName			{ return HOMEAGENTNAME; }
@@ -273,10 +274,13 @@ HaAcceptMobRtr   		{ return HAACCEPTMOBRTR; }
 IsMobRtr       			{ return ISMOBRTR; }
 HaServedPrefix       	       	{ return HASERVEDPREFIX; }
 HomePrefix     			{ return HOMEPREFIX; }
+HomeV4Prefix                    { return HOMEPREFIX4; }
 MobRtrUseExplicitMode    	{ return MOBRTRUSEEXPLICITMODE; }
 CnBindingPolicySet              { return CNBINDINGPOLICYSET; }
 MnUseDsmip6			{ return MNUSEDSMIP6; }
+MnSupportIPv4Traffic		{ return MNSUPPORTIPV4TRAFFIC; } 
 HaAcceptDsmip6			{ return HAACCEPTDSMIP6; }
+HaAcceptIPv4Traffic		{ return MNP4; }
 internal			{ return INTERNAL; }
 UseDhcp				{ return IFUSEDHCP; }
 

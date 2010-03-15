@@ -82,7 +82,7 @@ int mh_opts_dup_ok[] = {
 	0, /* IPv4 Home Address */
 	0, /* IPv4 Care of Address */
 	0, /* IPv4 Address Acknowledgment */
-	0, /* NAT Detection */
+	0  /* NAT Detection */
 };
 
 #define __MH_SENTINEL (IP6_MH_TYPE_MAX + 1)
@@ -384,14 +384,17 @@ int mh_create_opt_auth_data(struct iovec *iov)
 }
 
 /**
- * mh_create_opt_ipv4_hoa - create IPv4 Home Address option
+ * mh_create_opt_ipv4_hoa - create IPv4 Home Address option for Binding Update
  * @iov: vector
+ * @addr: IPv4 home address
+ * @plen: address prefix length
  *
  * Creates an IPv4 Home Address option with data set to zero.
  * Stores pointer and length in iovec vector @iov. Returns zero on success,
  * otherwise negative error value.
  **/
-int mh_create_opt_ipv4_hoa(struct iovec *iov)
+
+int mh_create_opt_ipv4_hoa(struct iovec *iov, struct in_addr *addr, int plen4)
 {
 	struct ip6_mh_opt_ipv4_hoa *opt;
 	size_t optlen = sizeof(struct ip6_mh_opt_ipv4_hoa);
@@ -407,10 +410,16 @@ int mh_create_opt_ipv4_hoa(struct iovec *iov)
 	opt->ip6moih_type = IP6_MHOPT_IPV4HOA;
 	opt->ip6moih_len = 6;
 
-	/* XXX Implement */
+	/* Prefix info*/
+	opt->ip6moih_prefix_len = plen4;
+	opt->ip6moih_flags_reserved = 0;
+	opt->ip6moih_v4hoa = *addr;
 
 	return 0;
+
 }
+
+
 
 /**
  * mh_create_opt_ipv4_coa - create IPv4 Care of Address option
@@ -444,12 +453,14 @@ int mh_create_opt_ipv4_coa(struct iovec *iov, struct in_addr *addr)
 /**
  * mh_create_opt_ipv4_ack - create IPv4 Address Acknowledgement option
  * @iov: vector
+ * @addr: IPv4 home address
+ * @status : Indicates success or failure for the IPv4 home address binding.
  *
  * Creates an IPv4 Address Acknowledgement option with data set to zero.
  * Stores pointer and length in iovec vector @iov. Returns zero on success,
  * otherwise negative error value.
  **/
-int mh_create_opt_ipv4_ack(struct iovec *iov)
+int mh_create_opt_ipv4_ack(struct iovec *iov, struct in_addr *addr, int plen4, uint8_t status)
 {
 	struct ip6_mh_opt_ipv4_ack *opt;
 	size_t optlen = sizeof(struct ip6_mh_opt_ipv4_ack);
@@ -464,11 +475,15 @@ int mh_create_opt_ipv4_ack(struct iovec *iov)
 	opt = (struct ip6_mh_opt_ipv4_ack *)iov->iov_base;
 	opt->ip6moia_type = IP6_MHOPT_IPV4ACK;
 	opt->ip6moia_len = 6;
-
-	/* XXX Implement */
+	opt->ip6moia_status = status;
+	opt->ip6moia_prefix_len = plen4;
+//	opt->ip6moia_reserved = 0;
+	//opt->ip6moia_prefix_len__reserved = plen;
+	opt->ip6moia_v4hoa = *addr;
 
 	return 0;
 }
+
 
 /**
  * mh_create_opt_ipv4_nat - create NAT detection option
@@ -1211,6 +1226,17 @@ void mh_send_ba(const struct in6_addr_bundle *addrs, uint8_t status,
 				addrs->nat_info);
 	if (key)
 		mh_create_opt_auth_data(&mh_vec[iovlen++]);
+
+	/* IPv4 home address option*/
+	if (is_hoa4enabled(addrs->hoa4)) { /* TODO all status must be taken into consideration
+					    * DSMIPv6 draft-ietf-mext-nemo-v4traversal-04
+					    * para 4.2.1 page 18
+					    * Values already defined in include/netinet/ip6mh.h lines 261-268
+					    */
+			if (mh_create_opt_ipv4_ack(&mh_vec[iovlen++], addrs->hoa4, addrs->plen4, IP6_MHOPT_IPV4ACK_ACCEPTED)) {
+				free_iov_data(mh_vec, iovlen);
+			}
+		}
 	mh_send(addrs, mh_vec, iovlen, key, iif);
 	free_iov_data(mh_vec, iovlen);
 	statistics_inc(&mipl_stat, MIPL_STATISTICS_OUT_BA);
@@ -1228,6 +1254,7 @@ int mh_bu_parse(struct ip6_mh_binding_update *bu, ssize_t len,
 	struct in6_addr *our_addr, *peer_addr, *remote_coa;
 	struct ip6_mh_opt_altcoa *alt_coa;
 	struct ip6_mh_opt_ipv4_coa *ipv4_coa;
+	struct ip6_mh_opt_ipv4_hoa *ipv4_hoa;
 
 	MDBG("Binding Update Received\n");
 	if (len < 0 || (size_t)len < sizeof(struct ip6_mh_binding_update) ||
@@ -1253,6 +1280,15 @@ int mh_bu_parse(struct ip6_mh_binding_update *bu, ssize_t len,
 		out_addrs->bind_coa = &alt_coa->ip6moa_addr;
 	else
 		out_addrs->bind_coa = in_addrs->remote_coa;
+
+	/* IPv4 header option */
+	/* IPv4 home address option*/
+	ipv4_hoa = mh_opt(&bu->ip6mhbu_hdr, mh_opts, IP6_MHOPT_IPV4HOA);
+	if (ipv4_hoa){
+		out_addrs->hoa4 = &ipv4_hoa->ip6moih_v4hoa;
+		out_addrs->plen4 = ipv4_hoa->ip6moih_prefix_len;
+		set_hoa4enabled(out_addrs->hoa4, 1);
+	}
 
 	our_addr = in_addrs->dst;
 	tsclear(*lifetime);

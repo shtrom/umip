@@ -36,6 +36,24 @@ struct ha_addr_holder {
 	struct in6_addr anycast_addr;
 };
 
+struct hoa4_mnp4 {
+	struct in_addr hoa4;
+	struct net_prefix4 *mob_net_prefixes4;
+	int mnp4_count;
+	char hoa4_enabled_by_MR;
+	struct hoa4_mnp4 *next;
+};
+
+struct mnp_s4 {
+	struct list_head list;
+	struct in_addr hoa4;
+	int hoa4enabled;
+	int mnp_count4;
+	struct list_head mob_net_prefixes4;
+};
+
+inline char is_hoa4enabled(struct in_addr *addr);
+char set_hoa4enabled(struct in_addr *addr, char hoa4enabled);
 
 int homeagents_ifall_init(void);
 int homeagent_if_init(int ifindex);

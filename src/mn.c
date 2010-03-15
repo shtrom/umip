@@ -35,6 +35,8 @@
 #include <errno.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <signal.h>
 
 #include <netinet/icmp6.h>
 #include <netinet/ip6mh.h>
@@ -75,6 +77,8 @@
 
 #define MN_DEBUG_LEVEL 1
 
+//#define __DSMIP_DEBUG__ 1
+
 #if MN_DEBUG_LEVEL >= 1
 #define MDBG dbg
 #else
@@ -102,13 +106,58 @@ const struct timespec non_mip_cn_ltime_ts =
 const struct timespec min_valid_bu_lifetime_ts =
 { MIN_VALID_BU_LIFETIME, 0 };
 
+struct flag_hoa_args {
+	struct home_addr_info *target;
+	struct bulentry *bule;
+	int flag;
+};
+
 static int pending_bas = 0;
 
 static void mn_send_home_bu(struct home_addr_info *hai);
 static int mn_ext_tunnel_ops(int request, int old_if, int new_if, void *data);
+static int flag_hoa(struct ifaddrmsg *ifa, struct rtattr *rta_tb[], void *arg);
+static int nemo_mr_rules_add(struct home_addr_info *hinfo);
+static void nemo_mr_rules_del(struct home_addr_info *hinfo);
+static int nemo_mr_rules4_add(struct home_addr_info *hinfo);
+static void nemo_mr_rules4_del(struct home_addr_info *hinfo);
+static int mn_ext_tunnel4_ops(int request, int old_if, int new_if, void *data);
+static int flag_hoa4(struct ifaddrmsg *ifa, void *arg);
+
+static int mn_block_rule_del(struct home_addr_info *hai)
+{
+	struct in_addr inaddr_any = { 0 };
+	int ret = -1;
+
+	if (!(hai->home_block & HOME_ADDR_RULE_BLOCK)) {
+		MDBG("blackhole is not set.\n");
+		return ret;
+	}
+
+	if ((ret = rule_del(NULL, 0, IP6_RULE_PRIO_MIP6_BLOCK,RTN_BLACKHOLE,
+			&hai->hoa.addr, 128, &in6addr_any, 0,
+		     FIB_RULE_FIND_SADDR)) < 0){
+		MDBG("failed to delete blackhole rule.\n");
+		return ret;
+	}
+
+	if (conf.MnSupportIPv4Traffic)
+		if ((ret = rule4_del(NULL, 0, IP6_RULE_PRIO_MIP6_BLOCK,
+			     		     RTN_BLACKHOLE, &hai->hoa.addr4, 32, &inaddr_any, 0,
+			     		     FIB_RULE_FIND_SADDR)) < 0)	{
+				MDBG("failed to delete blackhole rule.\n");
+				return ret;
+		}
+
+	hai->home_block &= ~HOME_ADDR_RULE_BLOCK;
+
+	return ret;
+}
 
 static int mn_blackhole_rule_add(struct in6_addr *src6, int s6plen,
-		struct in6_addr *dst6, int d6plen, int prio)
+		struct in6_addr *dst6, int d6plen,
+		struct in_addr *src4, int s4plen,
+		struct in_addr *dst4, int d4plen, int prio)
 {
 	int ret = -1;
 
@@ -119,11 +168,21 @@ static int mn_blackhole_rule_add(struct in6_addr *src6, int s6plen,
 				return ret;
 			}
 
+	if (src4 != NULL && dst4 != NULL)
+		if (conf.MnSupportIPv4Traffic)
+			if ((ret = rule4_add(NULL, 0, prio, RTN_BLACKHOLE,
+					src4, s4plen, dst4, d4plen, FIB_RULE_FIND_SADDR)) < 0)	{
+					MDBG("failed to add blackhole rule.\n");
+					return ret;
+			}
+
 	return ret;
 }
 
 static int mn_blackhole_rule_del(struct in6_addr *src6, int s6plen,
-		struct in6_addr *dst6, int d6plen, int prio)
+		struct in6_addr *dst6, int d6plen,
+		struct in_addr *src4, int s4plen,
+		struct in_addr *dst4, int d4plen, int prio)
 {
 	int ret = -1;
 
@@ -134,10 +193,20 @@ static int mn_blackhole_rule_del(struct in6_addr *src6, int s6plen,
 				return ret;
 			}
 
+	if (src4 != NULL && dst4 != NULL)
+		if (conf.MnSupportIPv4Traffic)
+			if ((ret = rule4_del(NULL, 0, prio, RTN_BLACKHOLE,
+					src4, s4plen, dst4, d4plen, FIB_RULE_FIND_SADDR)) < 0)	{
+					MDBG("failed to del blackhole rule.\n");
+					return ret;
+			}
+
 	return ret;
 }
 
-void mn_mnps_blackhole_rule_add(struct list_head *mob_net_prefixes)
+void mn_mnps_blackhole_rule_add(struct list_head *mob_net_prefixes,
+		struct net_prefix4 *mob_net_prefixes4,
+		int mnp4_count)
 {
 	struct list_head *l;
 	struct in_addr inaddr_any = { 0 };
@@ -147,11 +216,24 @@ void mn_mnps_blackhole_rule_add(struct list_head *mob_net_prefixes)
 			p = list_entry(l, struct prefix_list_entry, list);
 			mn_blackhole_rule_add(&p->ple_prefix,
 					p->ple_plen, &in6addr_any, 0,
-					IP6_RULE_PRIO_MIP6_MNP_BLOCK);
+					NULL, 0, NULL, 0, IP6_RULE_PRIO_MIP6_MNP_BLOCK);
 	 	}
+
+	if (conf.MnSupportIPv4Traffic) {
+		struct net_prefix4 *current = mob_net_prefixes4;
+		for (int i = 0; i < mnp4_count; i++) {
+			mn_blackhole_rule_add(NULL, 0,
+					NULL, 0, &current->prefix4,
+					current->plen4, &inaddr_any, 0, IP6_RULE_PRIO_MIP6_MNP_BLOCK);
+			current = current->next;
+		}
+		current = NULL;
+	}
 }
 
-void mn_mnps_blackhole_rule_del(struct list_head *mob_net_prefixes)
+void mn_mnps_blackhole_rule_del(struct list_head *mob_net_prefixes,
+		struct net_prefix4 *mob_net_prefixes4,
+		int mnp4_count)
 {
 	struct list_head *l;
 	struct in_addr inaddr_any = { 0 };
@@ -161,43 +243,35 @@ void mn_mnps_blackhole_rule_del(struct list_head *mob_net_prefixes)
 			p = list_entry(l, struct prefix_list_entry, list);
 			mn_blackhole_rule_del(&p->ple_prefix,
 					p->ple_plen, &in6addr_any, 0,
-					IP6_RULE_PRIO_MIP6_MNP_BLOCK);
+					NULL, 0, NULL, 0, IP6_RULE_PRIO_MIP6_MNP_BLOCK);
 	 	}
-}
 
-static int mn_block_rule_del(struct home_addr_info *hai)
-{
-	int ret = -1;
-
-	if (!(hai->home_block & HOME_ADDR_RULE_BLOCK)) {
-		MDBG("blackhole is not set.\n");
-		return ret;
+	if (conf.MnSupportIPv4Traffic) {
+		struct net_prefix4 *current = mob_net_prefixes4;
+		for (int i = 0; i < mnp4_count; i++) {
+			mn_blackhole_rule_del(NULL, 0,
+					NULL, 0, &current->prefix4,
+					current->plen4, &inaddr_any, 0, IP6_RULE_PRIO_MIP6_MNP_BLOCK);
+			current = current->next;
+		}
+		current = NULL;
 	}
-
-	if ((ret = rule_del(NULL, 0, IP6_RULE_PRIO_MIP6_BLOCK, RTN_BLACKHOLE,
-		     &hai->hoa.addr, 128, &in6addr_any, 0,
-		     FIB_RULE_FIND_SADDR)) < 0)
-		MDBG("failed to delete blackhole rule.\n");
-	else
-		hai->home_block &= ~HOME_ADDR_RULE_BLOCK;
-
-	return ret;
 }
 
 static int mn_block_rule_add(struct home_addr_info *hai)
 {
+	struct in_addr inaddr_any = { 0 };
 	int ret = -1;
 
 	if (hai->home_block & HOME_ADDR_RULE_BLOCK) {
 		MDBG("blackhole is already set.\n");
 		return ret;
 	}
-	if ((ret = rule_add(NULL, 0, IP6_RULE_PRIO_MIP6_BLOCK, RTN_BLACKHOLE,
-		     &hai->hoa.addr, 128, &in6addr_any, 0,
-		     FIB_RULE_FIND_SADDR)) < 0)
-		MDBG("failed to add blackhole rule.\n");
-	else
-		hai->home_block |= HOME_ADDR_RULE_BLOCK;
+
+	ret = mn_blackhole_rule_add(&hai->hoa.addr, 128, &in6addr_any, 0,
+			&hai->hoa.addr4, 32, &inaddr_any, 0, IP6_RULE_PRIO_MIP6_BLOCK);
+
+	hai->home_block |= HOME_ADDR_RULE_BLOCK;
 
 	return ret;
 }
@@ -251,6 +325,9 @@ static void bule_invalidate(struct bulentry *e,
 	e->lifetime = NON_MIP_CN_LTIME_TS;
 	e->delay = NON_MIP_CN_LTIME_TS;
 	e->callback = bul_expire;
+	e->if_tunnel = 0;
+	e->if_tunnel4 = 0;
+
 	if (bul_add(e) < 0)
 		bul_delete(e);
 }
@@ -377,7 +454,6 @@ static int mn_send_bu_msg(struct bulentry *bule)
 	if (!is_iface_have_addr(bule->if_coa)) return 0;
 
 	struct ip6_mh_binding_update *bu;
-
 	struct iovec iov[IP6_MHOPT_MAX+1];
 	int iov_ind = 0;
 	int ret = -ENOMEM;
@@ -425,6 +501,14 @@ static int mn_send_bu_msg(struct bulentry *bule)
 			return -ENOMEM;
 		}
 	}
+	if (conf.MnSupportIPv4Traffic){
+		if (&bule->home->hoa.addr4) {
+			if (mh_create_opt_ipv4_hoa(&iov[iov_ind++], &bule->home->hoa.addr4, bule->home->plen4)) {
+				free_iov_data(iov, iov_ind);
+				return -ENOMEM;
+			}
+		}
+	}
 	if (bule->flags & IP6_MH_BU_ACK)
 		bule->wait_ack = 1;
 	addrs.src = &bule->hoa;
@@ -453,6 +537,7 @@ static int mn_get_home_lifetime(struct home_addr_info *hai,
 		unsigned long coa_lft;
 		unsigned long hoa_lft;
 
+		assert(coa);
 		clock_gettime(CLOCK_REALTIME, &now);
 
 		coa_lft = mpd_curr_lft(&now, &coa->timestamp,
@@ -494,6 +579,7 @@ static int mn_get_ro_lifetime(struct home_addr_info *hai,
 			unsigned long coa_lft;
 			unsigned long home_lft;
 
+			assert(coa);
 			clock_gettime(CLOCK_REALTIME, &now);
 
 			coa_lft = mpd_curr_lft(&now, &coa->timestamp,
@@ -625,6 +711,7 @@ static void bu_refresh(struct tq_elem *tqe)
 	if (!task_interrupted()) {
 		struct bulentry *bule = tq_data(tqe, struct bulentry, tqe);
 		int expired;
+
 		MDBG("Bul refresh type: %d\n", bule->type);
 
 		clock_gettime(CLOCK_REALTIME, &bule->lastsent);
@@ -635,6 +722,7 @@ static void bu_refresh(struct tq_elem *tqe)
 
 		bule->seq++;
 		bule->callback = bu_resend;
+
 		pre_bu_bul_update(bule);
 		mn_send_bu_msg(bule);
 
@@ -647,6 +735,7 @@ static void bu_refresh(struct tq_elem *tqe)
 				post_ba_bul_update(bule);
 		}
 	}
+
 	pthread_rwlock_unlock(&mn_lock);
 }
 
@@ -668,7 +757,7 @@ struct mv_hoa_args {
 };
 
 /*
- * Move home address between
+ * Move home address v6 between 2 interfaces
  */
 static int mv_hoa(struct ifaddrmsg *ifa, struct rtattr *rta_tb[], void *arg)
 {
@@ -696,7 +785,7 @@ static int mv_hoa(struct ifaddrmsg *ifa, struct rtattr *rta_tb[], void *arg)
 	if (mha->if_next >= 0 && (unsigned int)mha->if_next == ifa->ifa_index)
 		return 0;
 
-	MDBG("move HoA %x:%x:%x:%x:%x:%x:%x:%x/%d from iface %d to %d\n",
+	MDBG("Move HoA %x:%x:%x:%x:%x:%x:%x:%x/%d from iface %d to %d\n",
 	     NIP6ADDR(&hoa->addr), plen, ifa->ifa_index, mha->if_next);
 
 	err = addr_add(&hoa->addr, plen,
@@ -708,6 +797,102 @@ static int mv_hoa(struct ifaddrmsg *ifa, struct rtattr *rta_tb[], void *arg)
 	hoa->iif = mha->if_next;
 	addr_del(&hoa->addr, ifa->ifa_prefixlen, ifa->ifa_index);
 	return post_move_hoa(hai, ifa->ifa_index); /* DSMIPv6 addition */
+}
+
+/*
+ * Move home address v4 between 2 interfaces
+ */
+static int mv_hoa4(struct ifaddrmsg *ifa, void *arg)
+{
+	struct mv_hoa_args *mha = arg;
+	struct home_addr_info *hai = mha->target;
+	struct mn_addr *hoa = &hai->hoa;
+	int err;
+
+	int plen4 = (((mha->if_next == hai->if_tunnel44) /*||
+			     (mha->if_next == hai->if_tunnel66)*/) ? 32 : hai->plen4);
+
+	if (mha->if_next == ifa->ifa_index)	return 0;
+
+	MDBG("Move HoA %d:%d:%d:%d/%d from iface %d to %d\n",
+			 NIP4ADDR(&hoa->addr4), plen4, ifa->ifa_index, mha->if_next);
+	err = addr4_add(&hoa->addr4, plen4, mha->if_next);
+	if (err < 0) return err;
+
+	hoa->iif4 = mha->if_next;
+	err = addr4_del(&hoa->addr4, plen4, ifa->ifa_index);
+	return err;
+}
+
+int nemo_mr_tnl4_routes_add(struct home_addr_info *hai, int ifindex)
+{
+	int i, j;
+	struct net_prefix4 *current = hai->mob_net_prefixes4;
+	struct in_addr inaddr_any = { 0 };
+	for (i = 0; i < hai->mnp4_count; i++) {
+		if (route4_add(ifindex, RT6_TABLE_MIP6, 0,
+					      &current->prefix4, current->plen4,
+					      &inaddr_any, 0, NULL) < 0) goto undo;
+		current = current->next;
+	}
+	current = NULL;
+	return 0;
+undo:
+	current = hai->mob_net_prefixes4;
+	for (j = 0; j < i; j++) {
+		route4_del(ifindex, RT6_TABLE_MIP6,
+					      &current->prefix4, current->plen4,
+					      &inaddr_any, 0, NULL);
+		current = current->next;
+	}
+	current = NULL;
+	return -1;
+}
+
+static void nemo_mr_tnl4_routes_del(struct home_addr_info *hai,
+		int ifindex)
+{
+	struct net_prefix4 *current = hai->mob_net_prefixes4;
+	struct in_addr inaddr_any = { 0 };
+	for (int i = 0; i < hai->mnp4_count; i++) {
+		route4_del(ifindex, RT6_TABLE_MIP6,
+					      &current->prefix4, current->plen4,
+					      &inaddr_any, 0, NULL);
+		current = current->next;
+	}
+	current = NULL;
+}
+
+static int mn_tnl4_state_add(struct home_addr_info *hai, int ifindex, int all)
+{
+	int err = 0;
+	struct in_addr inaddr_any = { 0 };
+
+	if (hai->home_reg_status != HOME_REG_NONE) {
+		//if ((err = mn_ro_pol_add(hai, ifindex, all)) < 0)
+			//return err;
+		MDBG("Adding route towards tunnel index %d in table %d\n", ifindex, RT6_TABLE_MIP6);
+		if ((err = route4_add(ifindex, RT6_TABLE_MIP6, 0,
+				     &inaddr_any, 0,
+				     &inaddr_any, 0, NULL)) < 0) {
+			//mn_ro_pol_del(hai, ifindex, all);
+			MDBG("*********** the insertion failed !!! ************\n");
+		}
+		if (ifindex == hai->if_tunnel44) {
+			if ((err = route4_add(ifindex, RT6_TABLE_MAIN, 0,
+					     &inaddr_any, 0,
+					     &inaddr_any, 0, NULL)) < 0) {
+			  MDBG("dsmip route failed\n");
+			}
+		}
+	}
+	if (hai->mob_rtr &&
+	    (err = nemo_mr_tnl4_routes_add(hai, ifindex)) < 0) {
+		route4_del(ifindex, RT6_TABLE_MIP6,
+			  &hai->hoa.addr4, 32, &inaddr_any, 0, NULL);
+		//mn_ro_pol_del(hai, ifindex, all);
+	}
+	return err;
 }
 
 int nemo_mr_tnl_routes_add(struct home_addr_info *hai, int ifindex)
@@ -744,12 +929,12 @@ static int mn_tnl_state_add(struct home_addr_info *hai, int ifindex, int all)
 	if (hai->home_reg_status != HOME_REG_NONE) {
 		if ((err = mn_ro_pol_add(hai, ifindex, all)) < 0)
 			return err;
-		MDBG("Adding route towards tunnel index %d\n", ifindex);
+		MDBG("Adding route towards tunnel index %d in table %d\n", ifindex, RT6_TABLE_MIP6);
 		if ((err = route_add(ifindex, RT6_TABLE_MIP6, RTPROT_MIP, 0,
 				     IP6_RT_PRIO_MIP6_OUT, &in6addr_any, 0,
 				     &in6addr_any, 0, NULL)) < 0) {
 			mn_ro_pol_del(hai, ifindex, all);
-			MDBG("*********** the insertion failed !!! ************");
+			MDBG("*********** the insertion failed !!! ************\n");
 		}
 		if (ifindex == hai->if_tunnel64) {
 			MDBG("You are using DSMIPv6, adding default route to main table\n");
@@ -780,7 +965,8 @@ static void nemo_mr_tnl_routes_del(struct home_addr_info *hai, int ifindex)
 	}
 }
 
-static void mn_tnl_state_del(struct home_addr_info *hai, int ifindex, int all)
+static void mn_tnl_state_del(struct home_addr_info *hai, int ifindex,
+		int all)
 {
 	if (hai->home_reg_status != HOME_REG_NONE) {
 		MDBG("Deleting route towards tunnel index %d\n", ifindex);
@@ -792,6 +978,17 @@ static void mn_tnl_state_del(struct home_addr_info *hai, int ifindex, int all)
 	}
 }
 
+static void mn_tnl4_state_del(struct home_addr_info *hai, int ifindex, int all)
+{
+	struct in_addr inaddr_any = { 0 };
+	if (hai->home_reg_status != HOME_REG_NONE) {
+		MDBG("Deleting route towards tunnel index %d\n", ifindex);
+		if (hai->mob_rtr)
+			nemo_mr_tnl4_routes_del(hai, ifindex);
+		route4_del(ifindex, RT6_TABLE_MIP6, &hai->hoa.addr4, 32, &inaddr_any, 0, NULL);
+		//mn_ro_pol_del(hai, ifindex, all);
+	}
+}
 
 static void mn_home_ext_cleanup(struct bulentry *bule)
 {
@@ -812,6 +1009,7 @@ static void mn_pol_ext_cleanup(struct bulentry *bule)
 	MDBG("\n");
 	mpd_cancel_mps(&bule->hoa, &bule->peer_addr);
 	mn_tnl_state_del(bule->home, bule->home->if_tunnel, 0);
+	mn_tnl4_state_del(bule->home, bule->home->if_tunnel, 0);
 
 	if (conf.UseMnHaIPsec) {
 		mn_ipsec_tnl_update(&bule->peer_addr, &bule->hoa, bule);
@@ -855,15 +1053,31 @@ static int process_first_home_bu(struct bulentry *bule,
 
 	if (IN6_IS_ADDR_V4MAPPED(&bule->coa)) {
 		hai->if_tunnel = hai->if_tunnel64;
+		if (hai->if_tunnel4 != hai->if_tunnel44) {
+			struct mv_hoa_args mha;
+			mha.if_next = hai->if_tunnel44;
+			mha.target = hai;
+			addr4_do(&hai->hoa.addr4, 32, hai->if_tunnel4, &mha, mv_hoa4);
+		}
+		hai->if_tunnel4 = hai->if_tunnel44;
 		bule->use_alt_coa = 0; /* Not needed, CoA in IPv4 CoA opt */
-	} else
+	} else {
 		hai->if_tunnel = hai->if_tunnel66;
+		hai->if_tunnel4 = hai->if_tunnel66;
+	}
+	bule->if_tunnel = hai->if_tunnel;
+	bule->if_tunnel4 = hai->if_tunnel4;
 
-	if ((err = mn_tnl_state_add(hai, hai->if_tunnel, 0)) < 0)
+	if ((err = mn_tnl_state_add(hai, bule->if_tunnel, 0)) < 0 ){
 		MDBG("Failed to initialize new bule for HA\n");
-	else
-		MDBG("New bule for HA\n");
-
+		return err;
+	}
+	if (conf.MnSupportIPv4Traffic)
+		if ((err = mn_tnl4_state_add(hai, bule->if_tunnel4, 0)) < 0 ){
+			MDBG("Failed to initialize new bule for HA\n");
+			return err;
+		}
+	MDBG("New bule for HA\n");
 	return err;
 }
 
@@ -898,11 +1112,11 @@ static void mn_send_home_bu(struct home_addr_info *hai)
 		MDBG("HA not set for home link\n");
 		return;
 	}
-	mn_get_home_lifetime(hai, &lifetime, 0);
-
 	int mnps_blackhole_del = 0;
 	if (all_iface_down()) mnps_blackhole_del = 1;
 	set_iface_have_addr(hai->primary_coa.iif, 1);
+
+	mn_get_home_lifetime(hai, &lifetime, 0);
 
 	if ((bule = bul_get(hai, NULL, &hai->ha_addr)) == NULL) {
 		assert(!hai->at_home);
@@ -928,8 +1142,8 @@ static void mn_send_home_bu(struct home_addr_info *hai)
 			return;
 		if (process_first_home_bu(bule, hai, &lifetime) < 0 ||
 		    bul_add(bule) < 0) {
-			bul_delete(bule);
-			return;
+				bul_delete(bule);
+				return;
 		}
 #ifdef __DSMIP_DEBUG__
 		printf("first_home_BU_success\n");
@@ -1016,19 +1230,36 @@ static void mn_send_home_bu(struct home_addr_info *hai)
 		    conf.OptimisticHandoff)
 			post_ba_bul_update(bule);
 	}
+
 	/* Before bul_iterate, tunnel modification should be done. */
 	if (IN6_IS_ADDR_V4MAPPED(&hai->primary_coa.addr)) {
 		struct in6_addr ha_addr;
 		ipv6_map_addr(&ha_addr, &hai->ha_addr4);
-		hai->if_tunnel = dsmip_mn_tunnel_mod(hai, &hai->primary_coa.addr,
-						&ha_addr, hai->primary_coa.iif,
-						mn_ext_tunnel_ops, hai);
+		hai->if_tunnel64 = dsmip_mn_tunnel_mod(hai, &hai->primary_coa.addr,
+				&ha_addr, hai->primary_coa.iif,
+				mn_ext_tunnel_ops, hai);
+		hai->if_tunnel = hai->if_tunnel64;
+		if (conf.MnSupportIPv4Traffic) {
+			hai->if_tunnel44 = tunnel4_mod(hai->if_tunnel44, &hai->primary_coa.addr,
+					&ha_addr, hai->primary_coa.iif,
+					mn_ext_tunnel4_ops, hai);
+			if (hai->if_tunnel4 != hai->if_tunnel44)
+				mn_ext_tunnel4_ops(NULL, hai->if_tunnel4, hai->if_tunnel44, hai);
+			hai->if_tunnel4 = hai->if_tunnel44;
+		}
+	} else {
+		hai->if_tunnel66 = dsmip_mn_tunnel_mod(hai, &hai->primary_coa.addr,
+				&hai->ha_addr, hai->primary_coa.iif,
+				mn_ext_tunnel_ops, hai);
+		hai->if_tunnel = hai->if_tunnel66;
+		if (conf.MnSupportIPv4Traffic) {
+			mn_ext_tunnel4_ops(NULL, hai->if_tunnel4, hai->if_tunnel66, hai);
+			hai->if_tunnel4 = hai->if_tunnel66;
+		}
+	}
 
-	} else
-		hai->if_tunnel = dsmip_mn_tunnel_mod(hai, &hai->primary_coa.addr,
-						&hai->ha_addr, hai->primary_coa.iif,
-						mn_ext_tunnel_ops, hai);
-
+	bule->if_tunnel = hai->if_tunnel;
+	bule->if_tunnel4 = hai->if_tunnel4;
 	bule->last_coa = bule->coa;
 	bule->coa_changed = 0;
 
@@ -1038,7 +1269,7 @@ static void mn_send_home_bu(struct home_addr_info *hai)
 	}
 
 	if (mnps_blackhole_del)
-			mn_mnps_blackhole_rule_del(&hai->mob_net_prefixes);
+		mn_mnps_blackhole_rule_del(&hai->mob_net_prefixes, hai->mob_net_prefixes4, hai->mnp4_count);
 }
 
 void mn_send_cn_bu(struct bulentry *bule)
@@ -1538,11 +1769,6 @@ struct home_addr_info *mn_get_home_addr_by_dhaadid(uint16_t dhaad_id)
 	return NULL;
 }
 
-struct flag_hoa_args {
-	struct home_addr_info *target;
-	int flag;
-};
-
 static int flag_hoa(struct ifaddrmsg *ifa, struct rtattr *rta_tb[], void *arg)
 {
 	/*
@@ -1597,6 +1823,25 @@ static int flag_hoa(struct ifaddrmsg *ifa, struct rtattr *rta_tb[], void *arg)
 	return 0;
 }
 
+static int flag_hoa4(struct ifaddrmsg *ifa, void *arg)
+{
+	struct flag_hoa_args *fhoa = arg;
+	struct home_addr_info *hai = fhoa->target;
+	struct mn_addr *hoa = &hai->hoa;
+	int err, plen4;
+
+	plen4 = (ifa->ifa_index == hai->if_tunnel4 ? 32 : hai->plen4);
+
+	if ((err = addr4_add(&hai->hoa.addr4, plen4, ifa->ifa_index)) < 0){
+		MDBG("Failed to add address %d.%d.%d.%d to tunnel (%d)\n",NIP4ADDR(&hai->hoa.addr4), ifa->ifa_index);
+		return err;
+	}
+
+	hoa->iif4 = ifa->ifa_index;
+
+	return 0;
+}
+
 static void nemo_mr_rules_del(struct home_addr_info *hinfo)
 {
 	struct list_head *l;
@@ -1611,6 +1856,23 @@ static void nemo_mr_rules_del(struct home_addr_info *hinfo)
 			 IP6_RULE_PRIO_MIP6_MNP_IN, RTN_UNICAST,
 			 &in6addr_any, 0, &p->ple_prefix, p->ple_plen, 0);
 	}
+}
+
+static void nemo_mr_rules4_del(struct home_addr_info *hinfo)
+{
+	struct in_addr inaddr_any = { 0 };
+
+	struct net_prefix4 *current = hinfo->mob_net_prefixes4;
+	for (int i = 0; i < hinfo->mnp4_count; i++){
+		rule4_del(NULL, RT6_TABLE_MIP6,
+			 IP6_RULE_PRIO_MIP6_FWD, RTN_UNICAST,
+			 &current->prefix4, current->plen4, &inaddr_any, 0, 0);
+		rule4_del(NULL, RT6_TABLE_MAIN,
+			 IP6_RULE_PRIO_MIP6_MNP_IN, RTN_UNICAST,
+			 &inaddr_any, 0, &current->prefix4, current->plen4, 0);
+		current = current->next;
+	}
+	current = NULL;
 }
 
 static int nemo_mr_rules_add(struct home_addr_info *hinfo)
@@ -1645,7 +1907,7 @@ undo:
 		struct prefix_list_entry *p = NULL;
 		p = list_entry(l, struct prefix_list_entry, list);
 		rule_del(NULL, RT6_TABLE_MIP6,
-			 IP6_RULE_PRIO_MIP6_FWD,  RTN_UNICAST,
+			 IP6_RULE_PRIO_MIP6_FWD, RTN_UNICAST,
 			 &p->ple_prefix, p->ple_plen, &in6addr_any, 0, 0);
 		rule_del(NULL, RT6_TABLE_MAIN,
 			 IP6_RULE_PRIO_MIP6_MNP_IN, RTN_UNICAST,
@@ -1656,33 +1918,91 @@ undo:
 	return -1;
 }
 
+static int nemo_mr_rules4_add(struct home_addr_info *hinfo)
+{
+	int i, j;
+	struct in_addr inaddr_any = { 0 };
+	struct net_prefix4 *current = hinfo->mob_net_prefixes4;
+	for (i = 0; i < hinfo->mnp4_count; i++){
+		if (rule4_add(NULL, RT6_TABLE_MAIN,
+			     IP6_RULE_PRIO_MIP6_MNP_IN, RTN_UNICAST,
+			     &inaddr_any, 0,
+			     &current->prefix4, current->plen4, 0) < 0) goto undo;
+		if (rule4_add(NULL, RT6_TABLE_MIP6,
+			     IP6_RULE_PRIO_MIP6_FWD, RTN_UNICAST,
+			     &current->prefix4, current->plen4,
+			     &inaddr_any, 0, 0) < 0) {
+			rule4_del(NULL, RT6_TABLE_MAIN,
+				 IP6_RULE_PRIO_MIP6_MNP_IN, RTN_UNICAST,
+				 &inaddr_any, 0, &current->prefix4, current->plen4, 0);
+			goto undo;
+		}
+		current = current->next;
+	}
+	current = NULL;
+	return 0;
+undo:
+	current = hinfo->mob_net_prefixes4;
+	for (j = 0; j < i; j++) {
+		rule4_del(NULL, RT6_TABLE_MIP6,
+			 IP6_RULE_PRIO_MIP6_FWD, RTN_UNICAST,
+			 &current->prefix4, current->plen4, &inaddr_any, 0, 0);
+		rule4_del(NULL, RT6_TABLE_MAIN,
+			 IP6_RULE_PRIO_MIP6_MNP_IN, RTN_UNICAST,
+			 &inaddr_any, 0, &current->prefix4, current->plen4, 0);
+		current = current->next;
+	}
+	current = NULL;
+	return -1;
+}
+
 static void clean_home_addr_info(struct home_addr_info *hai)
 {
 	struct flag_hoa_args arg;
 	int plen = (hai->hoa.iif == hai->if_tunnel ? 128 : hai->plen);
+	int plen4 = (hai->hoa.iif4 == hai->if_tunnel4 ? 32 : hai->plen4);
+	struct in_addr inaddr_any = { 0 };
 
-	mn_mnps_blackhole_rule_del(&hai->mob_net_prefixes);
+	mn_mnps_blackhole_rule_del(&hai->mob_net_prefixes, hai->mob_net_prefixes4, hai->mnp4_count);
 	list_del(&hai->list);
-	if (hai->mob_rtr)
+	if (hai->mob_rtr) {
 		nemo_mr_rules_del(hai);
+		if (conf.MnSupportIPv4Traffic)
+			nemo_mr_rules4_del(hai);
+	}
+
 	arg.target = hai;
 	arg.flag = 0;
-	addr_do(&hai->hoa.addr, plen,
-		hai->hoa.iif, &arg, flag_hoa);
+	addr_do(&hai->hoa.addr, plen, hai->hoa.iif, &arg, flag_hoa);
+	if (conf.MnSupportIPv4Traffic)
+		addr4_do(&hai->hoa.addr4, plen4, hai->hoa.iif4, &arg, flag_hoa4);
 	bul_iterate(&hai->bul, mn_dereg, NULL);
-	bul_home_cleanup(&hai->bul);
 
 	mn_block_rule_del(hai);
-
 	rule_del(NULL, RT6_TABLE_MIP6,
 		 IP6_RULE_PRIO_MIP6_HOA_OUT, RTN_UNICAST,
 		 &hai->hoa.addr, 128, &in6addr_any, 0, FIB_RULE_FIND_SADDR);
 	tunnel_del(hai->if_tunnel66, NULL, NULL);
+	if (conf.MnSupportIPv4Traffic)
+	{
+		rule4_del(NULL, RT6_TABLE_MIP6,
+			 IP6_RULE_PRIO_MIP6_HOA_OUT, RTN_UNICAST,
+			 &hai->hoa.addr4, 32, &inaddr_any, 0, FIB_RULE_FIND_SADDR);
+	}
 	if (conf.MnUseDsmip6) {
 		/* DSMIPv6: clean v6/v4 tunnel */
 		tunnel_del(hai->if_tunnel64, NULL, NULL);
+		if (conf.MnSupportIPv4Traffic && hai->if_tunnel44)
+			tunnel4_del(hai->if_tunnel44, NULL, NULL);
 	}
+	bul_home_cleanup(&hai->bul);
+
 	dhaad_stop(hai);
+
+	if (conf.MnSupportIPv4Traffic && hai->mnp4_count){
+		prefix4_list_free(&hai->mob_net_prefixes4);
+	}
+
 	free(hai);
 }
 
@@ -1729,6 +2049,12 @@ static struct home_addr_info *hai_copy(struct home_addr_info *conf_hai)
 				     &hai->mob_net_prefixes) < 0)
 			goto mutex_undo;
 
+		hai->mob_net_prefixes4 = NULL;
+		if (hai->mob_rtr &&
+		    prefix4_list_copy(conf_hai->mob_net_prefixes4,
+				     &hai->mob_net_prefixes4) < 0)
+			goto mutex_undo;
+
 		INIT_LIST_HEAD(&hai->ro_policies);
 		if (rpl_copy(&conf_hai->ro_policies, &hai->ro_policies) < 0)
 			goto mnp_undo;
@@ -1739,6 +2065,7 @@ static struct home_addr_info *hai_copy(struct home_addr_info *conf_hai)
 	return hai;
 mnp_undo:
 	prefix_list_free(&hai->mob_net_prefixes);
+	prefix4_list_free(&hai->mob_net_prefixes4);
 mutex_undo:
 	pthread_mutex_destroy(&hai->ha_list.c_lock);
 undo:
@@ -1752,6 +2079,9 @@ static int conf_home_addr_info(struct home_addr_info *conf_hai)
 	struct timespec init = { 0, 0 };
 	struct flag_hoa_args arg;
 	struct home_addr_info *hai;
+	struct in_addr inaddr_any = { 0 };
+	struct in6_addr ha_addr;
+	struct in6_addr local;
 
 	MDBG("HoA address %x:%x:%x:%x:%x:%x:%x:%x\n",
 	     NIP6ADDR(&conf_hai->hoa.addr));
@@ -1759,6 +2089,8 @@ static int conf_home_addr_info(struct home_addr_info *conf_hai)
 	if  ((hai = hai_copy(conf_hai)) == NULL)
 		goto err;
 
+	ipv6_map_addr(&ha_addr, &hai->ha_addr4);
+	ipv6_map_addr(&local, &inaddr_any);
 	ipv6_map_addr(&conf.HaAddr4Mapped, &hai->ha_addr4);
 
 	if (hai->mob_rtr) {
@@ -1770,6 +2102,7 @@ static int conf_home_addr_info(struct home_addr_info *conf_hai)
 			     NIP6ADDR(&p->ple_prefix), p->ple_plen);
 		}
 	}
+
 	if (IN6_IS_ADDR_UNSPECIFIED(&hai->ha_addr)) {
 		hai->use_dhaad = 1;
 	} else {
@@ -1783,6 +2116,8 @@ static int conf_home_addr_info(struct home_addr_info *conf_hai)
 		MDBG("failed to create MN-HA tunnel\n");
 		goto clean_err;
 	}
+	hai->if_tunnel = hai->if_tunnel66;
+
 	/* DSMIPv6: add the v6/v4 tunnel.
 	 */
 	if (conf.MnUseDsmip6) {
@@ -1798,15 +2133,13 @@ static int conf_home_addr_info(struct home_addr_info *conf_hai)
 			MDBG("failed to create MN-HA v6/v4 tunnel\n");
 			goto clean_err;
 		}
+		hai->if_tunnel = hai->if_tunnel64;
 	}
-	/* DSMIPv6
-	 * By default the current used tunnel is the v6/v6 one
-	 */
-	hai->if_tunnel = hai->if_tunnel66;
 
+#if 0
 	/* XXX DSMIPv6 TUNNEL TEST
 	 */
-	if(0){
+	{
 		struct in6_addr ha_addr;
 		struct in6_addr tmp_coa, tmp_coa2;
 
@@ -1840,12 +2173,26 @@ static int conf_home_addr_info(struct home_addr_info *conf_hai)
 
 		MDBG("XXXXXX 64to66 XXXXXXXXX hai->if_tunnel = %d\n", hai->if_tunnel);
 	}
+#endif
+
+	if (conf.MnSupportIPv4Traffic)	{
+		hai->if_tunnel44 = tunnel4_add(&local, &ha_addr,
+				hai->if_home, NULL, NULL);
+		if (hai->if_tunnel44 <= 0) {
+			MDBG("failed to create MN-HA v4/v4 tunnel\n");
+		}
+		hai->if_tunnel4 = hai->if_tunnel66;
+	}
 
 	if (rule_add(NULL, RT6_TABLE_MIP6,
 		     IP6_RULE_PRIO_MIP6_HOA_OUT, RTN_UNICAST,
-		     &hai->hoa.addr, 128, &in6addr_any, 0, FIB_RULE_FIND_SADDR) < 0) {
+		     &hai->hoa.addr, 128, &in6addr_any, 0, FIB_RULE_FIND_SADDR) < 0)
 		goto clean_err;
-	}
+
+	if (conf.MnSupportIPv4Traffic)
+		if (rule4_add(NULL, RT6_TABLE_MIP6,
+			     IP6_RULE_PRIO_MIP6_HOA_OUT, RTN_UNICAST,
+			     &hai->hoa.addr4, 32, &inaddr_any, 0, FIB_RULE_FIND_SADDR) < 0);
 
 	if (mn_block_rule_add(hai) < 0)
 		goto clean_err;
@@ -1854,9 +2201,6 @@ static int conf_home_addr_info(struct home_addr_info *conf_hai)
 		goto clean_err;
 	}
 
-	MDBG("Home address %x:%x:%x:%x:%x:%x:%x:%x\n",
-	     NIP6ADDR(&hai->hoa.addr));
-
 	hai->home_reg_status = HOME_REG_NONE;
 	hai->verdict = MN_HO_NONE;
 
@@ -1864,15 +2208,27 @@ static int conf_home_addr_info(struct home_addr_info *conf_hai)
 			       PREFIX_LIFETIME_INFINITE,
 			       PREFIX_LIFETIME_INFINITE);
 
+	if (hai->mob_rtr) {
+		if (nemo_mr_rules_add(hai) < 0) {
+			goto clean_err;
+		}
+		if (conf.MnSupportIPv4Traffic)
+			if (nemo_mr_rules4_add(hai) < 0) {
+						goto clean_err;
+			}
+	}
 	arg.target = hai;
 	arg.flag = 1;
-
 	if (addr_do(&hai->hoa.addr, 128,
-		    hai->if_tunnel66, &arg, flag_hoa) < 0) {
+			hai->if_tunnel, &arg, flag_hoa) < 0) {
 		goto clean_err;
 	}
-	if (hai->mob_rtr && nemo_mr_rules_add(hai) < 0) {
-		goto clean_err;
+	if (conf.MnSupportIPv4Traffic && hai->if_tunnel4)
+	{
+		if (addr4_do(&hai->hoa.addr4, 32,
+				hai->if_tunnel4, &arg, flag_hoa4) < 0) {
+			goto clean_err;
+		}
 	}
 	hai->at_home = hai->hoa.iif == hai->if_home;
 	pthread_rwlock_wrlock(&mn_lock);
@@ -1977,7 +2333,8 @@ int mn_update_home_prefix(struct home_addr_info *hai,
 	if (!hai->at_home) {
 		struct bulentry *e;
 
-		e = bul_get(hai,  NULL, &hai->ha_addr);
+		e = bul_get(hai, NULL, &hai->ha_addr);
+
 		if (e == NULL || !(e->flags & IP6_MH_BU_HOME))
 			return -ENOENT;
 
@@ -2064,6 +2421,35 @@ undo:
 	return -1;
 }
 
+static int mn_ext_tunnel4_ops(int request, int old_if, int new_if, void *data)
+{
+	struct home_addr_info *hai = data;
+	struct mv_hoa_args mha;
+
+	if (old_if == new_if) return 0;
+
+	mha.if_next = new_if;
+	mha.target = hai;
+
+	mn_tnl4_state_del(hai, old_if, 1);
+
+	if (hai->hoa.iif4 == old_if &&
+	    (mn_tnl4_state_add(hai, new_if, 1) ||
+	     addr4_do(&hai->hoa.addr4, 32, old_if, &mha, mv_hoa4) < 0))
+		goto undo;
+
+	hai->if_tunnel4 = new_if;
+	return 0;
+undo:
+	mha.if_next = old_if;
+
+	if (hai->hoa.iif4 == new_if)
+		addr4_do(&hai->hoa.addr4, 32, new_if, &mha, mv_hoa4);
+	mn_tnl4_state_del(hai, new_if, 1);
+	mn_tnl4_state_add(hai, old_if, 1);
+	return -1;
+}
+
 static int mn_move(struct home_addr_info *hai)
 {
 	struct mv_hoa_args mha;
@@ -2084,6 +2470,12 @@ static int mn_move(struct home_addr_info *hai)
 			mha.if_next = hai->primary_coa.iif;
 			addr_do(&hai->hoa.addr, plen,
 				hai->hoa.iif, &mha, mv_hoa);
+			/*
+			if (conf.MnSupportIPv4Traffic)
+				if (hai->hoa.iif4 != hai->primary_coa.iif4)
+					addr4_do(&hai->hoa.addr4, hai->plen4,
+						hai->hoa.iif4, &mha, mv_hoa4);
+			*/
 			if (hai->home_reg_status == HOME_REG_NONE) {
 				mn_send_home_na(hai);
 				do_handoff(hai);
@@ -2106,6 +2498,11 @@ static int mn_move(struct home_addr_info *hai)
 			mha.if_next = hai->if_tunnel;
 			addr_do(&hai->hoa.addr, hai->plen,
 				hai->hoa.iif, &mha, mv_hoa);
+		}
+		if (conf.MnSupportIPv4Traffic && (hai->hoa.iif4 != hai->if_tunnel4)) {
+			mha.if_next = hai->if_tunnel4;
+			addr4_do(&hai->hoa.addr4, hai->plen4,
+					hai->hoa.iif4, &mha, mv_hoa4);
 		}
 		do_handoff(hai);
 	}
@@ -2320,13 +2717,13 @@ static int mn_do_dad(struct home_addr_info *hai, int dereg)
 			struct in6_addr lladdr;
 			ipv6_addr_llocal(&hai->hoa.addr, &lladdr);
 			if (mn_addr_do_dad(sock, NULL, &lladdr, 64,
-					   hai->primary_coa.iif, 0) < 0) {
+					hai->primary_coa.iif, 0) < 0) {
 				MDBG("Link-local DAD failed!\n");
 				goto err;
 			}
 		}
 		if (mn_addr_do_dad(sock, hai, &hai->hoa.addr, hai->plen,
-				   hai->primary_coa.iif, 0) < 0) {
+				hai->primary_coa.iif, 0) < 0) {
 			MDBG("HoA DAD failed!\n");
 			goto err;
 		}
@@ -2541,8 +2938,7 @@ static int mn_make_ho_verdict(const struct movement_event *me,
 		if (old_iface != me->iface)
 			return MN_HO_IGNORE;
 
-		*next_coa = md_get_coa(&old_iface->coas,
-				       &hai->primary_coa.addr);
+		*next_coa = md_get_coa(&old_iface->coas, &hai->primary_coa.addr);
 		if (*next_coa == NULL)
 			break;
 		*next_rtr = md_get_first_router(&old_iface->default_rtr);
@@ -2573,8 +2969,7 @@ static int mn_make_ho_verdict(const struct movement_event *me,
 
 		if (old_iface == NULL ||
 		    (old_iface == me->iface &&
-		     IN6_ARE_ADDR_EQUAL(&hai->primary_coa.addr,
-					&me->coa->addr)))
+		     IN6_ARE_ADDR_EQUAL(&hai->primary_coa.addr, &me->coa->addr)))
 			break;
 		return MN_HO_IGNORE;
 	case ME_COA_LFT_DEC:
@@ -2587,8 +2982,7 @@ static int mn_make_ho_verdict(const struct movement_event *me,
 			break;
 
 		if (old_iface != me->iface ||
-		    !IN6_ARE_ADDR_EQUAL(&hai->primary_coa.addr,
-					&me->coa->addr))
+		    !IN6_ARE_ADDR_EQUAL(&hai->primary_coa.addr, &me->coa->addr))
 			return MN_HO_IGNORE;
 
 		*next_coa = me->coa;
@@ -2606,7 +3000,7 @@ static int mn_make_ho_verdict(const struct movement_event *me,
 		return MN_HO_INVALIDATE;
 
 	coa = mn_get_coa(hai, new_iface->ifindex,
-			 &hai->primary_coa.addr, &new_iface->coas);
+			&hai->primary_coa.addr, &new_iface->coas);
 
 #ifdef __DSMIP_DEBUG__
 	printf("coa : %p\n", (void *) coa);
@@ -2715,12 +3109,12 @@ int mn_movement_event(struct movement_event *event)
 			if (event->event_type == ME_COA_EXPIRED)
 				mn_rr_delete_co(&event->coa->addr);
 			list_for_each(lh, &home_addr_list) {
-				hai = list_entry(lh,
-						 struct home_addr_info, list);
+				hai = list_entry(lh, struct home_addr_info, list);
 				mn_chk_ho_verdict(hai, event);
 			}
 		}
 	}
+
 	/* Then registration if we are not at home,
 	   otherwise we need to wait for BA to avoid forwarding loops */
 	if (!pending_bas) {
@@ -2730,11 +3124,11 @@ int mn_movement_event(struct movement_event *event)
 		list_for_each(lh, &home_addr_list) {
 			hai = list_entry(lh, struct home_addr_info, list);
 			if (!hai->at_home &&
-			    positive_ho_verdict(hai->verdict)) {
+				positive_ho_verdict(hai->verdict)) {
 #ifdef __DSMIP_DEBUG__
 	  printf("positive verdict, good\n");
 #endif
-				mn_move(hai);
+				  mn_move(hai);
 			}
 #ifdef __DSMIP_DEBUG__
 			else
@@ -3035,4 +3429,3 @@ void mn_cleanup()
 	bul_cleanup();
 	md_cleanup();
 }
-

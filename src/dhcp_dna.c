@@ -1363,18 +1363,6 @@ trigger_dhcp_configuration(struct md_inet6_iface *iface) {
 int
 dhcp_configuration(struct md_inet6_iface *iface)
 {
-  struct rtrequest {
-    struct nlmsghdr n;
-    struct rtmsg r;
-    char payload[256];
-  } rtreq;
-
-  struct request {
-    struct nlmsghdr msg;
-    struct ifaddrmsg ifa;
-    char payload[256];
-  } req;
-
   int err = 0;
   int if_index = iface->ifindex;
   struct md_router *new;
@@ -1382,7 +1370,6 @@ dhcp_configuration(struct md_inet6_iface *iface)
   unsigned long broadcast;
 
   unsigned char local_v4_coa[4];// = {192, 168, 0, V4_COA};
-  unsigned char addr_v4_coa[4];// = {192, 168, 0, V4_COA};
   unsigned char brd_v4_coa[4];// = {192, 168, 0, 255};
   struct in_addr rtr_v4_coa;
 
@@ -1390,8 +1377,6 @@ dhcp_configuration(struct md_inet6_iface *iface)
 
   struct list_head *l;
   struct dhcp_dna_control_s *dhcp_ctrl = NULL;
-
-  //  unsigned char rtr_v4_coa[4] = {192, 168, 0, V4_RTR};
 
   list_for_each(l, &conf.net_ifaces) {
     struct net_iface *ifce;
@@ -1412,67 +1397,24 @@ dhcp_configuration(struct md_inet6_iface *iface)
   }
 
   rtr_v4_coa.s_addr = dhcp_ctrl->gateway;//htonl(0xc0a80000 | V4_RTR);
+  struct in_addr addr = { dhcp_ctrl->requested_ip };
   memcpy(local_v4_coa, &dhcp_ctrl->requested_ip, 4);
-  memcpy(addr_v4_coa, &dhcp_ctrl->requested_ip, 4);
 
   broadcast = (dhcp_ctrl->requested_ip & dhcp_ctrl->netmask) | (~dhcp_ctrl->netmask);
   memcpy(brd_v4_coa, &broadcast, 4);
 
   fprintf(stderr, "dhcp_dna: address information : %d.%d.%d.%d, %d.%d.%d.%d\n",
-	  addr_v4_coa[0], addr_v4_coa[1], addr_v4_coa[2], addr_v4_coa[3],
-	  brd_v4_coa[0], brd_v4_coa[1], brd_v4_coa[2], brd_v4_coa[3] );
+	  NIP4ADDR(&addr), brd_v4_coa[0], brd_v4_coa[1], brd_v4_coa[2], brd_v4_coa[3] );
 
   /* later, send DHCP DISCOVER */
   /* for now, we will only statically assign an ipv4 address */
 
   fprintf(stderr, "dhcp_dna: dhcp configuration triggered for interface %d\n", if_index);
-
-  memset(&req, 0, sizeof(req));
-
-  req.msg.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifaddrmsg));
-  req.msg.nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL;
-  req.msg.nlmsg_type = RTM_NEWADDR;
-
-  req.ifa.ifa_family = AF_INET;
-  req.ifa.ifa_prefixlen = 24;
-  req.ifa.ifa_flags = IFA_F_PERMANENT;
-  // let scope as is : 0 = universe
-  req.ifa.ifa_index = if_index;
-
   fprintf(stderr, "dhcp_dna: interface resolved as %s\n", iface->name);
 
-  addattr_l(&req.msg, sizeof(req), IFA_LOCAL, &local_v4_coa, 4);
-  addattr_l(&req.msg, sizeof(req), IFA_ADDRESS, &addr_v4_coa, 4);
-  addattr_l(&req.msg, sizeof(req), IFA_BROADCAST, &brd_v4_coa, 4);
-  addattr_l(&req.msg, sizeof(req), IFA_LABEL, iface->name, strlen(iface->name) + 1);
-
-  if (rtnl_talk(&dna_rth, &req.msg, 0, 0, NULL, NULL, NULL) < 0)
-    fprintf(stderr,"address already registered\n");
-  else
-    fprintf(stderr,"address modification succeeded\n");
+  addr4_add(&addr,24,iface->ifindex);
 
   new = md_create_router_v4(iface, &rtr_v4_coa);
-
-  memset(&rtreq, 0, sizeof(rtreq));
-
-  rtreq.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg));
-  rtreq.n.nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL;
-  rtreq.n.nlmsg_type = RTM_NEWROUTE;
-
-  rtreq.r.rtm_family = AF_INET;
-  rtreq.r.rtm_table = RT_TABLE_MAIN;
-  rtreq.r.rtm_scope = RT_SCOPE_UNIVERSE;
-  rtreq.r.rtm_type = RTN_UNICAST;
-
-  addattr_l(&rtreq.n, sizeof(rtreq), RTA_GATEWAY, &rtr_v4_coa.s_addr, 4);
-  addattr32(&rtreq.n, sizeof(rtreq), RTA_OIF, if_index);
-
-  if (rtnl_talk(&dna_rth, &rtreq.n, 0, 0, NULL, NULL, NULL) < 0)
-    fprintf(stderr,"route already setup\n");
-  else {
-    fprintf(stderr,"route modification succeeded\n");
-    list_add(&new->list, &iface->v4_rtrs);
-  }
 
   memset(&local_v4_coa_v6, 0, sizeof(struct in6_addr));
   local_v4_coa_v6.s6_addr32[2] = htonl (0xffff);
@@ -1482,6 +1424,10 @@ dhcp_configuration(struct md_inet6_iface *iface)
   if ((err = addr_do(&local_v4_coa_v6, 128, if_index, NULL, dsmip_v4coa_add)) < 0) {
     fprintf(stderr,"warning : unable to set v4mapped address on interface, error %d\n", err);
   }
+
+  struct in_addr any4 = { 0 };
+  struct in_addr gw4 = { dhcp_ctrl->gateway };
+  route4_add(if_index, RT6_TABLE_MAIN, NULL, NULL, 0, &any4, 0, &gw4);
 
   return 1;
 }
