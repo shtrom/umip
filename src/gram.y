@@ -442,12 +442,20 @@ ifacedef	: QSTRING ifacesub
 		}
 		| IFUSEDHCP BOOL ';'
 		{
-			ni.dhcp_ctrl = malloc(sizeof(struct dhcp_dna_control_s));
-			if (ni.dhcp_ctrl == NULL) {
-				uerror("out of memory");
-				return -1;
+                        /* Preethi N, 03/2010. Support external DCHP client in DSMIP
+                         * Testing if UseDhcp is en(dis)abled
+                         */
+                        if ($2) {
+
+				ni.dhcp_ctrl = malloc(sizeof(struct dhcp_dna_control_s));
+				if (ni.dhcp_ctrl == NULL) {
+					uerror("out of memory");
+					return -1;
+				}
+				memset(ni.dhcp_ctrl, 0, sizeof(*ni.dhcp_ctrl));
+			} else {
+				ni.dhcp_ctrl = NULL;
 			}
-			memset(ni.dhcp_ctrl, 0, sizeof(*ni.dhcp_ctrl));
 		}
 		| MNSUPPORTIPV4TRAFFIC BOOL ';'
 		{
