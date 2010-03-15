@@ -131,7 +131,7 @@ extern const char loopback_dev_name[];
 
 extern const struct in6_addr in6addr_all_nodes_mc; /* ff02::1 */
 extern const struct in6_addr in6addr_all_routers_mc; /* ff02::2 */
-
+extern const struct in_addr inaddr_any;
 /* Following 4 routines are taken from include/net/ipv6.h */
 
 static inline void ipv6_addr_set(struct in6_addr *addr,

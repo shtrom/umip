@@ -956,7 +956,8 @@ static void home_cleanup(struct bcentry *bce)
 	if (bce->link > 0) {
 		route_del(bce->link, RT6_TABLE_MIP6, IP6_RT_PRIO_MIP6_OUT,
 			  &bce->our_addr, 128, &bce->peer_addr, 128, NULL);
-		proxy_nd_stop(bce->link, &bce->peer_addr, bce->flags);
+		proxy_nd_stop(bce->link, &bce->peer_addr, &bce->peer_addr4,
+						bce->flags);
 	}
 	if (bce->tunnel > 0) {
 		struct home_tnl_ops_parm p = {
@@ -1068,7 +1069,10 @@ static void *ha_recv_bu_worker(void *varg)
 	int tunnel4_if_index = 0;
 	struct hoa4_mnp4 *current;
 	struct in_addr ha4 = { 0 };
-
+	struct in6_addr *v4tnlend=NULL;
+	struct in6_addr *v6tnlend=NULL;
+	struct in6_addr v4mapped_src;
+	int behind_nat = 0;
 	pthread_dbg("thread started");
 restart:
 	home_ifindex = 0;
@@ -1090,14 +1094,18 @@ restart:
 		out.remote_coa = &arg->remote_coa;
 	else
 		out.remote_coa = NULL;
-	if (!IN6_IS_ADDR_UNSPECIFIED(&arg->bind_coa))
+	if (!IN6_IS_ADDR_UNSPECIFIED(&arg->bind_coa)) {
 		out.bind_coa = &arg->bind_coa;
-	else
+		v6tnlend =  &arg->bind_coa;
+	} else
 		out.bind_coa = NULL;
 	out.local_coa = NULL;
-	if (arg->nat_info.src.s_addr != INADDR_ANY)
+	v4tnlend = out.bind_coa;
+	v6tnlend = out.bind_coa;
+	if (arg->nat_info.src.s_addr != INADDR_ANY) {
+		ipv6_unmap_addr(&conf.HaAddr4Mapped, &ha4.s_addr);
 		out.nat_info = &arg->nat_info;
-	else
+	} else
 		out.nat_info = NULL;
 
 	/* XXX DSMIP: possibility to have several MRs with the same source addr,
@@ -1230,9 +1238,10 @@ restart:
 			goto send_nack;
 		}
 		if (is_hoa4enabled(out.hoa4)) bce->peer_addr4 = *out.hoa4;
-		bce->our_addr = *out.src;
-		bce->peer_addr = *out.dst;
-		bce->coa = *out.bind_coa;
+		memcpy(&bce->our_addr, out.src, sizeof(bce->our_addr));
+		memcpy(&bce->peer_addr, out.dst, sizeof(bce->peer_addr));
+		memcpy(&bce->coa, out.bind_coa, sizeof(bce->coa));
+
 		bce->seqno = seqno;
 		bce->flags = bu_flags;
 		bce->type = BCE_DAD;
@@ -1291,13 +1300,17 @@ restart:
 	if (out.nat_info) {
 		memcpy(&bce->nat_info, out.nat_info, sizeof(bce->nat_info));
 		dbg("NAT information: src %u.%u.%u.%u:%d\n",
-				NIP4ADDR(&bce->nat_info.src), bce->nat_info.port);
+				NIP4ADDR(&out.nat_info->src), out.nat_info->port);
 		dbg("CoA reported by MN %x:%x:%x:%x:%x:%x:%x:%x\n",
 				NIP6ADDR(&bce->coa));
-		struct in6_addr v4mapped_src;
-		ipv6_map_addr(&v4mapped_src, &bce->nat_info.src);
-		if (!IN6_ARE_ADDR_EQUAL(&v4mapped_src, &bce->coa)) {
-			bce->behind_nat = 1;
+
+		ipv6_map_addr(&v4mapped_src, &out.nat_info->src);
+		/* Force UDP tunneling to deal with Firewalls */
+		// TODO: make this configurable
+		if (!IN6_ARE_ADDR_EQUAL(&v4mapped_src, out.bind_coa) || 1) {
+				behind_nat = 1;
+			v4tnlend = &v4mapped_src;
+			v6tnlend = &v4mapped_src;
 		}
 		else if (!(bu_flags & IP6_MH_BU_UDP)) {
 			/* Useless to send NAT option in BA if no NAT has been detected
@@ -1305,13 +1318,16 @@ restart:
 			out.nat_info = NULL;
 		}
 	}
-	if (new) {
-		if (out.bind_coa && IN6_IS_ADDR_V4MAPPED(out.bind_coa))
-		        tnl_addr = &conf.HaAddr4Mapped;
-		else
-			tnl_addr = out.src;
 
-		if ((tunnel_if_index = tunnel_add(tnl_addr, out.bind_coa, 0,
+	if (out.bind_coa && IN6_IS_ADDR_V4MAPPED(out.bind_coa)){
+		tnl_addr = &conf.HaAddr4Mapped;
+		memcpy(&bce->ha4,tnl_addr, sizeof(bce->ha4));
+	} else {
+		tnl_addr = out.src;
+	}
+
+	if (new) {
+		if ((tunnel_if_index = tunnel_add(tnl_addr, v6tnlend, 0,
 			       home_tnl_ops, &p)) < 0) {
 			if (p.ba_status >= IP6_MH_BAS_UNSPECIFIED)
 				status = p.ba_status;
@@ -1333,17 +1349,22 @@ restart:
 			current = NULL;
 
 			if (out.bind_coa && IN6_IS_ADDR_V4MAPPED(out.bind_coa)) {
-				if ((tunnel4_if_index = tunnel4_add(tnl_addr, out.bind_coa, 0,
+				if ((tunnel4_if_index = tunnel4_add(tnl_addr, v4tnlend, 0,
 								   home_tnl4_ops, &p)) < 0) {
 					status = IP6_MH_BAS_INSUFFICIENT;
 					goto send_nack;
 				}
-			} else {
-				if (home_tnl4_add(tunnel4_if_index, tunnel_if_index, &p) < 0) {
-					status = IP6_MH_BAS_INSUFFICIENT;
-					goto send_nack;
+				if (behind_nat) {
+				        memcpy(&bce->nat_info, out.nat_info, sizeof(bce->nat_info));
+					bce->behind_nat = 1;
+					xfrm_add_bce_nat(bce);
+				} else {
+					if (home_tnl4_add(tunnel4_if_index, tunnel_if_index, &p) < 0) {
+						status = IP6_MH_BAS_INSUFFICIENT;
+						goto send_nack;
+					}
+					tunnel4_if_index = tunnel_if_index;
 				}
-				tunnel4_if_index = tunnel_if_index;
 			}
 		}
 		/* Now save the MNP list in the BCE */
@@ -1358,23 +1379,20 @@ restart:
 				goto send_nack;
 			}
 		}
-
+		/* SHAd 
 		if (proxy_nd_start(bce->link, out.dst, out.src,
 				   bu_flags) < 0) {
 			status = IP6_MH_BAS_INSUFFICIENT;
 			goto send_nack;
 		}
+		EHAd */
 		bce->type = BCE_HOMEREG;
 		bcache_complete_homereg(bce);
 	} else {
-		bce->old_coa = bce->coa;
-		bce->coa = *out.bind_coa;
-		if (out.bind_coa && IN6_IS_ADDR_V4MAPPED(out.bind_coa))
-		        tnl_addr = &conf.HaAddr4Mapped;
-		else
-			tnl_addr = out.src;
+		memcpy(&bce->old_coa, &bce->coa, sizeof(bce->old_coa));
+		memcpy(&bce->coa, out.bind_coa, sizeof(bce->coa));
 
-		if ((tunnel_if_index = tunnel_mod(bce->tunnel, tnl_addr, out.bind_coa, 0,
+		if ((tunnel_if_index = tunnel_mod(bce->tunnel, tnl_addr, v6tnlend, 0,
 			       home_tnl_ops, &p)) < 0) {
 			if (p.ba_status >= IP6_MH_BAS_UNSPECIFIED)
 				status = p.ba_status;
@@ -1386,13 +1404,13 @@ restart:
 		if (is_hoa4enabled(out.hoa4)) {
 			if (out.bind_coa && IN6_IS_ADDR_V4MAPPED(out.bind_coa)) {
 				if (!IN6_IS_ADDR_V4MAPPED(&bce->old_coa)) {
-					if ((tunnel4_if_index = tunnel4_add(tnl_addr, out.bind_coa, 0,
-									   home_tnl4_ops, &p)) < 0) {
+					if ((tunnel4_if_index = tunnel4_add(tnl_addr, v4tnlend, 0,
+									    home_tnl4_ops, &p)) < 0) {
 						status = IP6_MH_BAS_INSUFFICIENT;
 						goto send_nack;
 					}
-				} else {
-					if ((tunnel4_if_index = tunnel4_mod(bce->tunnel4, tnl_addr, out.bind_coa, 0,
+				} else { /* previous CoA was v4 */
+					if ((tunnel4_if_index = tunnel4_mod(bce->tunnel4, tnl_addr,  v4tnlend, 0,
 												   home_tnl4_ops, &p)) < 0) {
 						status = IP6_MH_BAS_INSUFFICIENT;
 						goto send_nack;
@@ -1410,10 +1428,22 @@ restart:
 				bce->tunnel4 = tunnel4_if_index;
 			}
 		}
-
+		if (bce->behind_nat) {
+			cdbg("MN moving from NATted IPv4 network.\n");
+			/* previous CoA had v4 UDP tunneling */
+			xfrm_del_bce_nat(bce);
+			bce->behind_nat = 0;
+		}
+		if (behind_nat) {
+			cdbg("New IPv4 network is NATted.\n");
+			memcpy(&bce->nat_info, out.nat_info, sizeof(bce->nat_info));
+			bce->behind_nat = 1;
+			xfrm_add_bce_nat(bce);
+			// TODO: Call add udpencap
+		}
 		if (tsisset(lft)) {
-		prefix_list_free(&bce->mob_net_prefixes);
-		list_splice(&p.mob_net_prefixes, &bce->mob_net_prefixes);
+			prefix_list_free(&bce->mob_net_prefixes);
+			list_splice(&p.mob_net_prefixes, &bce->mob_net_prefixes);
 		}
 
 //		if (is_hoa4enabled(out.hoa4)) {
@@ -1526,6 +1556,7 @@ out:
 		free(arg);
 		arg = list_entry(l, struct ha_recv_bu_args, list);
 		pthread_mutex_unlock(&bu_worker_mutex);
+		cdbg("New BU received during processing of previous one, not exiting thread.\n");
 		goto restart;
 	}
 	if (--bu_worker_count == 0)
@@ -1593,10 +1624,13 @@ int ha_recv_home_bu(const struct ip6_mh *mh, ssize_t len,
 	if (!arg) {
 		if (bce_exists(out.src, out.dst))
 			bcache_delete(out.src, out.dst);
-
-		if (!(arg->flags & HA_BU_F_SKIP_BA))
-			mh_send_ba_err(&out, IP6_MH_BAS_INSUFFICIENT, 0,
-				       ntohs(bu->ip6mhbu_seqno), NULL, iif);
+		/* SHA */
+		// arg == NULL here so we can't compare the flags
+		// TODO: are these flags from BU?
+		//if (!(arg->flags & HA_BU_F_SKIP_BA))
+		/* EHA */
+		mh_send_ba_err(&out, IP6_MH_BAS_INSUFFICIENT, 0,
+			       ntohs(bu->ip6mhbu_seqno), NULL, iif);
 		return -ENOMEM;
 	}
 	arg->src = *out.src;
@@ -1628,6 +1662,7 @@ int ha_recv_home_bu(const struct ip6_mh *mh, ssize_t len,
 	bu_worker_count++;
 	if (pthread_create(&worker, NULL, ha_recv_bu_worker, arg)) {
 		free(arg);
+		arg = NULL;
 		if (--bu_worker_count == 0)
 			pthread_cond_signal(&cond);
 	} else {

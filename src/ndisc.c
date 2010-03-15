@@ -51,8 +51,8 @@
 #include "statistics.h"
 
 static int neigh_mod(int nl_flags, int cmd, int ifindex,
-		     uint16_t state, uint8_t flags, struct in6_addr *dst,
-		     uint8_t *hwa, int hwalen)
+		     uint16_t state, uint8_t flags, void *dst,
+		     uint8_t *hwa, int hwalen, int af)
 {
 	uint8_t buf[256];
 	struct nlmsghdr *n;
@@ -65,15 +65,20 @@ static int neigh_mod(int nl_flags, int cmd, int ifindex,
 	n->nlmsg_type = cmd;
 
         ndm = NLMSG_DATA(n);
-	ndm->ndm_family = AF_INET6;
+	ndm->ndm_family = af;
 	ndm->ndm_ifindex = ifindex;
 	ndm->ndm_state = state;
 	ndm->ndm_flags = flags;
-	ndm->ndm_type = (IN6_IS_ADDR_MULTICAST(dst) ?
-			 RTN_MULTICAST : RTN_UNICAST);
+	if (af == AF_INET6) {
+		ndm->ndm_type = IN6_IS_ADDR_MULTICAST(dst) ? RTN_MULTICAST : RTN_UNICAST;
+	} else {
+		ndm->ndm_type = RTN_UNICAST;
+	}
 
-	addattr_l(n, sizeof(buf), NDA_DST, dst, sizeof(*dst));
-
+	if (af == AF_INET6)
+		addattr_l(n, sizeof(buf), NDA_DST, dst, sizeof(struct in6_addr));
+	else
+		addattr_l(n, sizeof(buf), NDA_DST, dst, sizeof(struct in_addr));
 	if (hwa)
 		addattr_l(n, sizeof(buf), NDA_LLADDR, hwa, hwalen);
 
@@ -85,24 +90,25 @@ int neigh_add(int ifindex, uint16_t state, uint8_t flags,
 	      int override)
 {
 	return neigh_mod(NLM_F_CREATE | (override ? NLM_F_REPLACE : 0),
-			 RTM_NEWNEIGH, ifindex, state, flags,dst, hwa, hwalen);
+			 RTM_NEWNEIGH, ifindex, state, flags, dst, hwa, hwalen,
+			 AF_INET6);
 }
 
 int neigh_del(int ifindex, struct in6_addr *dst)
 {
-	return neigh_mod(0, RTM_DELNEIGH, ifindex, 0, 0, dst, NULL, 0);
+	return neigh_mod(0, RTM_DELNEIGH, ifindex, 0, 0, dst, NULL, 0, AF_INET6);
 }
 
-int pneigh_add(int ifindex, uint8_t flags, struct in6_addr *dst)
+int pneigh_add(int ifindex, uint8_t flags, void *dst, int af)
 {
 	return neigh_mod(NLM_F_CREATE | NLM_F_REPLACE, RTM_NEWNEIGH,
 			 ifindex, NUD_PERMANENT, flags|NTF_PROXY, dst,
-			 NULL, 0);
+			 NULL, 0, af);
 }
 
-int pneigh_del(int ifindex, struct in6_addr *dst)
+int pneigh_del(int ifindex, void *dst, int af)
 {
-	return neigh_mod(0, RTM_DELNEIGH, ifindex, 0, NTF_PROXY, dst, NULL, 0);
+	return neigh_mod(0, RTM_DELNEIGH, ifindex, 0, NTF_PROXY, dst, NULL, 0, af);
 }
 
 static inline void proxy_nd_iface_set(int ifindex, int val)
@@ -124,19 +130,21 @@ void proxy_nd_iface_cleanup(int ifindex)
 }
 
 int proxy_nd_start(int ifindex, struct in6_addr *target,
+		   struct in_addr *target4,
 		   struct in6_addr *src, int bu_flags)
 {
 	struct in6_addr lladdr;
 	int err;
 	int nd_flags = bu_flags&IP6_MH_BU_MR ? NTF_ROUTER : 0;
 
-	err = pneigh_add(ifindex, nd_flags, target);
+	err = pneigh_add(ifindex, nd_flags, target, AF_INET6);
+	err = pneigh_add(ifindex, nd_flags, target4, AF_INET);
 
 	if (!err && bu_flags & IP6_MH_BU_LLOCAL) {
 		ipv6_addr_llocal(target, &lladdr);
-		err = pneigh_add(ifindex, nd_flags, &lladdr);
+		err = pneigh_add(ifindex, nd_flags, &lladdr, AF_INET6);
 		if (err)
-			pneigh_del(ifindex, target);
+			pneigh_del(ifindex, target, AF_INET6);
 	}
 	if (!err) {
 		uint32_t na_flags = (ND_NA_FLAG_OVERRIDE |
@@ -152,15 +160,17 @@ int proxy_nd_start(int ifindex, struct in6_addr *target,
 	return err;
 }
 
-void proxy_nd_stop(int ifindex, struct in6_addr *target, int bu_flags)
+void proxy_nd_stop(int ifindex, struct in6_addr *target, struct in_addr *target4, int bu_flags)
 {
 	if (bu_flags & IP6_MH_BU_LLOCAL) {
 		struct in6_addr lladdr;
 		ipv6_addr_llocal(target, &lladdr);
-		pneigh_del(ifindex, &lladdr);
+		pneigh_del(ifindex, &lladdr, AF_INET6);
+
 		neigh_del(ifindex, &lladdr);
 	}
-	pneigh_del(ifindex, target);
+	pneigh_del(ifindex, target, AF_INET6);
+	pneigh_del(ifindex, target4, AF_INET);
 	neigh_del(ifindex, target);
 }
 

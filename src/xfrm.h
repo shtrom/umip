@@ -4,6 +4,7 @@
 
 #include <linux/xfrm.h>
 #include "list.h"
+#include "bcache.h"
 
 #define MIP6_PRIO_HOME_ERROR		1
 #define MIP6_PRIO_HOME_SIG		2
@@ -53,6 +54,8 @@ int xfrm_add_bce(const struct in6_addr *our_addr,
 		 const struct in6_addr *coa,
 		 int replace);
 
+void xfrm_del_bce_nat(struct bcentry *bce);
+int xfrm_add_bce_nat(struct bcentry *bce);
 void xfrm_del_bce(const struct in6_addr *our_addr,
 		  const struct in6_addr *peer_addr);
 
@@ -134,31 +137,39 @@ void xfrm_mip_in_out_delete(struct in6_addr *peer_addr, struct in6_addr *our_add
 
 /* The following functions are needed for NAT traversal in DSmipv6 */
 int udpencap_receive_traffic_start(struct in_addr *local, struct in_addr *sender);
-int udpencap_receive_traffic_end  (struct in_addr *local, struct in_addr *sender);
+int udpencap_receive_traffic_end  (const struct in_addr *local, const struct in_addr *sender);
 
 int udpencap_encap_out_traffic_start( /* Selector for traffic to encapsulate */
-				struct in6_addr *local,
+				const struct in6_addr *local,
 				int lpreflen,
-				struct in6_addr *dest,
+				const struct in6_addr *dest,
 				int dpreflen,
+				const struct in_addr *loc4,
+				int lpreflen4,
+				const struct in_addr *dest4,
+				int dpreflen4,
 				int proto,
 				int type,
 				/* Outer ip and udp */
-				struct in_addr *src,
+				const struct in_addr *src,
 				int sport,
-				struct in_addr *dst,
+				const struct in_addr *dst,
 				int dport,
 				/* Policy */
 				int prio);
 int udpencap_encap_out_traffic_end( /* Selector for traffic to encapsulate */
-				struct in6_addr *local,
+				const struct in6_addr *local,
 				int lpreflen,
-				struct in6_addr *dest,
+				const struct in6_addr *dest,
 				int dpreflen,
+				const struct in_addr *loc4,
+				int lpreflen4,
+				const struct in_addr *dest4,
+				int dpreflen4,
 				int proto,
 				int type,
 				/* Outer ip and udp */
-				struct in_addr *src,
-				struct in_addr *dst);
+				const struct in_addr *src,
+				const struct in_addr *dst);
 
 #endif /* __XFRM_H__ */

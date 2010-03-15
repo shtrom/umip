@@ -879,7 +879,7 @@ static int mn_tnl4_state_add(struct home_addr_info *hai, int ifindex, int all)
 			MDBG("*********** the insertion failed !!! ************\n");
 		}
 		if (ifindex == hai->if_tunnel44) {
-			if ((err = route4_add(ifindex, RT6_TABLE_MAIN, 0,
+			if ((err = route4_add(ifindex, RT6_TABLE_MIP6, 0,
 					     &inaddr_any, 0,
 					     &inaddr_any, 0, NULL)) < 0) {
 			  MDBG("dsmip route failed\n");
@@ -1234,6 +1234,12 @@ static void mn_send_home_bu(struct home_addr_info *hai)
 	/* Before bul_iterate, tunnel modification should be done. */
 	if (IN6_IS_ADDR_V4MAPPED(&hai->primary_coa.addr)) {
 		struct in6_addr ha_addr;
+		/* SMN
+		 * Set BULE IPv4 CoA only after pre_bu_bul_update is
+		 *   called
+		 */
+		ipv6_unmap_addr(&hai->primary_coa.addr, &bule->coa4);
+		/* EMN */
 		ipv6_map_addr(&ha_addr, &hai->ha_addr4);
 		hai->if_tunnel64 = dsmip_mn_tunnel_mod(hai, &hai->primary_coa.addr,
 				&ha_addr, hai->primary_coa.iif,
@@ -1576,21 +1582,29 @@ static void mn_process_ha_ba(struct ip6_mh_binding_ack *ba,
 		case 0:
 			tssetsec(nat_ka_refresh, NATKATIMEOUT);
 			bule->behind_nat = 1;
+			dbg("%s:%d: nat_ka_refresh %d\n", __FUNCTION__, __LINE__,nat_ka_refresh.tv_sec);
 			break;
 		case IP6_MHOPT_NO_REFRESH:
-			tssetsec(nat_ka_refresh, ntohl(nat->ip6moin_refresh));
+			tssetsec(nat_ka_refresh, br_adv.tv_sec);
 			bule->behind_nat = 0;
+			dbg("%s:%d: nat_ka_refresh %d\n", __FUNCTION__, __LINE__,nat_ka_refresh.tv_sec);
 			break;
 		default:
 			tssetsec(nat_ka_refresh, ntohl(nat->ip6moin_refresh));
 			bule->behind_nat = 1;
+			dbg("%s:%d: nat_ka_refresh %d\n", __FUNCTION__, __LINE__,nat_ka_refresh.tv_sec);
 		}
 	}
 
-	if (tsbefore(nat_ka_refresh, br_adv))
+	if (tsbefore(nat_ka_refresh, br_adv)) {
 		set_bule_lifetime(bule, &ba_lifetime, &br_adv);
-	else
+		dbg("%s:%d: br_adv %d, nat_ka_refresh %d\n",
+				__FUNCTION__, __LINE__, br_adv.tv_sec, nat_ka_refresh.tv_sec);
+	} else {
 		set_bule_lifetime(bule, &ba_lifetime, &nat_ka_refresh);
+		dbg("%s:%d: br_adv %d, nat_ka_refresh %d\n",
+				__FUNCTION__, __LINE__, br_adv.tv_sec, nat_ka_refresh.tv_sec);
+	}
 	dbg("Callback to bu_refresh after %d seconds\n", bule->delay.tv_sec);
 	bule->callback = bu_refresh;
 	bul_update_expire(bule);
