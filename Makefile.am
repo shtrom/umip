@@ -3,8 +3,13 @@
 
 AUTOMAKE_OPTIONS = gnu
 EXTRA_DIST = BUGS INSTALL.kernel README.IPsec chkconf_kernel.sh \
+	     README.IPsec  README.NEMO  README.v4traffic \
 	     extras/example-cn.conf extras/example-ha.conf \
-             extras/example-mn.conf
+	     extras/example-mn.conf \
+	     extras/example-nemo-ha.conf extras/example-nemo-mn.conf \
+	     extras/example-dsmip-ha.conf extras/example-dsmip-mn.conf \
+	     extras/example-nemo-dsmip-v4traffic-ha.conf extras/example-nemo-dsmip-v4traffic-mr.conf  
+
 
 if MISSING
 LIBMISSING = libmissing
