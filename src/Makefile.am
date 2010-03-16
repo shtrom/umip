@@ -2,17 +2,17 @@
 ## Process this file with automake to produce Makefile.in
 
 AM_CFLAGS = -Wall -Wextra -Wpointer-arith -Wreturn-type -pedantic -std=gnu99
-AM_CPPFLAGS = -isystem ../include
+AM_CPPFLAGS = -isystem $(top_srcdir)/include
 AM_YFLAGS = -d
 
 defpath.h: Makefile.am
 	echo "#define DEFAULT_CONFIG_FILE \"$(sysconfdir)/mip6d.conf\"" > $@
 
-pmgr.c: mk-pmgr_c.sh pmgr.c.in policy.h
-	sh mk-pmgr_c.sh
+pmgr.c: $(srcdir)/mk-pmgr_c.sh $(srcdir)/pmgr.c.in policy.h
+	sh $(srcdir)/mk-pmgr_c.sh
 
-pmgr.h: mk-pmgr_h.sh pmgr.h.in policy.h
-	sh mk-pmgr_h.sh
+pmgr.h: $(srcdir)/mk-pmgr_h.sh $(srcdir)/pmgr.h.in policy.h
+	sh $(srcdir)/mk-pmgr_h.sh
 
 BUILT_SOURCES = defpath.h pmgr.c pmgr.h
 EXTRA_DIST = mk-pmgr_c.sh mk-pmgr_h.sh pmgr.c.in pmgr.h.in

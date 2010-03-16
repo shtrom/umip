@@ -24,7 +24,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include <src/debug.h>
+#include "debug.h"
 
 #include "rtnl.h"
 #include "movement.h"

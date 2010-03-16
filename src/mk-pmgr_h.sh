@@ -1,8 +1,9 @@
 #!/bin/bash
 # $Id: mk-pmgr_h.sh 1.1 05/02/21 14:45:42+02:00 anttit@tcs.hut.fi $
 
-DEFAULTS=policy.h
-INFILE=pmgr.h.in
+SRCPATH=`dirname $0`
+DEFAULTS=$SRCPATH/policy.h
+INFILE=$SRCPATH/pmgr.h.in
 OUTFILE=pmgr.h
 TMP=tmp.$$
 
